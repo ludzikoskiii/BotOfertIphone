@@ -1,0 +1,76 @@
+"""Normalizacja tekstu ogłoszeń i dopasowywanie fraz z obsługą zaprzeczeń."""
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+
+_PL_MAP = str.maketrans("ąćęłńóśźżĄĆĘŁŃÓŚŹŻ", "acelnoszzACELNOSZZ")
+
+# Znaki kończące zdanie/fragment zamieniamy na separator " | ", żeby frazy
+# nie „przeskakiwały" między zdaniami, a okno zaprzeczeń kończyło się na granicy.
+_SENTENCE_BREAK = re.compile(r"[.!?;,\n\r\t()\[\]/\\]+")
+_OTHER = re.compile(r"[^a-z0-9%+| ]+")
+_SPACES = re.compile(r"\s+")
+
+# Spójniki przedłużające zasięg przeczenia: „bez blokad icloud i simlocka".
+CONJUNCTIONS = frozenset({"i", "oraz", "ani", "czy", "lub"})
+NEGATION_WORDS = frozenset(
+    {"nie", "bez", "brak", "zadnych", "zadnej", "zadnego", "zero", "wolny", "wolna", "nigdy"}
+)
+NOMINAL_NEGATIONS = frozenset({"bez", "brak", "wolny", "wolna", "zadnych", "zadnej", "zadnego"})
+
+
+def normalize(text: str | None) -> str:
+    """Małe litery, bez polskich znaków, interpunkcja zamieniona na separator ``|``."""
+    if not text:
+        return ""
+    s = text.translate(_PL_MAP).lower()
+    s = s.replace("-", " ").replace("_", " ")
+    s = _SENTENCE_BREAK.sub(" | ", s)
+    s = _OTHER.sub(" ", s)
+    s = _SPACES.sub(" ", s)
+    return s.strip()
+
+
+def is_negated(text: str, start: int, window: int = 2) -> bool:
+    """Czy tuż przed pozycją ``start`` (w obrębie zdania) stoi słowo przeczące."""
+    words = text[:start].split()
+    before: list[str] = []
+    for w in reversed(words):
+        if w == "|":
+            break
+        before.append(w)
+    if any(w in NEGATION_WORDS for w in before[:window]):
+        return True
+    # Po spójniku przeczenie rzeczownikowe obejmuje kolejne elementy wyliczenia
+    # („bez blokad icloud i simlocka"), ale „nie włącza się i zbity ekran" — już nie.
+    if before and before[0] in CONJUNCTIONS:
+        extended = before[1:window + 5]
+        if any(w in NOMINAL_NEGATIONS for w in extended):
+            return True
+        if any(a == "ma" and b == "nie" for a, b in zip(extended, extended[1:], strict=False)):
+            return True
+    return False
+
+
+@dataclass(frozen=True)
+class Phrase:
+    """Wzorzec frazy. ``negatable`` = odrzuć dopasowanie poprzedzone zaprzeczeniem."""
+
+    pattern: re.Pattern[str]
+    negatable: bool = True
+
+    def search(self, text: str) -> bool:
+        for m in self.pattern.finditer(text):
+            if self.negatable and is_negated(text, m.start()):
+                continue
+            return True
+        return False
+
+
+def phrase(regex: str, negatable: bool = True) -> Phrase:
+    return Phrase(re.compile(regex), negatable)
+
+
+def any_match(phrases: list[Phrase] | tuple[Phrase, ...], text: str) -> bool:
+    return any(p.search(text) for p in phrases)

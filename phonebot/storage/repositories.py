@@ -1,0 +1,244 @@
+"""Dostęp do danych: oferty, historia cen, części, ustawienia, przebiegi pobrań."""
+from __future__ import annotations
+
+import json
+import sqlite3
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+
+from ..core.models import (
+    Condition,
+    Defect,
+    MarketObservation,
+    Offer,
+    OfferStatus,
+    ParsedInfo,
+    RawOffer,
+    RedFlag,
+)
+from ..core.parts import PartPrice, default_parts
+from ..core.settings import Settings
+
+
+def utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _iso(dt: datetime | None) -> str | None:
+    return dt.isoformat() if dt else None
+
+
+def _dt(value: str | None) -> datetime | None:
+    return datetime.fromisoformat(value) if value else None
+
+
+def _bool(value: int | None) -> bool | None:
+    return None if value is None else bool(value)
+
+
+def dedup_key(parsed: ParsedInfo, raw: RawOffer) -> str | None:
+    """Klucz grupujący tę samą sztukę wystawioną na kilku portalach."""
+    if not parsed.model:
+        return None
+    city = (raw.city or "").strip().lower()
+    return f"{parsed.model}|{parsed.storage_gb or ''}|{round(raw.price, -1):.0f}|{city}"
+
+
+@dataclass
+class UpsertResult:
+    offer_id: int
+    is_new: bool
+    price_changed: bool
+    old_price: float | None
+
+
+class OfferRepository:
+    def __init__(self, conn: sqlite3.Connection):
+        self.conn = conn
+
+    def upsert(self, raw: RawOffer, parsed: ParsedInfo, seen_at: datetime | None = None) -> UpsertResult:
+        seen = _iso(seen_at or utcnow())
+        existing = self.conn.execute(
+            "SELECT id, price FROM offers WHERE source = ? AND source_id = ?", (raw.source, raw.source_id)
+        ).fetchone()
+        fields = {
+            "url": raw.url, "title": raw.title, "description": raw.description, "price": raw.price,
+            "currency": raw.currency, "city": raw.city, "region": raw.region, "lat": raw.lat, "lon": raw.lon,
+            "photos": json.dumps(raw.photos), "params": json.dumps(raw.params, ensure_ascii=False),
+            "shipping": None if raw.shipping_available is None else int(raw.shipping_available),
+            "negotiable_raw": None if raw.negotiable is None else int(raw.negotiable),
+            "created_at": _iso(raw.created_at), "model": parsed.model, "storage_gb": parsed.storage_gb,
+            "condition": parsed.condition.value, "defects": json.dumps([d.value for d in parsed.defects]),
+            "flags": json.dumps([f.value for f in parsed.flags]), "battery_health": parsed.battery_health,
+            "negotiable": None if parsed.negotiable is None else int(parsed.negotiable),
+            "dedup_key": dedup_key(parsed, raw),
+        }
+        if existing is None:
+            cols = ["source", "source_id", *fields, "first_seen", "last_seen"]
+            values = [raw.source, raw.source_id, *fields.values(), seen, seen]
+            cur = self.conn.execute(
+                f"INSERT INTO offers ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})", values
+            )
+            offer_id = int(cur.lastrowid)
+            self._add_price(offer_id, raw.price, seen)
+            return UpsertResult(offer_id, True, False, None)
+
+        offer_id, old_price = int(existing["id"]), float(existing["price"])
+        assignments = ", ".join(f"{k} = ?" for k in fields)
+        self.conn.execute(
+            f"UPDATE offers SET {assignments}, last_seen = ?, is_active = 1 WHERE id = ?",
+            [*fields.values(), seen, offer_id],
+        )
+        changed = abs(old_price - raw.price) >= 0.01
+        if changed:
+            self._add_price(offer_id, raw.price, seen)
+        return UpsertResult(offer_id, False, changed, old_price)
+
+    def _add_price(self, offer_id: int, price: float, seen: str | None) -> None:
+        self.conn.execute(
+            "INSERT INTO price_history (offer_id, price, seen_at) VALUES (?, ?, ?)", (offer_id, price, seen)
+        )
+
+    def get(self, offer_id: int) -> Offer | None:
+        row = self.conn.execute("SELECT * FROM offers WHERE id = ?", (offer_id,)).fetchone()
+        return _row_to_offer(row) if row else None
+
+    def list(self, *, include_hidden: bool = False, active_only: bool = True) -> list[Offer]:
+        where = []
+        if not include_hidden:
+            where.append("status != 'hidden'")
+        if active_only:
+            where.append("is_active = 1")
+        sql = "SELECT * FROM offers" + (f" WHERE {' AND '.join(where)}" if where else "") + " ORDER BY id"
+        return [_row_to_offer(r) for r in self.conn.execute(sql)]
+
+    def set_status(self, offer_id: int, status: OfferStatus) -> None:
+        self.conn.execute("UPDATE offers SET status = ? WHERE id = ?", (status.value, offer_id))
+
+    def mark_notified(self, offer_id: int, when: datetime | None = None) -> None:
+        self.conn.execute("UPDATE offers SET notified_at = ? WHERE id = ?", (_iso(when or utcnow()), offer_id))
+
+    def was_notified(self, offer_id: int) -> bool:
+        row = self.conn.execute("SELECT notified_at FROM offers WHERE id = ?", (offer_id,)).fetchone()
+        return bool(row and row["notified_at"])
+
+    def deactivate_missing(self, source: str, older_than: datetime) -> int:
+        """Oznacza jako nieaktywne oferty źródła, których nie widziano od ``older_than``."""
+        cur = self.conn.execute(
+            "UPDATE offers SET is_active = 0 WHERE source = ? AND is_active = 1 AND last_seen < ?",
+            (source, _iso(older_than)),
+        )
+        return cur.rowcount
+
+    def price_history(self, offer_id: int) -> list[tuple[datetime, float]]:
+        rows = self.conn.execute(
+            "SELECT seen_at, price FROM price_history WHERE offer_id = ? ORDER BY seen_at", (offer_id,)
+        )
+        return [(_dt(r["seen_at"]), float(r["price"])) for r in rows]  # type: ignore[misc]
+
+    def market_observations(self, model: str, window_days: int, now: datetime | None = None) -> list[MarketObservation]:
+        """Ceny ofert danego modelu z okna czasowego; ta sama sztuka z kilku portali liczona raz."""
+        since = _iso((now or utcnow()) - timedelta(days=window_days))
+        rows = self.conn.execute(
+            """
+            SELECT MIN(id) AS id, price, storage_gb, condition FROM offers
+            WHERE model = ? AND last_seen >= ?
+            GROUP BY COALESCE(dedup_key, 'id:' || id)
+            """,
+            (model, since),
+        )
+        return [
+            MarketObservation(float(r["price"]), r["storage_gb"], Condition(r["condition"]), int(r["id"]))
+            for r in rows
+        ]
+
+
+def _row_to_offer(row: sqlite3.Row) -> Offer:
+    raw = RawOffer(
+        source=row["source"], source_id=row["source_id"], url=row["url"], title=row["title"],
+        price=float(row["price"]), description=row["description"], currency=row["currency"],
+        city=row["city"], region=row["region"], lat=row["lat"], lon=row["lon"],
+        photos=json.loads(row["photos"]), created_at=_dt(row["created_at"]),
+        shipping_available=_bool(row["shipping"]), negotiable=_bool(row["negotiable_raw"]),
+        params=json.loads(row["params"]),
+    )
+    parsed = ParsedInfo(
+        model=row["model"], storage_gb=row["storage_gb"], condition=Condition(row["condition"]),
+        defects=[Defect(d) for d in json.loads(row["defects"])],
+        flags=[RedFlag(f) for f in json.loads(row["flags"]) if f in RedFlag._value2member_map_],
+        battery_health=row["battery_health"], negotiable=_bool(row["negotiable"]),
+    )
+    return Offer(
+        raw=raw, parsed=parsed, id=int(row["id"]), status=OfferStatus(row["status"]),
+        first_seen=_dt(row["first_seen"]), last_seen=_dt(row["last_seen"]), dedup_key=row["dedup_key"],
+    )
+
+
+class PartsRepository:
+    def __init__(self, conn: sqlite3.Connection):
+        self.conn = conn
+
+    def seed_defaults_if_empty(self) -> int:
+        if self.conn.execute("SELECT COUNT(*) FROM parts_prices").fetchone()[0]:
+            return 0
+        rows = default_parts()
+        self.conn.executemany(
+            "INSERT INTO parts_prices (model, part, price, note) VALUES (?, ?, ?, ?)",
+            [(r.model, r.part.value, r.price, r.note) for r in rows],
+        )
+        return len(rows)
+
+    def all(self) -> list[PartPrice]:
+        rows = self.conn.execute("SELECT * FROM parts_prices ORDER BY model, part")
+        return [
+            PartPrice(r["model"], Defect(r["part"]), float(r["price"]), r["note"], int(r["id"]))
+            for r in rows if r["part"] in Defect._value2member_map_
+        ]
+
+    def upsert(self, row: PartPrice) -> None:
+        self.conn.execute(
+            """INSERT INTO parts_prices (model, part, price, note) VALUES (?, ?, ?, ?)
+               ON CONFLICT (model, part) DO UPDATE SET price = excluded.price, note = excluded.note""",
+            (row.model, row.part.value, row.price, row.note),
+        )
+
+    def delete(self, model: str, part: Defect) -> None:
+        self.conn.execute("DELETE FROM parts_prices WHERE model = ? AND part = ?", (model, part.value))
+
+
+class SettingsRepository:
+    KEY = "app"
+
+    def __init__(self, conn: sqlite3.Connection):
+        self.conn = conn
+
+    def load(self) -> Settings:
+        row = self.conn.execute("SELECT value FROM settings WHERE key = ?", (self.KEY,)).fetchone()
+        return Settings.from_json(row["value"] if row else None)
+
+    def save(self, settings: Settings) -> None:
+        self.conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+            (self.KEY, settings.to_json()),
+        )
+
+
+class FetchRunRepository:
+    def __init__(self, conn: sqlite3.Connection):
+        self.conn = conn
+
+    def start(self, source: str) -> int:
+        cur = self.conn.execute(
+            "INSERT INTO fetch_runs (source, started_at) VALUES (?, ?)", (source, _iso(utcnow()))
+        )
+        return int(cur.lastrowid)
+
+    def finish(self, run_id: int, *, found: int, new: int, error: str | None = None) -> None:
+        self.conn.execute(
+            "UPDATE fetch_runs SET finished_at = ?, status = ?, offers_found = ?, new_offers = ?, error = ? "
+            "WHERE id = ?",
+            (_iso(utcnow()), "error" if error else "ok", found, new, error, run_id),
+        )
+
+    def last_runs(self, limit: int = 20) -> list[sqlite3.Row]:
+        return list(self.conn.execute("SELECT * FROM fetch_runs ORDER BY id DESC LIMIT ?", (limit,)))
