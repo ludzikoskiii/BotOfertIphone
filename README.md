@@ -3,8 +3,10 @@
 Aplikacja desktopowa (Windows) do wyszukiwania ofert używanych iPhone'ów na OLX.pl,
 Allegro Lokalnie i Vinted, wyceny ich opłacalności i podpowiadania, czy i za ile kupić.
 
-> **Status: etap 1 z 5** — gotowa architektura, baza danych i logika wyceny z testami.
-> GUI i adaptery portali powstają w kolejnych etapach (patrz [Plan](#plan-etapów)).
+> **Status: etap 2 z 5** — działa pobieranie z OLX i okno z tabelą ofert.
+> Kolejne etapy: patrz [Plan](#plan-etapów).
+
+![Okno główne — etap 2](docs/screenshots/etap2.png)
 
 ## Uruchomienie na Windows (tryb deweloperski)
 
@@ -20,8 +22,30 @@ Allegro Lokalnie i Vinted, wyceny ich opłacalności i podpowiadania, czy i za i
 
    Jeśli PowerShell blokuje aktywację, wykonaj raz:
    `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
-3. Testy: `python -m pytest`.
-4. Demo wyceny (etap 1): `python -m phonebot.demo`.
+3. Uruchom aplikację: `python -m phonebot`.
+   Kliknij **⟳ Odśwież oferty** (F5), aby pobrać ogłoszenia z OLX.
+4. Testy: `python -m pytest`.
+5. Demo wyceny w konsoli: `python -m phonebot.demo`.
+
+### Okno główne (etap 2)
+
+- Tabela ma kolumny: zdjęcie, model, pamięć, stan, cena, wartość rynkowa,
+  szacowany zysk, max cena zakupu, werdykt, portal, lokalizacja (z odległością
+  od Kacwina), data dodania i link.
+- Każdą kolumnę można sortować kliknięciem nagłówka. Domyślnie tabela jest
+  posortowana po szacowanym zysku, malejąco.
+- Podwójne kliknięcie wiersza albo kliknięcie „Otwórz ↗” otwiera ogłoszenie w przeglądarce.
+- Przełącznik trybu (Naprawa → sprzedaż / Szybki resell) od razu przelicza wyceny.
+- Pobieranie działa w osobnym wątku, więc okno nie zawiesza się w trakcie.
+  Błąd portalu widać w pasku stanu; szczegóły są w podpowiedzi po najechaniu myszą
+  i w logu `%LOCALAPPDATA%\PhoneBot\logs\phonebot.log`.
+- Pobierane są frazy „iphone” oraz w trybie naprawy „iphone uszkodzony / zbity / na części”,
+  po 3 strony (po 40 ofert). Aplikacja pomija:
+  - akcesoria i części (etui, szkła, wyświetlacze…),
+  - ogłoszenia „kupię / skup / zamienię”,
+  - oferty z nierozpoznanym modelem.
+- Ceny wszystkich zebranych ofert zasilają bazę do liczenia wartości rynkowej.
+  Im dłużej aplikacja działa, tym dokładniejsze są wyceny.
 
 Gotowy plik `PhoneBot.exe` (bez instalowania Pythona) pojawi się w etapie 5.
 
@@ -94,10 +118,13 @@ phonebot/
     settings.py      wszystkie ustawienia (JSON w bazie)
     geo.py           odległości
   storage/       SQLite: schemat z migracjami, repozytoria
-  services/      evaluator.py (baza + wycena); w kolejnych etapach: skaner, harmonogram, powiadomienia
-  sources/       adaptery portali (base.py = interfejs; OLX/Allegro Lokalnie/Vinted w etapach 2 i 4)
-  ui/            GUI PySide6 (etap 2+)
-tests/           testy jednostkowe
+  core/filters.py  odsiewanie akcesoriów i ogłoszeń „kupię”
+  net/http.py    klient HTTP: limit zapytań na host, ponawianie (tenacity), cache odpowiedzi
+  services/      evaluator.py (baza + wycena), scanner.py (równoległe pobieranie z izolacją błędów)
+  sources/       adaptery portali: base.py (interfejs), olx.py; Allegro Lokalnie i Vinted w etapie 4
+  ui/            GUI PySide6: main_window.py, table_model.py, images.py (miniatury), workers.py (wątek)
+tests/           testy jednostkowe (+ fixtures z przykładowymi odpowiedziami OLX)
+tools/           screenshot.py — zrzut okna na danych testowych
 ```
 
 Aby dodać kolejny portal, utwórz plik w `sources/` z klasą dziedziczącą po
@@ -107,13 +134,19 @@ Awaria jednego adaptera jest izolowana i nie zatrzymuje pozostałych.
 ## Plan etapów
 
 1. ✅ Architektura, baza danych i logika wyceny z testami.
-2. Adapter OLX i podstawowa tabela ofert w GUI.
+2. ✅ Adapter OLX i podstawowa tabela ofert w GUI.
 3. Kolorowanie, werdykty i rekomendacje negocjacji w GUI (okno szczegółów).
 4. Allegro Lokalnie i Vinted, filtry, tryby, okno ustawień i edytor tabeli części.
 5. Automatyczne odświeżanie, powiadomienia Windows i Telegram, opcjonalna
    analiza opisów przez AI (Claude) oraz gotowy plik `.exe`.
 
 ## Uwaga o źródłach danych
+
+Adapter OLX korzysta z endpointu JSON `https://www.olx.pl/api/v1/offers/`, z którego ładuje dane strona OLX.
+Parser jest przetestowany na próbkach w `tests/fixtures/`, przygotowanych według formatu tego endpointu.
+Jeśli OLX zmieni format i adapter przestanie działać, pasek stanu pokaże błąd, a szczegóły trafią do logu.
+Opcja `olx_category_id` w ustawieniach pozwala zawęzić wyniki do kategorii iPhone.
+Domyślnie jest wyłączona i wyniki filtruje sama aplikacja.
 
 Żaden z trzech portali nie udostępnia publicznego API do wyszukiwania cudzych ogłoszeń.
 Adaptery będą korzystać z danych, które strony same ładują w przeglądarce. Każdy adapter:

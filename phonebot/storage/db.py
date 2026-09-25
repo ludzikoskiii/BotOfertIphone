@@ -79,13 +79,6 @@ MIGRATIONS: list[str] = [
         new_offers    INTEGER NOT NULL DEFAULT 0,
         error         TEXT
     );
-
-    CREATE TABLE http_cache (
-        url         TEXT PRIMARY KEY,
-        fetched_at  TEXT NOT NULL,
-        status      INTEGER NOT NULL,
-        body        BLOB NOT NULL
-    );
     """,
 ]
 

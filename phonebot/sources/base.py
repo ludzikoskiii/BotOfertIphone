@@ -22,6 +22,15 @@ class SearchQuery:
     max_pages: int = 3
 
 
+def search_phrases(watched_models: list[str], mode: Mode) -> list[str]:
+    """Frazy wyszukiwania: ogólne (zbierają też dane rynkowe) + specyficzne dla trybu."""
+    phrases = ["iphone"]
+    phrases += [m.lower() for m in watched_models]
+    if mode is Mode.REPAIR:
+        phrases += ["iphone uszkodzony", "iphone zbity", "iphone na części"]
+    return list(dict.fromkeys(phrases))
+
+
 class SourceError(Exception):
     """Błąd źródła — izolowany na poziomie adaptera, nie przerywa pozostałych."""
 

@@ -125,6 +125,9 @@ class Settings:
         default_factory=lambda: {"olx": True, "allegro_lokalnie": True, "vinted": True}
     )
     request_delay_s: float = 4.0
+    source_timeout_s: float = 180.0  # maks. czas pobierania z jednego portalu
+    offer_stale_days: int = 7  # ukryj oferty niewidziane od tylu dni
+    olx_category_id: int = 0  # 0 = bez filtra kategorii
     max_pages_per_query: int = 3
     watched_models: list[str] = field(default_factory=list)  # pusta = wszystkie
     price_min: float = 0.0

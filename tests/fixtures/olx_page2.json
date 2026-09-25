@@ -1,0 +1,420 @@
+{
+ "data": [
+  {
+   "id": 900000011,
+   "url": "https://www.olx.pl/d/oferta/iphone-12-pro-256-gb-grafit-CID99-ID11.html",
+   "title": "iPhone 12 Pro 256 GB grafit",
+   "created_time": "2026-09-24T18:11:00+02:00",
+   "last_refresh_time": "2026-09-24T18:11:00+02:00",
+   "description": "Stan dobry, bateria 86%",
+   "params": [
+    {
+     "key": "price",
+     "name": "Cena",
+     "type": "price",
+     "value": {
+      "value": 1650,
+      "type": "price",
+      "arranged": false,
+      "budget": false,
+      "currency": "PLN",
+      "negotiable": false,
+      "converted_value": null,
+      "previous_value": null,
+      "label": "1650 zł"
+     }
+    },
+    {
+     "key": "state",
+     "name": "Stan",
+     "type": "select",
+     "value": {
+      "key": "used",
+      "label": "Używane"
+     }
+    },
+    {
+     "key": "phonemodel",
+     "name": "Model telefonu",
+     "type": "select",
+     "value": {
+      "key": "iphone-12-pro",
+      "label": "iPhone 12 Pro"
+     }
+    },
+    {
+     "key": "builtinmemory_phones",
+     "name": "Wbudowana pamięć",
+     "type": "select",
+     "value": {
+      "key": "256gb",
+      "label": "256 GB"
+     }
+    }
+   ],
+   "business": false,
+   "map": {
+    "zoom": 12,
+    "lat": 51.1,
+    "lon": 17.03,
+    "radius": 2,
+    "show_detailed": false
+   },
+   "location": {
+    "city": {
+     "id": 11,
+     "name": "Wrocław",
+     "normalized_name": "wrocław"
+    },
+    "region": {
+     "id": 4,
+     "name": "Dolnośląskie",
+     "normalized_name": "dolnośląskie"
+    }
+   },
+   "photos": [
+    {
+     "id": 0,
+     "filename": "f0",
+     "rotation": 0,
+     "width": 1000,
+     "height": 750,
+     "link": "https://ireland.apollo.olxcdn.com:443/v1/files/abc110-PL/image;s={width}x{height}"
+    },
+    {
+     "id": 1,
+     "filename": "f1",
+     "rotation": 0,
+     "width": 1000,
+     "height": 750,
+     "link": "https://ireland.apollo.olxcdn.com:443/v1/files/abc111-PL/image;s={width}x{height}"
+    }
+   ],
+   "category": {
+    "id": 1627,
+    "type": "electronics"
+   },
+   "delivery": {
+    "rock": {
+     "offer_id": null,
+     "active": true,
+     "mode": "BuyWithDelivery"
+    }
+   },
+   "offer_type": "offer",
+   "status": "active"
+  },
+  {
+   "id": 900000012,
+   "url": "https://www.olx.pl/d/oferta/iphone-12-pro-256gb-złoty-CID99-ID12.html",
+   "title": "iPhone 12 Pro 256GB złoty",
+   "created_time": "2026-09-24T18:12:00+02:00",
+   "last_refresh_time": "2026-09-24T18:12:00+02:00",
+   "description": "Sprawny",
+   "params": [
+    {
+     "key": "price",
+     "name": "Cena",
+     "type": "price",
+     "value": {
+      "value": 1700,
+      "type": "price",
+      "arranged": false,
+      "budget": false,
+      "currency": "PLN",
+      "negotiable": false,
+      "converted_value": null,
+      "previous_value": null,
+      "label": "1700 zł"
+     }
+    },
+    {
+     "key": "state",
+     "name": "Stan",
+     "type": "select",
+     "value": {
+      "key": "used",
+      "label": "Używane"
+     }
+    },
+    {
+     "key": "phonemodel",
+     "name": "Model telefonu",
+     "type": "select",
+     "value": {
+      "key": "iphone-12-pro",
+      "label": "iPhone 12 Pro"
+     }
+    },
+    {
+     "key": "builtinmemory_phones",
+     "name": "Wbudowana pamięć",
+     "type": "select",
+     "value": {
+      "key": "256gb",
+      "label": "256 GB"
+     }
+    }
+   ],
+   "business": false,
+   "map": {
+    "zoom": 12,
+    "lat": 51.25,
+    "lon": 22.57,
+    "radius": 2,
+    "show_detailed": false
+   },
+   "location": {
+    "city": {
+     "id": 12,
+     "name": "Lublin",
+     "normalized_name": "lublin"
+    },
+    "region": {
+     "id": 4,
+     "name": "Lubelskie",
+     "normalized_name": "lubelskie"
+    }
+   },
+   "photos": [
+    {
+     "id": 0,
+     "filename": "f0",
+     "rotation": 0,
+     "width": 1000,
+     "height": 750,
+     "link": "https://ireland.apollo.olxcdn.com:443/v1/files/abc120-PL/image;s={width}x{height}"
+    },
+    {
+     "id": 1,
+     "filename": "f1",
+     "rotation": 0,
+     "width": 1000,
+     "height": 750,
+     "link": "https://ireland.apollo.olxcdn.com:443/v1/files/abc121-PL/image;s={width}x{height}"
+    }
+   ],
+   "category": {
+    "id": 1627,
+    "type": "electronics"
+   },
+   "delivery": {
+    "rock": {
+     "offer_id": null,
+     "active": true,
+     "mode": "BuyWithDelivery"
+    }
+   },
+   "offer_type": "offer",
+   "status": "active"
+  },
+  {
+   "id": 900000013,
+   "url": "https://www.olx.pl/d/oferta/iphone-14-pro-128gb-zbity-tył-CID99-ID13.html",
+   "title": "iPhone 14 Pro 128GB zbity tył",
+   "created_time": "2026-09-24T18:13:00+02:00",
+   "last_refresh_time": "2026-09-24T18:13:00+02:00",
+   "description": "Zbity tył, przód idealny. Cena ostateczna.",
+   "params": [
+    {
+     "key": "price",
+     "name": "Cena",
+     "type": "price",
+     "value": {
+      "value": 1900,
+      "type": "price",
+      "arranged": false,
+      "budget": false,
+      "currency": "PLN",
+      "negotiable": false,
+      "converted_value": null,
+      "previous_value": null,
+      "label": "1900 zł"
+     }
+    },
+    {
+     "key": "state",
+     "name": "Stan",
+     "type": "select",
+     "value": {
+      "key": "damaged",
+      "label": "Uszkodzone"
+     }
+    },
+    {
+     "key": "phonemodel",
+     "name": "Model telefonu",
+     "type": "select",
+     "value": {
+      "key": "iphone-14-pro",
+      "label": "iPhone 14 Pro"
+     }
+    },
+    {
+     "key": "builtinmemory_phones",
+     "name": "Wbudowana pamięć",
+     "type": "select",
+     "value": {
+      "key": "128gb",
+      "label": "128 GB"
+     }
+    }
+   ],
+   "business": false,
+   "map": {
+    "zoom": 12,
+    "lat": 50.06,
+    "lon": 19.94,
+    "radius": 2,
+    "show_detailed": false
+   },
+   "location": {
+    "city": {
+     "id": 13,
+     "name": "Kraków",
+     "normalized_name": "kraków"
+    },
+    "region": {
+     "id": 4,
+     "name": "Małopolskie",
+     "normalized_name": "małopolskie"
+    }
+   },
+   "photos": [
+    {
+     "id": 0,
+     "filename": "f0",
+     "rotation": 0,
+     "width": 1000,
+     "height": 750,
+     "link": "https://ireland.apollo.olxcdn.com:443/v1/files/abc130-PL/image;s={width}x{height}"
+    },
+    {
+     "id": 1,
+     "filename": "f1",
+     "rotation": 0,
+     "width": 1000,
+     "height": 750,
+     "link": "https://ireland.apollo.olxcdn.com:443/v1/files/abc131-PL/image;s={width}x{height}"
+    }
+   ],
+   "category": {
+    "id": 1627,
+    "type": "electronics"
+   },
+   "delivery": {
+    "rock": {
+     "offer_id": null,
+     "active": true,
+     "mode": "BuyWithDelivery"
+    }
+   },
+   "offer_type": "offer",
+   "status": "active"
+  },
+  {
+   "id": 900000014,
+   "url": "https://www.olx.pl/d/oferta/iphone-11-64gb-CID99-ID14.html",
+   "title": "iPhone 11 64GB",
+   "created_time": "2026-09-24T18:14:00+02:00",
+   "last_refresh_time": "2026-09-24T18:14:00+02:00",
+   "description": "Bateria 76%, poza tym sprawny. Tylko odbiór osobisty.",
+   "params": [
+    {
+     "key": "price",
+     "name": "Cena",
+     "type": "price",
+     "value": {
+      "value": 650,
+      "type": "price",
+      "arranged": false,
+      "budget": false,
+      "currency": "PLN",
+      "negotiable": false,
+      "converted_value": null,
+      "previous_value": null,
+      "label": "650 zł"
+     }
+    },
+    {
+     "key": "state",
+     "name": "Stan",
+     "type": "select",
+     "value": {
+      "key": "used",
+      "label": "Używane"
+     }
+    },
+    {
+     "key": "phonemodel",
+     "name": "Model telefonu",
+     "type": "select",
+     "value": {
+      "key": "iphone-11",
+      "label": "iPhone 11"
+     }
+    },
+    {
+     "key": "builtinmemory_phones",
+     "name": "Wbudowana pamięć",
+     "type": "select",
+     "value": {
+      "key": "64gb",
+      "label": "64 GB"
+     }
+    }
+   ],
+   "business": false,
+   "map": {
+    "zoom": 12,
+    "lat": 49.44,
+    "lon": 19.85,
+    "radius": 2,
+    "show_detailed": false
+   },
+   "location": {
+    "city": {
+     "id": 14,
+     "name": "Czarny Dunajec",
+     "normalized_name": "czarny dunajec"
+    },
+    "region": {
+     "id": 4,
+     "name": "Małopolskie",
+     "normalized_name": "małopolskie"
+    }
+   },
+   "photos": [
+    {
+     "id": 0,
+     "filename": "f0",
+     "rotation": 0,
+     "width": 1000,
+     "height": 750,
+     "link": "https://ireland.apollo.olxcdn.com:443/v1/files/abc140-PL/image;s={width}x{height}"
+    }
+   ],
+   "category": {
+    "id": 1627,
+    "type": "electronics"
+   },
+   "delivery": {
+    "rock": {
+     "offer_id": null,
+     "active": false,
+     "mode": "Disabled"
+    }
+   },
+   "offer_type": "offer",
+   "status": "active"
+  }
+ ],
+ "metadata": {
+  "total_elements": 14
+ },
+ "links": {
+  "self": {
+   "href": "https://www.olx.pl/api/v1/offers/?offset=40&limit=40&query=iphone"
+  }
+ }
+}
