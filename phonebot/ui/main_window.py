@@ -5,28 +5,31 @@ import logging
 import sqlite3
 from pathlib import Path
 
-from PySide6.QtCore import QModelIndex, QSortFilterProxyModel, Qt, QThread, QUrl
-from PySide6.QtGui import QAction, QDesktopServices
+from PySide6.QtCore import QModelIndex, QPoint, QSize, QSortFilterProxyModel, Qt, QThread, QUrl
+from PySide6.QtGui import QAction, QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
     QHeaderView,
     QLabel,
     QMainWindow,
+    QMenu,
     QStackedWidget,
     QTableView,
     QToolBar,
     QWidget,
 )
 
-from ..core.models import Mode
+from ..core.models import Mode, Offer, OfferStatus, RowColor, Valuation
 from ..net.http import HostRateLimiter, ResponseCache
 from ..paths import thumbnails_dir
 from ..services.evaluator import Evaluator
 from ..services.scanner import ScanReport
 from ..storage.repositories import OfferRepository, SettingsRepository
 from .images import THUMB_SIZE, ThumbnailCache
+from .offer_details import PHOTO_SIZE, OfferDetailsDialog
 from .table_model import SORT_ROLE, Col, OffersTableModel
+from .theme import COLOR_LABEL, ROW_BACKGROUND
 from .workers import ScanWorker, start_in_thread
 
 log = logging.getLogger(__name__)
@@ -47,7 +50,9 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("PhoneBot — opłacalne iPhone'y")
         self.resize(1400, 800)
 
-        self.thumbs = ThumbnailCache(thumbs_dir or thumbnails_dir(), self)
+        cache_dir = thumbs_dir or thumbnails_dir()
+        self.thumbs = ThumbnailCache(cache_dir, self)
+        self.photos = ThumbnailCache(cache_dir, self, size=QSize(PHOTO_SIZE))
         self.model = OffersTableModel(self.thumbs, self)
         self.proxy = QSortFilterProxyModel(self)
         self.proxy.setSourceModel(self.model)
@@ -79,6 +84,19 @@ class MainWindow(QMainWindow):
         self.refresh_action.setShortcut("F5")
         self.refresh_action.triggered.connect(self.start_scan)
         tb.addAction(self.refresh_action)
+        tb.addSeparator()
+
+        self.show_hidden_action = QAction("Pokaż ukryte", self)
+        self.show_hidden_action.setCheckable(True)
+        self.show_hidden_action.toggled.connect(lambda _checked: self.reload())
+        tb.addAction(self.show_hidden_action)
+        tb.addSeparator()
+
+        legend = "  ".join(
+            f'<span style="background:{ROW_BACKGROUND[c]}">&nbsp;&nbsp;&nbsp;&nbsp;</span> {COLOR_LABEL[c]}'
+            for c in RowColor
+        )
+        tb.addWidget(QLabel(f"&nbsp;{legend}&nbsp;&nbsp;⚑ = czerwone flagi&nbsp;&nbsp;★ = obserwowana"))
 
         self.count_label = QLabel()
         spacer = QWidget()
@@ -95,7 +113,11 @@ class MainWindow(QMainWindow):
         view.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         view.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         view.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        view.setAlternatingRowColors(True)
+        view.setAlternatingRowColors(False)
+        view.setWordWrap(False)
+        view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        view.customContextMenuRequested.connect(self._context_menu)
+        view.setStyleSheet("QTableView::item:selected { background: #339af0; color: white; }")
         view.setIconSize(THUMB_SIZE)
         view.verticalHeader().setDefaultSectionSize(THUMB_SIZE.height() + 6)
         view.verticalHeader().hide()
@@ -103,12 +125,13 @@ class MainWindow(QMainWindow):
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         header.setStretchLastSection(True)
         widths = {Col.PHOTO: 84, Col.MODEL: 150, Col.STORAGE: 70, Col.CONDITION: 120, Col.PRICE: 90,
-                  Col.MARKET: 115, Col.PROFIT: 90, Col.MAX_BUY: 120, Col.VERDICT: 90, Col.SOURCE: 110,
+                  Col.MARKET: 115, Col.PROFIT: 90, Col.MAX_BUY: 120, Col.VERDICT: 125, Col.SOURCE: 110,
                   Col.LOCATION: 170, Col.ADDED: 95, Col.LINK: 75}
         for col, w in widths.items():
             view.setColumnWidth(col, w)
-        view.doubleClicked.connect(self._open_offer)
+        view.doubleClicked.connect(self._double_clicked)
         view.clicked.connect(self._cell_clicked)
+        QShortcut(QKeySequence(Qt.Key.Key_Return), view, activated=self._details_for_current)
         self.table = view
 
         self.empty_label = QLabel("Brak ofert w bazie.\nKliknij „⟳ Odśwież oferty” (F5), aby pobrać ogłoszenia.")
@@ -123,11 +146,12 @@ class MainWindow(QMainWindow):
 
     def reload(self) -> None:
         """Wczytuje oferty z bazy i wycenia je w bieżącym trybie."""
-        offers = OfferRepository(self.conn).list()
+        offers = OfferRepository(self.conn).list(include_hidden=self.show_hidden_action.isChecked())
         rows = Evaluator(self.conn, self.settings).evaluate_all(offers)
         self.model.set_rows(rows)
         self.stack.setCurrentWidget(self.table if rows else self.empty_label)
-        self.count_label.setText(f"Ofert: {len(rows)}  ")
+        greens = sum(1 for _, v in rows if v.color is RowColor.GREEN)
+        self.count_label.setText(f"Ofert: {len(rows)} (zielonych: {greens})  ")
 
     def _mode_changed(self) -> None:
         self.settings.mode = self.mode_combo.currentData()
@@ -169,15 +193,62 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------- interakcje ---
 
-    def _offer_at(self, index: QModelIndex):
-        return self.model.row_at(self.proxy.mapToSource(index).row())[0]
+    def _row_at(self, index: QModelIndex) -> tuple[Offer, Valuation]:
+        return self.model.row_at(self.proxy.mapToSource(index).row())
 
     def _open_offer(self, index: QModelIndex) -> None:
-        QDesktopServices.openUrl(QUrl(self._offer_at(index).raw.url))
+        QDesktopServices.openUrl(QUrl(self._row_at(index)[0].raw.url))
 
     def _cell_clicked(self, index: QModelIndex) -> None:
         if index.column() == Col.LINK:
             self._open_offer(index)
+
+    def _double_clicked(self, index: QModelIndex) -> None:
+        if index.column() != Col.LINK:
+            self.show_details(index)
+
+    def _details_for_current(self) -> None:
+        index = self.table.currentIndex()
+        if index.isValid():
+            self.show_details(index)
+
+    def show_details(self, index: QModelIndex) -> OfferDetailsDialog:
+        offer, val = self._row_at(index)
+        dialog = OfferDetailsDialog(offer, val, self.settings, OfferRepository(self.conn), self.photos, self)
+        dialog.status_changed.connect(self._status_changed)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        dialog.show()
+        return dialog
+
+    def set_offer_status(self, offer_id: int, status: OfferStatus) -> None:
+        OfferRepository(self.conn).set_status(offer_id, status)
+        self._status_changed(offer_id, status.value)
+
+    def _status_changed(self, offer_id: int, status: str) -> None:
+        st = OfferStatus(status)
+        if st is OfferStatus.HIDDEN and not self.show_hidden_action.isChecked():
+            self.reload()
+        else:
+            self.model.update_status(offer_id, st)
+
+    def _context_menu(self, pos: QPoint) -> None:
+        index = self.table.indexAt(pos)
+        if not index.isValid():
+            return
+        offer, _ = self._row_at(index)
+        menu = QMenu(self)
+        menu.addAction("Szczegóły i wyliczenie…", lambda: self.show_details(index))
+        menu.addAction("Otwórz ogłoszenie w przeglądarce", lambda: self._open_offer(index))
+        menu.addSeparator()
+        if offer.status is OfferStatus.WATCHED:
+            menu.addAction("☆ Przestań obserwować", lambda: self.set_offer_status(offer.id, OfferStatus.NEW))
+        else:
+            menu.addAction("★ Obserwuj", lambda: self.set_offer_status(offer.id, OfferStatus.WATCHED))
+        if offer.status is OfferStatus.HIDDEN:
+            menu.addAction("Przywróć (odkryj)", lambda: self.set_offer_status(offer.id, OfferStatus.NEW))
+        else:
+            menu.addAction("Ukryj ofertę", lambda: self.set_offer_status(offer.id, OfferStatus.HIDDEN))
+        menu.exec(self.table.viewport().mapToGlobal(pos))
 
     def closeEvent(self, event) -> None:  # noqa: N802
         if self._thread is not None:

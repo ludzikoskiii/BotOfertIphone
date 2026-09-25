@@ -3,10 +3,11 @@
 Aplikacja desktopowa (Windows) do wyszukiwania ofert używanych iPhone'ów na OLX.pl,
 Allegro Lokalnie i Vinted, wyceny ich opłacalności i podpowiadania, czy i za ile kupić.
 
-> **Status: etap 2 z 5** — działa pobieranie z OLX i okno z tabelą ofert.
-> Kolejne etapy: patrz [Plan](#plan-etapów).
+> **Status: etap 3 z 5** — pobieranie z OLX, tabela z kolorami i werdyktami,
+> okno szczegółów z pełnym wyliczeniem i negocjacjami. Kolejne etapy: patrz [Plan](#plan-etapów).
 
-![Okno główne — etap 2](docs/screenshots/etap2.png)
+![Okno główne](docs/screenshots/etap3.png)
+![Szczegóły oferty](docs/screenshots/etap3_szczegoly.png)
 
 ## Uruchomienie na Windows (tryb deweloperski)
 
@@ -27,14 +28,35 @@ Allegro Lokalnie i Vinted, wyceny ich opłacalności i podpowiadania, czy i za i
 4. Testy: `python -m pytest`.
 5. Demo wyceny w konsoli: `python -m phonebot.demo`.
 
-### Okno główne (etap 2)
+### Okno główne
 
 - Tabela ma kolumny: zdjęcie, model, pamięć, stan, cena, wartość rynkowa,
   szacowany zysk, max cena zakupu, werdykt, portal, lokalizacja (z odległością
   od Kacwina), data dodania i link.
 - Każdą kolumnę można sortować kliknięciem nagłówka. Domyślnie tabela jest
   posortowana po szacowanym zysku, malejąco.
-- Podwójne kliknięcie wiersza albo kliknięcie „Otwórz ↗” otwiera ogłoszenie w przeglądarce.
+- Kolor wiersza zależy od oceny 0–100:
+  - zielony (≥ 65 pkt) — oferta warta uwagi,
+  - żółty (≥ 40 pkt) — przeciętna,
+  - czerwony — nieatrakcyjna.
+
+  Kolumna „Werdykt” pokazuje KUPUJ / NEGOCJUJ / ODPUŚĆ razem z oceną.
+- Oznaczenia przy modelu:
+  - **⚑N** — liczba czerwonych flag; najedź myszą, aby zobaczyć listę. Przy poważnej fladze
+    (iCloud, IMEI, MDM, podróbka) nazwa modelu jest czerwona;
+  - **★** — oferta obserwowana.
+- **Podwójne kliknięcie** wiersza albo Enter otwiera okno szczegółów. Znajdziesz w nim:
+  - zdjęcia oferty,
+  - werdykt z uzasadnieniem,
+  - rekomendację negocjacji (cena otwierająca i maksymalna),
+  - pełne wyliczenie: wartość rynkową i jej źródło, każdą pozycję kosztów, zysk, wymagany zysk i max cenę,
+  - czerwone flagi z karą punktową,
+  - dane rozpoznane z ogłoszenia, historię ceny i opis ogłoszenia.
+
+  Z tego okna możesz też otworzyć ogłoszenie w przeglądarce, obserwować je albo ukryć.
+- Kliknięcie „Otwórz ↗” od razu otwiera ogłoszenie w przeglądarce.
+- **Prawy przycisk myszy** na wierszu otwiera menu: szczegóły, otwórz, obserwuj, ukryj.
+  Ukryte oferty znikają z listy. Przycisk „Pokaż ukryte” pozwala je przywrócić.
 - Przełącznik trybu (Naprawa → sprzedaż / Szybki resell) od razu przelicza wyceny.
 - Pobieranie działa w osobnym wątku, więc okno nie zawiesza się w trakcie.
   Błąd portalu widać w pasku stanu; szczegóły są w podpowiedzi po najechaniu myszą
@@ -122,7 +144,8 @@ phonebot/
   net/http.py    klient HTTP: limit zapytań na host, ponawianie (tenacity), cache odpowiedzi
   services/      evaluator.py (baza + wycena), scanner.py (równoległe pobieranie z izolacją błędów)
   sources/       adaptery portali: base.py (interfejs), olx.py; Allegro Lokalnie i Vinted w etapie 4
-  ui/            GUI PySide6: main_window.py, table_model.py, images.py (miniatury), workers.py (wątek)
+  ui/            GUI PySide6: main_window.py, table_model.py, offer_details.py (+ details_html.py),
+                 images.py (miniatury), workers.py (wątek), theme.py (kolory)
 tests/           testy jednostkowe (+ fixtures z przykładowymi odpowiedziami OLX)
 tools/           screenshot.py — zrzut okna na danych testowych
 ```
@@ -135,7 +158,7 @@ Awaria jednego adaptera jest izolowana i nie zatrzymuje pozostałych.
 
 1. ✅ Architektura, baza danych i logika wyceny z testami.
 2. ✅ Adapter OLX i podstawowa tabela ofert w GUI.
-3. Kolorowanie, werdykty i rekomendacje negocjacji w GUI (okno szczegółów).
+3. ✅ Kolorowanie, werdykty i rekomendacje negocjacji w GUI (okno szczegółów).
 4. Allegro Lokalnie i Vinted, filtry, tryby, okno ustawień i edytor tabeli części.
 5. Automatyczne odświeżanie, powiadomienia Windows i Telegram, opcjonalna
    analiza opisów przez AI (Claude) oraz gotowy plik `.exe`.

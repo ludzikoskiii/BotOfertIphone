@@ -1,6 +1,6 @@
 """Zrzut ekranu okna głównego na danych testowych (bez sieci).
 
-    QT_QPA_PLATFORM=offscreen python tools/screenshot.py docs/screenshots/etap2.png
+    QT_QPA_PLATFORM=offscreen python tools/screenshot.py docs/screenshots/okno.png [docs/screenshots/szczegoly.png]
 """
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ from phonebot.storage.repositories import PartsRepository, SettingsRepository  #
 FIX = ROOT / "tests" / "fixtures"
 
 
-def main(out: str) -> None:
+def main(out: str, details_out: str | None = None) -> None:
     pages = {False: json.loads((FIX / "olx_page1.json").read_text(encoding="utf-8")),
              True: json.loads((FIX / "olx_page2.json").read_text(encoding="utf-8"))}
     tmp = Path(tempfile.mkdtemp())
@@ -53,7 +53,13 @@ def main(out: str) -> None:
     app.processEvents()
     win.grab().save(out)
     print("zapisano", out)
+    if details_out:
+        dialog = win.show_details(win.proxy.index(0, 0))
+        dialog.resize(1000, 900)
+        app.processEvents()
+        dialog.grab().save(details_out)
+        print("zapisano", details_out)
 
 
 if __name__ == "__main__":
-    main(sys.argv[1] if len(sys.argv) > 1 else "screenshot.png")
+    main(sys.argv[1] if len(sys.argv) > 1 else "screenshot.png", sys.argv[2] if len(sys.argv) > 2 else None)

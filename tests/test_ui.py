@@ -9,7 +9,7 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 QtWidgets = pytest.importorskip("PySide6.QtWidgets")
 
-from phonebot.core.models import Mode, Verdict  # noqa: E402
+from phonebot.core.models import Mode, OfferStatus, Verdict  # noqa: E402
 from phonebot.core.settings import Settings  # noqa: E402
 from phonebot.net.http import HostRateLimiter, HttpClient  # noqa: E402
 from phonebot.services.scanner import Scanner  # noqa: E402
@@ -58,7 +58,7 @@ def test_table_filled_and_sorted_by_profit(window):
         _, val = next(x for x in window.model.rows() if x[0].id == oid)
         profits.append(val.expected_profit if val.expected_profit is not None else float("-inf"))
     assert profits == sorted(profits, reverse=True)
-    assert cell(window, 0, Col.VERDICT) == Verdict.BUY.value
+    assert cell(window, 0, Col.VERDICT).startswith(Verdict.BUY.value)
     assert cell(window, 0, Col.PRICE).endswith("zł")
 
 
@@ -74,7 +74,7 @@ def test_sort_by_price(window):
 def test_mode_switch_reevaluates(window):
     window.mode_combo.setCurrentIndex(window.mode_combo.findData(Mode.RESELL.value))
     verdicts = {cell(window, r, Col.CONDITION): cell(window, r, Col.VERDICT) for r in range(window.proxy.rowCount())}
-    assert verdicts["Uszkodzony"] == Verdict.SKIP.value
+    assert verdicts["Uszkodzony"].startswith(Verdict.SKIP.value)
     assert window.settings_repo.load().mode == Mode.RESELL.value
 
 
@@ -118,3 +118,51 @@ def test_scan_runs_in_background_thread(window, monkeypatch):
     assert seen_threads and seen_threads[0] is not threading.main_thread()
     assert window._status.text() == "OLX: 1 ofert (1 nowych)"
     assert window.refresh_action.isEnabled()
+
+
+def find_row(win, text_in_title, exact=False):
+    for r in range(win.proxy.rowCount()):
+        offer, val = win._row_at(win.proxy.index(r, 0))
+        if (offer.raw.title == text_in_title) if exact else (text_in_title in offer.raw.title):
+            return r, offer, val
+    raise AssertionError(text_in_title)
+
+
+def test_row_colors_and_flag_markers(window):
+    from PySide6.QtCore import Qt
+
+    from phonebot.core.models import RowColor
+    from phonebot.ui.theme import ROW_BACKGROUND
+
+    r, offer, val = find_row(window, "zbity ekran")
+    bg = window.proxy.index(r, Col.PRICE).data(Qt.ItemDataRole.BackgroundRole).color().name()
+    assert bg == ROW_BACKGROUND[val.color]
+    assert val.color is RowColor.GREEN
+    r, offer, val = find_row(window, "iPhone 12 Pro 256GB", exact=True)  # blokada iCloud, brak zdjęć
+    assert val.has_hard_flag
+    assert "⚑" in cell(window, r, Col.MODEL)
+    tooltip = window.proxy.index(r, Col.MODEL).data(Qt.ItemDataRole.ToolTipRole)
+    assert "Blokada iCloud" in tooltip and "Brak zdjęć" in tooltip
+
+
+def test_watch_and_hide(window):
+    r, offer, _ = find_row(window, "zbity ekran")
+    window.set_offer_status(offer.id, OfferStatus.WATCHED)
+    r, offer, _ = find_row(window, "zbity ekran")
+    assert cell(window, r, Col.MODEL).startswith("★")
+    before = window.proxy.rowCount()
+    window.set_offer_status(offer.id, OfferStatus.HIDDEN)
+    assert window.proxy.rowCount() == before - 1
+    window.show_hidden_action.setChecked(True)
+    assert window.proxy.rowCount() == before
+
+
+def test_details_dialog(window):
+    r, offer, val = find_row(window, "zbity ekran")
+    dialog = window.show_details(window.proxy.index(r, 0))
+    html = dialog.browser.toHtml()
+    assert "Rekomendacja negocjacji" in html and "Maksymalna cena zakupu" in html
+    dialog._toggle_watch()
+    assert window.model.row_at(window.model.row_of(offer.id))[0].status is OfferStatus.WATCHED
+    assert "Przestań" in dialog.watch_btn.text()
+    dialog.close()

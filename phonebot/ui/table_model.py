@@ -7,10 +7,12 @@ from enum import IntEnum
 from typing import Any
 
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, QPersistentModelIndex, Qt
+from PySide6.QtGui import QBrush, QColor, QFont
 
 from ..core.catalog import format_storage
-from ..core.models import Offer, Valuation, Verdict
+from ..core.models import Offer, OfferStatus, Severity, Valuation, Verdict
 from .images import ThumbnailCache
+from .theme import FLAG_MARK, ROW_BACKGROUND, VERDICT_COLOR, WATCHED_MARK
 
 SORT_ROLE = Qt.ItemDataRole.UserRole + 1
 OFFER_ROLE = Qt.ItemDataRole.UserRole + 2
@@ -77,6 +79,11 @@ class OffersTableModel(QAbstractTableModel):
         self._thumbs = thumbs
         self._rows_by_photo: dict[str, list[int]] = defaultdict(list)
         thumbs.ready.connect(self._thumb_ready)
+        self._bg = {c: QBrush(QColor(v)) for c, v in ROW_BACKGROUND.items()}
+        self._verdict_fg = {v: QBrush(QColor(c)) for v, c in VERDICT_COLOR.items()}
+        self._flag_fg = QBrush(QColor("#c92a2a"))
+        self._bold = QFont()
+        self._bold.setBold(True)
 
     # --- dane ---
 
@@ -91,6 +98,19 @@ class OffersTableModel(QAbstractTableModel):
 
     def row_at(self, row: int) -> tuple[Offer, Valuation]:
         return self._rows[row]
+
+    def row_of(self, offer_id: int) -> int | None:
+        for i, (offer, _) in enumerate(self._rows):
+            if offer.id == offer_id:
+                return i
+        return None
+
+    def update_status(self, offer_id: int, status: OfferStatus) -> None:
+        row = self.row_of(offer_id)
+        if row is None:
+            return
+        self._rows[row][0].status = status
+        self.dataChanged.emit(self.index(row, 0), self.index(row, len(Col) - 1))
 
     def rows(self) -> list[tuple[Offer, Valuation]]:
         return self._rows
@@ -124,6 +144,18 @@ class OffersTableModel(QAbstractTableModel):
             return self._sort_key(col, offer, val)
         if role == OFFER_ROLE:
             return offer.id
+        if role == Qt.ItemDataRole.BackgroundRole:
+            return self._bg[val.color]
+        if role == Qt.ItemDataRole.ForegroundRole:
+            if col is Col.VERDICT:
+                return self._verdict_fg[val.verdict]
+            if col is Col.MODEL and val.has_hard_flag:
+                return self._flag_fg
+            return None
+        if role == Qt.ItemDataRole.FontRole:
+            if col in (Col.VERDICT, Col.PROFIT) or (col is Col.MODEL and offer.status is OfferStatus.WATCHED):
+                return self._bold
+            return None
         if role == Qt.ItemDataRole.DecorationRole and col is Col.PHOTO:
             return self._thumbs.get(offer.raw.photos[0] if offer.raw.photos else None)
         if role == Qt.ItemDataRole.TextAlignmentRole:
@@ -133,7 +165,9 @@ class OffersTableModel(QAbstractTableModel):
                 return int(Qt.AlignmentFlag.AlignCenter)
         if role == Qt.ItemDataRole.ToolTipRole:
             if col is Col.MODEL:
-                return offer.raw.title
+                flags = "".join(f"\n{FLAG_MARK} {f.label}" + (" (poważna)" if f.severity is Severity.HARD else "")
+                                for f in dict.fromkeys(val.flags))
+                return offer.raw.title + flags
             if col is Col.LINK:
                 return offer.raw.url
             return "\n".join(val.reasons) if val.reasons else None
@@ -145,7 +179,9 @@ class OffersTableModel(QAbstractTableModel):
             case Col.PHOTO:
                 return ""
             case Col.MODEL:
-                return p.model or "?"
+                prefix = f"{WATCHED_MARK} " if offer.status is OfferStatus.WATCHED else ""
+                suffix = f"  {FLAG_MARK}{len(set(val.flags))}" if val.flags else ""
+                return f"{prefix}{p.model or '?'}{suffix}"
             case Col.STORAGE:
                 return format_storage(p.storage_gb)
             case Col.CONDITION:
@@ -159,7 +195,7 @@ class OffersTableModel(QAbstractTableModel):
             case Col.MAX_BUY:
                 return money(val.max_buy_price)
             case Col.VERDICT:
-                return val.verdict.value
+                return f"{val.verdict.value} · {val.score}"
             case Col.SOURCE:
                 return SOURCE_NAMES.get(offer.raw.source, offer.raw.source)
             case Col.LOCATION:

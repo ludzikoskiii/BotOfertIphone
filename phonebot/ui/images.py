@@ -15,13 +15,13 @@ THUMB_SIZE = QSize(72, 54)
 MAX_PARALLEL = 4
 
 
-def placeholder(text: str = "brak\nzdjęcia") -> QPixmap:
-    pm = QPixmap(THUMB_SIZE)
+def placeholder(text: str = "brak\nzdjęcia", size: QSize = THUMB_SIZE) -> QPixmap:
+    pm = QPixmap(size)
     pm.fill(QColor("#e9ecef"))
     p = QPainter(pm)
     p.setPen(QColor("#868e96"))
     font = QFont()
-    font.setPointSize(7)
+    font.setPointSize(7 if size.width() < 150 else 11)
     p.setFont(font)
     p.drawText(pm.rect(), Qt.AlignmentFlag.AlignCenter, text)
     p.end()
@@ -33,19 +33,21 @@ class ThumbnailCache(QObject):
 
     ready = Signal(str)
 
-    def __init__(self, cache_dir: Path, parent: QObject | None = None):
+    def __init__(self, cache_dir: Path, parent: QObject | None = None, size: QSize = THUMB_SIZE):
         super().__init__(parent)
         self.cache_dir = cache_dir
+        self.size = size
         self._mem: dict[str, QPixmap] = {}
         self._failed: set[str] = set()
         self._queue: list[str] = []
         self._active: set[str] = set()
         self._nam = QNetworkAccessManager(self)
-        self._placeholder = placeholder()
-        self._loading = placeholder("…")
+        self._placeholder = placeholder(size=size)
+        self._loading = placeholder("…", size)
 
     def _path(self, url: str) -> Path:
-        return self.cache_dir / (hashlib.sha1(url.encode()).hexdigest() + ".jpg")
+        name = hashlib.sha1(url.encode()).hexdigest()
+        return self.cache_dir / f"{name}_{self.size.width()}.jpg"
 
     def get(self, url: str | None) -> QPixmap:
         if not url or url in self._failed:
@@ -79,7 +81,7 @@ class ThumbnailCache(QObject):
             else:
                 pm = QPixmap()
                 if pm.loadFromData(bytes(reply.readAll())):
-                    pm = pm.scaled(THUMB_SIZE, Qt.AspectRatioMode.KeepAspectRatio,
+                    pm = pm.scaled(self.size, Qt.AspectRatioMode.KeepAspectRatio,
                                    Qt.TransformationMode.SmoothTransformation)
                     pm.save(str(self._path(url)), "JPG", 85)
                     self._mem[url] = pm
