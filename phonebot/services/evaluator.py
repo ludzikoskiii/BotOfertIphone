@@ -7,6 +7,7 @@ from ..core.geo import road_distance_km
 from ..core.market import estimate_market_value
 from ..core.models import MarketEstimate, MarketObservation, Mode, Offer, Valuation
 from ..core.parts import PartsCatalog
+from ..core.places import find_place
 from ..core.settings import Settings
 from ..core.valuation import evaluate, target_market_class
 from ..storage.repositories import OfferRepository, PartsRepository
@@ -38,7 +39,11 @@ class Evaluator:
     def evaluate(self, offer: Offer, mode: Mode | None = None) -> Valuation:
         mode = mode or self.settings.mode_enum
         s = self.settings
-        offer.distance_km = road_distance_km(s.home_lat, s.home_lon, offer.raw.lat, offer.raw.lon)
+        lat, lon = offer.raw.lat, offer.raw.lon
+        if lat is None or lon is None:
+            place = find_place(offer.raw.city)  # np. Allegro Lokalnie podaje tylko miasto
+            lat, lon = (place.lat, place.lon) if place else (None, None)
+        offer.distance_km = road_distance_km(s.home_lat, s.home_lon, lat, lon)
         return evaluate(offer, self.market_for(offer, mode), self.parts, s, mode)
 
     def evaluate_all(self, offers: list[Offer], mode: Mode | None = None) -> list[tuple[Offer, Valuation]]:

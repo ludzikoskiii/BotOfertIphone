@@ -94,6 +94,27 @@ def acquisition_cost(offer: Offer, settings: Settings) -> CostItem:
     return CostItem("Wysyłka do Ciebie", settings.buy_shipping_cost)
 
 
+def buyer_fee_rate(offer: Offer, settings: Settings) -> tuple[float, float]:
+    """Opłata kupującego (np. ochrona kupujących na Vinted) jako (ułamek ceny, kwota stała).
+
+    Dokładna kwota podana przez portal ma pierwszeństwo przed stawką z ustawień.
+    """
+    exact = offer.raw.params.get("buyer_fee")
+    if exact and offer.price > 0:
+        try:
+            return float(exact) / offer.price, 0.0
+        except ValueError:
+            pass
+    pct, fixed = (settings.buyer_fees.get(offer.raw.source) or [0.0, 0.0])[:2]
+    return float(pct) / 100, float(fixed)
+
+
+def buyer_fee_item(offer: Offer, settings: Settings) -> CostItem | None:
+    rate, fixed = buyer_fee_rate(offer, settings)
+    amount = round(offer.price * rate + fixed, 2)
+    return CostItem("Opłata kupującego (ochrona kupujących)", amount) if amount > 0 else None
+
+
 def selling_costs(value: float, settings: Settings) -> list[CostItem]:
     ch = settings.sales_channel()
     items = []
@@ -118,6 +139,9 @@ def evaluate(offer: Offer, market: MarketEstimate, parts: PartsCatalog, settings
         flags.append(RedFlag.UNKNOWN_REPAIR_COST)
     repair_total = round(sum(i.amount for i in repair_items), 2)
     acquisition = acquisition_cost(offer, settings)
+    fee_item = buyer_fee_item(offer, settings)
+    buy_items = [acquisition, *([fee_item] if fee_item else [])]
+    buy_total = sum(i.amount for i in buy_items)
     rule = settings.profit_rule(mode)
 
     mode_mismatch = mode is Mode.RESELL and any(not d.cosmetic for d in offer.parsed.defects) or (
@@ -126,12 +150,12 @@ def evaluate(offer: Offer, market: MarketEstimate, parts: PartsCatalog, settings
 
     if market.value is None:
         reasons.append(f"Brak wyceny rynkowej: {market.method}. Uzupełnij wartość ręczną w ustawieniach.")
-        cost_items = [acquisition]
+        cost_items = buy_items
         score = compute_score(Verdict.SKIP, price=price, max_buy=None, profit=None, required=None, margin=0,
                               confidence="brak", flags=flags, settings=settings)
         return Valuation(
             mode=mode, market=market, repair_items=repair_items, repair_cost=repair_total,
-            cost_items=cost_items, total_costs=round(repair_total + acquisition.amount, 2),
+            cost_items=cost_items, total_costs=round(repair_total + buy_total, 2),
             expected_profit=None, roi_pct=None, required_profit=None, max_buy_price=None,
             verdict=Verdict.SKIP, negotiation=Negotiation(False, None, None, "Brak danych do negocjacji."),
             score=score, color=color_for(score, settings), flags=flags, reasons=reasons,
@@ -139,16 +163,21 @@ def evaluate(offer: Offer, market: MarketEstimate, parts: PartsCatalog, settings
 
     value = market.value
     sell_items = selling_costs(value, settings)
-    cost_items = [acquisition, *sell_items]
+    cost_items = [*buy_items, *sell_items]
     other_costs = sum(i.amount for i in cost_items)
     total_costs = round(repair_total + other_costs, 2)
 
     profit = round(value - price - total_costs, 2)
-    investment = price + repair_total + acquisition.amount
+    investment = price + repair_total + buy_total
     roi = round(profit / investment * 100, 1) if investment > 0 else None
     required = round(required_profit(investment, rule), 2)
-    net_value = value - total_costs
-    max_buy = floor10(max_buy_price(net_value, repair_total + acquisition.amount, rule))
+    # Opłata kupującego rośnie z ceną: liczymy maksymalny „wydatek na zakup" X = B·(1+f),
+    # traktując część stałą jak pozostałe koszty, a potem B = X / (1+f).
+    fee_rate, fee_fixed = buyer_fee_rate(offer, settings)
+    price_dependent_fee = fee_item.amount - fee_fixed if fee_item else 0.0
+    fixed_costs = total_costs - price_dependent_fee
+    max_outlay = max_buy_price(value - fixed_costs, repair_total + acquisition.amount + fee_fixed, rule)
+    max_buy = floor10(max_outlay / (1 + fee_rate))
 
     ratio = settings.suspicious_price_ratio_damaged if offer.parsed.condition.market_class == "damaged" \
         else settings.suspicious_price_ratio_working

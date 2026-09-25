@@ -10,6 +10,7 @@ from PySide6.QtGui import QAction, QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
+    QDockWidget,
     QHeaderView,
     QLabel,
     QMainWindow,
@@ -21,18 +22,44 @@ from PySide6.QtWidgets import (
 )
 
 from ..core.models import Mode, Offer, OfferStatus, RowColor, Valuation
+from ..core.view_filter import ViewFilter, matches
 from ..net.http import HostRateLimiter, ResponseCache
 from ..paths import thumbnails_dir
 from ..services.evaluator import Evaluator
 from ..services.scanner import ScanReport
-from ..storage.repositories import OfferRepository, SettingsRepository
+from ..storage.repositories import OfferRepository, PartsRepository, SettingsRepository
+from .filters_panel import FiltersPanel
 from .images import THUMB_SIZE, ThumbnailCache
+from .location_dialog import LocationDialog
 from .offer_details import PHOTO_SIZE, OfferDetailsDialog
+from .parts_editor import PartsEditor
+from .settings_dialog import SettingsDialog
 from .table_model import SORT_ROLE, Col, OffersTableModel
 from .theme import COLOR_LABEL, ROW_BACKGROUND
 from .workers import ScanWorker, start_in_thread
 
 log = logging.getLogger(__name__)
+
+
+class OfferFilterProxy(QSortFilterProxyModel):
+    """Sortowanie + filtry widoku (``ViewFilter``) bez ponownego wyceniania."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.view_filter = ViewFilter()
+
+    def set_view_filter(self, f: ViewFilter) -> None:
+        if hasattr(self, "beginFilterChange"):  # Qt ≥ 6.10
+            self.beginFilterChange()
+            self.view_filter = f
+            self.endFilterChange(QSortFilterProxyModel.Direction.Rows)
+        else:
+            self.view_filter = f
+            self.invalidateFilter()
+
+    def filterAcceptsRow(self, source_row: int, source_parent: QModelIndex) -> bool:  # noqa: N802
+        offer, val = self.sourceModel().row_at(source_row)
+        return matches(offer, val, self.view_filter)
 
 
 class MainWindow(QMainWindow):
@@ -54,12 +81,14 @@ class MainWindow(QMainWindow):
         self.thumbs = ThumbnailCache(cache_dir, self)
         self.photos = ThumbnailCache(cache_dir, self, size=QSize(PHOTO_SIZE))
         self.model = OffersTableModel(self.thumbs, self)
-        self.proxy = QSortFilterProxyModel(self)
+        self.proxy = OfferFilterProxy(self)
         self.proxy.setSourceModel(self.model)
         self.proxy.setSortRole(SORT_ROLE)
+        self.proxy.set_view_filter(self.settings.view_filter)
 
         self._build_toolbar()
         self._build_table()
+        self._build_filters()
         self._status = QLabel("Gotowy.")
         self.statusBar().addWidget(self._status, 1)
         self.reload()
@@ -84,6 +113,14 @@ class MainWindow(QMainWindow):
         self.refresh_action.setShortcut("F5")
         self.refresh_action.triggered.connect(self.start_scan)
         tb.addAction(self.refresh_action)
+        tb.addSeparator()
+
+        settings_action = QAction("⚙ Ustawienia", self)
+        settings_action.triggered.connect(self.open_settings)
+        tb.addAction(settings_action)
+        parts_action = QAction("🔧 Tabela części", self)
+        parts_action.triggered.connect(self.open_parts_editor)
+        tb.addAction(parts_action)
         tb.addSeparator()
 
         self.show_hidden_action = QAction("Pokaż ukryte", self)
@@ -142,6 +179,17 @@ class MainWindow(QMainWindow):
         self.stack.addWidget(self.empty_label)
         self.setCentralWidget(self.stack)
 
+    def _build_filters(self) -> None:
+        self.filters = FiltersPanel(self.settings.view_filter, self.settings.location_name, self)
+        self.filters.changed.connect(self._filter_changed)
+        self.filters.location_requested.connect(self.change_location)
+        dock = QDockWidget("Filtry", self)
+        dock.setWidget(self.filters)
+        dock.setFeatures(QDockWidget.DockWidgetFeature.DockWidgetMovable
+                         | QDockWidget.DockWidgetFeature.DockWidgetClosable)
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
+        self.filters_dock = dock
+
     # ------------------------------------------------------------- dane ---
 
     def reload(self) -> None:
@@ -150,8 +198,63 @@ class MainWindow(QMainWindow):
         rows = Evaluator(self.conn, self.settings).evaluate_all(offers)
         self.model.set_rows(rows)
         self.stack.setCurrentWidget(self.table if rows else self.empty_label)
-        greens = sum(1 for _, v in rows if v.color is RowColor.GREEN)
-        self.count_label.setText(f"Ofert: {len(rows)} (zielonych: {greens})  ")
+        self._update_count()
+
+    def _update_count(self) -> None:
+        rows = self.model.rows()
+        shown = self.proxy.rowCount()
+        greens = sum(1 for r in range(shown)
+                     if self._row_at(self.proxy.index(r, 0))[1].color is RowColor.GREEN)
+        total = f" z {len(rows)}" if shown != len(rows) else ""
+        self.count_label.setText(f"Ofert: {shown}{total} (zielonych: {greens})  ")
+
+    def _filter_changed(self, f: ViewFilter) -> None:
+        self.proxy.set_view_filter(f)
+        self.settings.view_filter = f
+        self.settings_repo.save(self.settings)
+        self._update_count()
+
+    def apply_settings(self, settings) -> None:
+        settings.view_filter = self.settings.view_filter
+        self.settings = settings
+        self.settings_repo.save(settings)
+        self.limiter.delay_s = settings.request_delay_s
+        self.filters.set_location_name(settings.location_name)
+        self.mode_combo.blockSignals(True)
+        self.mode_combo.setCurrentIndex(self.mode_combo.findData(settings.mode))
+        self.mode_combo.blockSignals(False)
+        self.reload()
+
+    def open_settings(self) -> SettingsDialog:
+        dialog = SettingsDialog(self.settings, self)
+        dialog.parts_editor_requested.connect(self.open_parts_editor)
+        dialog.accepted.connect(lambda: self.apply_settings(dialog.result_settings()))
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        dialog.open()
+        return dialog
+
+    def open_parts_editor(self) -> PartsEditor:
+        editor = PartsEditor(PartsRepository(self.conn), self)
+        editor.accepted.connect(self.reload)
+        editor.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        editor.open()
+        return editor
+
+    def change_location(self) -> LocationDialog:
+        s = self.settings
+        dialog = LocationDialog(s.location_name, s.home_lat, s.home_lon, self)
+
+        def accepted() -> None:
+            place = dialog.place()
+            s.location_name, s.home_lat, s.home_lon = place.name, place.lat, place.lon
+            self.settings_repo.save(s)
+            self.filters.set_location_name(place.name)
+            self.reload()
+
+        dialog.accepted.connect(accepted)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        dialog.open()
+        return dialog
 
     def _mode_changed(self) -> None:
         self.settings.mode = self.mode_combo.currentData()

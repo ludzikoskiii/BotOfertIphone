@@ -1,0 +1,56 @@
+{
+ "items": [
+  {
+   "id": 4812345601,
+   "title": "iPhone 13 128 GB",
+   "price": {
+    "amount": "1450.0",
+    "currency_code": "PLN"
+   },
+   "total_item_price": {
+    "amount": "1525.0",
+    "currency_code": "PLN"
+   },
+   "url": "https://www.vinted.pl/items/4812345601-iphone-13-128-gb",
+   "status": "Bardzo dobry",
+   "brand_title": "Apple",
+   "photo": {
+    "id": 1,
+    "url": "https://images1.vinted.net/t/01.jpeg",
+    "high_resolution": {
+     "timestamp": 1790000000
+    }
+   },
+   "user": {
+    "id": 7,
+    "login": "ania"
+   }
+  },
+  {
+   "id": 4812345602,
+   "title": "iPhone 12 zbity tył",
+   "price": "700.0",
+   "currency": "PLN",
+   "url": "https://www.vinted.pl/items/4812345602-iphone-12",
+   "status": "Zadowalający",
+   "photo": {
+    "url": "https://images1.vinted.net/t/02.jpeg"
+   }
+  },
+  {
+   "id": 4812345603,
+   "title": "iPhone 14 Pro",
+   "price": {
+    "amount": "90.0",
+    "currency_code": "EUR"
+   },
+   "url": "https://www.vinted.pl/items/4812345603"
+  }
+ ],
+ "pagination": {
+  "current_page": 1,
+  "total_pages": 1,
+  "per_page": 96,
+  "total_entries": 3
+ }
+}

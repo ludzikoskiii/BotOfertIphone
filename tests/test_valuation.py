@@ -159,3 +159,30 @@ def test_low_confidence_lowers_score():
     hi = evaluate(offer, market(2000, "wysoka"), PARTS, Settings(), Mode.RESELL)
     lo = evaluate(offer, market(2000, "niska"), PARTS, Settings(), Mode.RESELL)
     assert lo.score < hi.score
+
+
+@pytest.mark.parametrize("fees", [[5.0, 2.9], [10.0, 0.0], [0.0, 20.0]])
+def test_buyer_fee_included_and_max_buy_still_break_even(fees):
+    s = Settings(buyer_fees={"vinted": fees})
+    offer = make_offer("iPhone 13 128GB", price=1000, source="vinted")
+    v = evaluate(offer, market(2200), PARTS, s, Mode.RESELL)
+    fee = 1000 * fees[0] / 100 + fees[1]
+    assert {c.label: c.amount for c in v.cost_items}["Opłata kupującego (ochrona kupujących)"] == pytest.approx(fee)
+    # przy cenie = max_buy zysk ≥ wymagany, przy max_buy + 20 zł już nie
+    at_max = evaluate(make_offer("iPhone 13 128GB", price=v.max_buy_price, source="vinted"), market(2200), PARTS, s,
+                      Mode.RESELL)
+    above = evaluate(make_offer("iPhone 13 128GB", price=v.max_buy_price + 20, source="vinted"), market(2200), PARTS,
+                     s, Mode.RESELL)
+    assert at_max.expected_profit >= at_max.required_profit - 0.01
+    assert above.expected_profit < above.required_profit
+
+
+def test_exact_buyer_fee_from_portal_wins():
+    offer = make_offer("iPhone 13 128GB", price=1000, source="vinted", params={"buyer_fee": "53.40"})
+    v = evaluate(offer, market(2200), PARTS, Settings(), Mode.RESELL)
+    assert {c.label: c.amount for c in v.cost_items}["Opłata kupującego (ochrona kupujących)"] == pytest.approx(53.4)
+
+
+def test_no_buyer_fee_on_olx():
+    v = evaluate(make_offer("iPhone 13 128GB", price=1000, source="olx"), market(2200), PARTS, Settings(), Mode.RESELL)
+    assert all("Opłata kupującego" not in c.label for c in v.cost_items)

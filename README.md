@@ -3,11 +3,11 @@
 Aplikacja desktopowa (Windows) do wyszukiwania ofert używanych iPhone'ów na OLX.pl,
 Allegro Lokalnie i Vinted, wyceny ich opłacalności i podpowiadania, czy i za ile kupić.
 
-> **Status: etap 3 z 5** — pobieranie z OLX, tabela z kolorami i werdyktami,
-> okno szczegółów z pełnym wyliczeniem i negocjacjami. Kolejne etapy: patrz [Plan](#plan-etapów).
+> **Status: etap 4 z 5** — trzy portale (OLX, Allegro Lokalnie, Vinted), panel filtrów,
+> okno ustawień, wybór miejscowości i edytor tabeli części. Kolejne etapy: patrz [Plan](#plan-etapów).
 
-![Okno główne](docs/screenshots/etap3.png)
-![Szczegóły oferty](docs/screenshots/etap3_szczegoly.png)
+![Okno główne](docs/screenshots/okno.png)
+![Szczegóły oferty](docs/screenshots/szczegoly.png)
 
 ## Uruchomienie na Windows (tryb deweloperski)
 
@@ -27,6 +27,20 @@ Allegro Lokalnie i Vinted, wyceny ich opłacalności i podpowiadania, czy i za i
    Kliknij **⟳ Odśwież oferty** (F5), aby pobrać ogłoszenia z OLX.
 4. Testy: `python -m pytest`.
 5. Demo wyceny w konsoli: `python -m phonebot.demo`.
+
+### Twoja miejscowość
+
+Domyślnie ustawiony jest Kacwin. Zmienisz go w panelu filtrów („Lokalizacja → Zmień…”)
+albo w ustawieniach. Miejscowość możesz wybrać na trzy sposoby:
+
+- wpisać jej nazwę i kliknąć „Szukaj” (OpenStreetMap znajdzie dowolną miejscowość w Polsce),
+- wybrać z wbudowanej listy (Podhale i większe miasta; działa bez internetu),
+- wpisać współrzędne ręcznie.
+
+Od wybranej miejscowości liczone są odległości do ofert, koszt dojazdu przy odbiorze osobistym
+i filtr promienia.
+
+![Wybór lokalizacji](docs/screenshots/lokalizacja.png)
 
 ### Okno główne
 
@@ -61,8 +75,30 @@ Allegro Lokalnie i Vinted, wyceny ich opłacalności i podpowiadania, czy i za i
 - Pobieranie działa w osobnym wątku, więc okno nie zawiesza się w trakcie.
   Błąd portalu widać w pasku stanu; szczegóły są w podpowiedzi po najechaniu myszą
   i w logu `%LOCALAPPDATA%\PhoneBot\logs\phonebot.log`.
-- Pobierane są frazy „iphone” oraz w trybie naprawy „iphone uszkodzony / zbity / na części”,
-  po 3 strony (po 40 ofert). Aplikacja pomija:
+- **Panel filtrów** po lewej działa natychmiast, bez ponownego pobierania ofert,
+  i zapamiętuje ustawienia. Możesz filtrować po:
+  - lokalizacji i promieniu (oferty z wysyłką mogą zostać mimo odległości),
+  - „tylko z wysyłką”,
+  - tekście,
+  - cenie od–do,
+  - minimalnym zysku,
+  - ocenie (zielone / żółte / czerwone),
+  - stanie,
+  - portalu,
+  - modelach.
+- **⚙ Ustawienia**: wszystkie progi i koszty, edytowalne bez zmian w kodzie:
+  - portale i tempo pobierania,
+  - minimalny zysk dla każdego trybu,
+  - kanały sprzedaży i prowizje,
+  - koszty zakupu i naprawy,
+  - opłaty kupującego (np. ochrona kupujących na Vinted),
+  - parametry wyceny rynkowej i ręczne wartości rynkowe,
+  - progi werdyktu i kolorów,
+  - kary za flagi.
+- **🔧 Tabela części**: ceny części dla każdego modelu (wiersz „*” to cena domyślna),
+  z filtrem po modelu. Możesz dodawać i usuwać pozycje.
+- Pobierane są frazy „iphone”, w trybie naprawy dodatkowo „iphone uszkodzony / zbity / na części”,
+  oraz frazy dopisane w ustawieniach. Z każdej frazy pobierane są maksymalnie 3 strony wyników. Aplikacja pomija:
   - akcesoria i części (etui, szkła, wyświetlacze…),
   - ogłoszenia „kupię / skup / zamienię”,
   - oferty z nierozpoznanym modelem.
@@ -143,9 +179,13 @@ phonebot/
   core/filters.py  odsiewanie akcesoriów i ogłoszeń „kupię”
   net/http.py    klient HTTP: limit zapytań na host, ponawianie (tenacity), cache odpowiedzi
   services/      evaluator.py (baza + wycena), scanner.py (równoległe pobieranie z izolacją błędów)
-  sources/       adaptery portali: base.py (interfejs), olx.py; Allegro Lokalnie i Vinted w etapie 4
+  core/view_filter.py  filtry widoku;  core/places.py  wbudowana lista miejscowości
+  net/geocode.py wyszukiwanie miejscowości (OpenStreetMap Nominatim)
+  sources/       adaptery portali: base.py (interfejs), olx.py, allegro_lokalnie.py, vinted.py,
+                 extract.py (odporne wyciąganie ofert z JSON osadzonego w stronach)
   ui/            GUI PySide6: main_window.py, table_model.py, offer_details.py (+ details_html.py),
-                 images.py (miniatury), workers.py (wątek), theme.py (kolory)
+                 images.py (miniatury), workers.py (wątek), theme.py (kolory), filters_panel.py,
+                 settings_dialog.py, parts_editor.py, location_dialog.py
 tests/           testy jednostkowe (+ fixtures z przykładowymi odpowiedziami OLX)
 tools/           screenshot.py — zrzut okna na danych testowych
 ```
@@ -159,7 +199,7 @@ Awaria jednego adaptera jest izolowana i nie zatrzymuje pozostałych.
 1. ✅ Architektura, baza danych i logika wyceny z testami.
 2. ✅ Adapter OLX i podstawowa tabela ofert w GUI.
 3. ✅ Kolorowanie, werdykty i rekomendacje negocjacji w GUI (okno szczegółów).
-4. Allegro Lokalnie i Vinted, filtry, tryby, okno ustawień i edytor tabeli części.
+4. ✅ Allegro Lokalnie i Vinted, filtry, tryby, okno ustawień, wybór miejscowości i edytor tabeli części.
 5. Automatyczne odświeżanie, powiadomienia Windows i Telegram, opcjonalna
    analiza opisów przez AI (Claude) oraz gotowy plik `.exe`.
 
@@ -170,6 +210,23 @@ Parser jest przetestowany na próbkach w `tests/fixtures/`, przygotowanych wedł
 Jeśli OLX zmieni format i adapter przestanie działać, pasek stanu pokaże błąd, a szczegóły trafią do logu.
 Opcja `olx_category_id` w ustawieniach pozwala zawęzić wyniki do kategorii iPhone.
 Domyślnie jest wyłączona i wyniki filtruje sama aplikacja.
+
+Allegro Lokalnie nie ma API dla ogłoszeń, więc adapter czyta dane osadzone w stronie wyników
+(JSON / JSON-LD). Wyszukuje w nich obiekty wyglądające jak oferta, zamiast polegać na sztywnej
+ścieżce, dlatego drobne zmiany serwisu go nie psują. Jeśli serwis całkowicie zmieni wygląd,
+aplikacja zgłosi błąd źródła („możliwa zmiana formatu serwisu”).
+Allegro Lokalnie podaje tylko nazwę miasta. Odległość jest liczona, gdy to miasto jest
+na wbudowanej liście miejscowości.
+
+Vinted działa w trybie „best effort”. Adapter pobiera cookie sesji ze strony głównej
+i korzysta z wewnętrznego endpointu katalogu. Vinted często blokuje automaty; wtedy pasek stanu
+pokaże błąd, a pozostałe portale działają normalnie. Katalog Vinted nie zawiera opisów ofert,
+więc usterki rozpoznawane są tylko z tytułu. Do kosztu zakupu doliczana jest opłata za ochronę
+kupujących: dokładna, jeśli podaje ją Vinted, w przeciwnym razie z ustawień (domyślnie 5% + 2,90 zł,
+wartość orientacyjna).
+
+Adaptery Allegro Lokalnie i Vinted są przetestowane na przykładowych danych w `tests/fixtures/`.
+Pierwsze uruchomienie na prawdziwych portalach może wymagać dopasowania.
 
 Żaden z trzech portali nie udostępnia publicznego API do wyszukiwania cudzych ogłoszeń.
 Adaptery będą korzystać z danych, które strony same ładują w przeglądarce. Każdy adapter:

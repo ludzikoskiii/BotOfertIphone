@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import sys
 
+from PySide6.QtCore import QLibraryInfo, QLocale, QTranslator
 from PySide6.QtWidgets import QApplication
 
 from . import __version__
@@ -27,6 +28,10 @@ def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName("PhoneBot")
     app.setStyle("Fusion")
+    QLocale.setDefault(QLocale(QLocale.Language.Polish, QLocale.Country.Poland))
+    translator = QTranslator(app)
+    if translator.load("qtbase_pl", QLibraryInfo.path(QLibraryInfo.LibraryPath.TranslationsPath)):
+        app.installTranslator(translator)
 
     from .ui.main_window import MainWindow
 

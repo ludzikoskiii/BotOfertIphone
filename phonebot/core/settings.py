@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .models import Mode, RedFlag
+from .view_filter import ViewFilter
 
 MIN_PROFIT_MODES = ("amount", "percent", "max", "min")
 MIN_PROFIT_MODE_LABELS = {
@@ -75,8 +76,6 @@ class Settings:
     location_name: str = "Kacwin"
     home_lat: float = 49.3494
     home_lon: float = 20.3019
-    search_radius_km: int = 0  # 0 = cała Polska (zakupy głównie z wysyłką)
-    shipping_only: bool = False  # pokazuj tylko oferty z wysyłką
 
     # --- minimalny zysk (osobno dla trybów) ---
     profit_repair: ProfitRule = field(default_factory=ProfitRule)
@@ -89,6 +88,10 @@ class Settings:
 
     # --- zakup ---
     buy_shipping_cost: float = 15.0
+    # opłata kupującego per portal: [procent ceny, kwota stała] — wartości orientacyjne
+    buyer_fees: dict[str, list[float]] = field(
+        default_factory=lambda: {"olx": [0.0, 0.0], "allegro_lokalnie": [0.0, 0.0], "vinted": [5.0, 2.9]}
+    )
     pickup_cost_per_km: float = 1.0  # liczone w obie strony
     pickup_flat_cost: float = 100.0  # gdy brak wysyłki i nieznana odległość
 
@@ -132,6 +135,9 @@ class Settings:
     watched_models: list[str] = field(default_factory=list)  # pusta = wszystkie
     price_min: float = 0.0
     price_max: float = 0.0  # 0 = bez limitu
+
+    # --- filtry widoku (zapamiętywane) ---
+    view_filter: ViewFilter = field(default_factory=ViewFilter)
 
     # --- odświeżanie i powiadomienia ---
     refresh_minutes: int = 15
