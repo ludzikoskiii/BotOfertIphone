@@ -78,6 +78,7 @@ class OffersTableModel(QAbstractTableModel):
         self._rows: list[tuple[Offer, Valuation]] = []
         self._thumbs = thumbs
         self._rows_by_photo: dict[str, list[int]] = defaultdict(list)
+        self._sort_cache: dict[tuple[int, int], Any] = {}
         thumbs.ready.connect(self._thumb_ready)
         self._bg = {c: QBrush(QColor(v)) for c, v in ROW_BACKGROUND.items()}
         self._verdict_fg = {v: QBrush(QColor(c)) for v, c in VERDICT_COLOR.items()}
@@ -90,6 +91,7 @@ class OffersTableModel(QAbstractTableModel):
     def set_rows(self, rows: list[tuple[Offer, Valuation]]) -> None:
         self.beginResetModel()
         self._rows = rows
+        self._sort_cache.clear()
         self._rows_by_photo.clear()
         for i, (offer, _) in enumerate(rows):
             if offer.raw.photos:
@@ -110,6 +112,7 @@ class OffersTableModel(QAbstractTableModel):
         if row is None:
             return
         self._rows[row][0].status = status
+        self._sort_cache = {k: v for k, v in self._sort_cache.items() if k[0] != row}
         self.dataChanged.emit(self.index(row, 0), self.index(row, len(Col) - 1))
 
     def rows(self) -> list[tuple[Offer, Valuation]]:
@@ -141,7 +144,10 @@ class OffersTableModel(QAbstractTableModel):
         if role == Qt.ItemDataRole.DisplayRole:
             return self._display(col, offer, val)
         if role == SORT_ROLE:
-            return self._sort_key(col, offer, val)
+            key = (index.row(), index.column())
+            if key not in self._sort_cache:
+                self._sort_cache[key] = self._sort_key(col, offer, val)
+            return self._sort_cache[key]
         if role == OFFER_ROLE:
             return offer.id
         if role == Qt.ItemDataRole.BackgroundRole:

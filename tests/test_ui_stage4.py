@@ -148,3 +148,42 @@ def test_parts_editor_rejects_bad_price(window, monkeypatch):
     monkeypatch.setattr(QtWidgets.QMessageBox, "warning", lambda *a: warnings.append(a[2]))
     editor._save()
     assert warnings and "abc" in warnings[0]
+
+
+def test_auto_refresh_timer_follows_settings(window):
+    s = window.settings
+    assert window.refresh_timer.isActive() and window.refresh_timer.interval() == s.refresh_minutes * 60_000
+    assert "następne" in window.auto_label.text()
+    import copy
+
+    new = copy.deepcopy(s)
+    new.refresh_minutes = 0
+    window.apply_settings(new)
+    assert not window.refresh_timer.isActive() and "wyłączone" in window.auto_label.text()
+    new = copy.deepcopy(new)
+    new.refresh_minutes = 5
+    window.apply_settings(new)
+    assert window.refresh_timer.interval() == 300_000
+
+
+def test_notify_green_builds_message(window):
+    from phonebot.services.post_scan import GreenOffer
+
+    window.notify_green([GreenOffer(1, "iPhone 13 128 GB — 600 zł", 812.0, "u", "nowa"),
+                         GreenOffer(2, "iPhone 12 64 GB — 500 zł", None, "u", "nowa")])
+    title, body = window.last_notification
+    assert "2 nowe zielone oferty" in title and "zysk 812 zł" in body
+
+
+def test_settings_notify_tab(window):
+    dialog = window.open_settings()
+    dialog.tg_token.setText(" 123:ABC ")
+    dialog.tg_chat.setText("42")
+    dialog.ai_key.setText("sk-ant-test")
+    dialog.ai_model.setCurrentText("claude-sonnet-5")
+    dialog.findChild(QtWidgets.QCheckBox, "telegram_enabled").setChecked(True)
+    dialog.findChild(QtWidgets.QCheckBox, "llm_enabled").setChecked(True)
+    dialog.accept()
+    s = SettingsRepository(window.conn).load()
+    assert (s.telegram_bot_token, s.telegram_chat_id, s.telegram_enabled) == ("123:ABC", "42", True)
+    assert (s.anthropic_api_key, s.llm_model, s.llm_enabled) == ("sk-ant-test", "claude-sonnet-5", True)

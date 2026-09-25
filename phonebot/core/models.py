@@ -194,10 +194,24 @@ class Offer:
     last_seen: datetime | None = None
     distance_km: float | None = None
     dedup_key: str | None = None
+    ai_defects: list[Defect] = field(default_factory=list)  # znalezione tylko przez AI
+    ai_flags: list[RedFlag] = field(default_factory=list)
+    ai_note: str | None = None
 
     @property
     def price(self) -> float:
         return self.raw.price
+
+
+def merge_ai_findings(parsed: ParsedInfo, defects: list[Defect], flags: list[RedFlag]) -> tuple[list, list]:
+    """Dokłada do wyniku reguł znaleziska AI (tylko dodaje). Zwraca to, co AI dodało."""
+    new_defects = [d for d in defects if d not in parsed.defects]
+    new_flags = [f for f in flags if f not in parsed.flags]
+    parsed.defects.extend(new_defects)
+    parsed.flags.extend(new_flags)
+    if any(not d.cosmetic for d in new_defects) and parsed.condition.market_class != "damaged":
+        parsed.condition = Condition.DAMAGED
+    return new_defects, new_flags
 
 
 @dataclass

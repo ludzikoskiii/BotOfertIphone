@@ -3,11 +3,36 @@
 Aplikacja desktopowa (Windows) do wyszukiwania ofert używanych iPhone'ów na OLX.pl,
 Allegro Lokalnie i Vinted, wyceny ich opłacalności i podpowiadania, czy i za ile kupić.
 
-> **Status: etap 4 z 5** — trzy portale (OLX, Allegro Lokalnie, Vinted), panel filtrów,
-> okno ustawień, wybór miejscowości i edytor tabeli części. Kolejne etapy: patrz [Plan](#plan-etapów).
+> **Status: wszystkie 5 etapów gotowe.** Trzy portale, wycena, werdykty i negocjacje, filtry,
+> ustawienia, automatyczne odświeżanie, powiadomienia Windows i Telegram, opcjonalna analiza AI
+> oraz gotowy plik `PhoneBot.exe`.
 
 ![Okno główne](docs/screenshots/okno.png)
 ![Szczegóły oferty](docs/screenshots/szczegoly.png)
+
+## Szybki start: gotowy plik PhoneBot.exe
+
+1. Wejdź na GitHubie w zakładkę **Actions** → workflow **build-windows** → ostatni udany przebieg
+   (zielony) → sekcja **Artifacts** → pobierz **PhoneBot-windows** (plik ZIP z `PhoneBot.exe`).
+   Jeśli oznaczysz wersję tagiem `v…` (np. `v1.0.0`), plik trafi też do zakładki **Releases**.
+2. Rozpakuj i uruchom `PhoneBot.exe`; nie wymaga instalowania Pythona.
+   Windows SmartScreen może ostrzec o nieznanym wydawcy (plik nie jest podpisany cyfrowo).
+   Kliknij wtedy „Więcej informacji” → „Uruchom mimo to”.
+3. Przy pierwszym uruchomieniu:
+   - sprawdź miejscowość w panelu filtrów (domyślnie Kacwin),
+   - przejrzyj **⚙ Ustawienia** (zysk, prowizje) i **🔧 Tabelę części**,
+   - kliknij **⟳ Odśwież oferty** (F5).
+
+Pierwsze pobranie nie wysyła powiadomień, bo wszystkie oferty są wtedy „nowe”.
+Powiadomienia przychodzą od kolejnych odświeżeń.
+
+### Budowanie PhoneBot.exe samodzielnie
+
+```powershell
+pip install -r requirements.txt pyinstaller
+pyinstaller --noconfirm phonebot.spec     # wynik: dist\PhoneBot.exe
+dist\PhoneBot.exe --self-test             # sprawdzenie, czy plik ma wszystkie moduły
+```
 
 ## Uruchomienie na Windows (tryb deweloperski)
 
@@ -27,6 +52,50 @@ Allegro Lokalnie i Vinted, wyceny ich opłacalności i podpowiadania, czy i za i
    Kliknij **⟳ Odśwież oferty** (F5), aby pobrać ogłoszenia z OLX.
 4. Testy: `python -m pytest`.
 5. Demo wyceny w konsoli: `python -m phonebot.demo`.
+
+### Automatyczne odświeżanie i praca w tle
+
+- Oferty są pobierane automatycznie co **15 minut**; zmienisz to w Ustawieniach, a wartość 0 wyłącza
+  automat. Pasek stanu pokazuje godzinę następnego odświeżenia.
+- Zamknięcie okna chowa aplikację do **zasobnika systemowego** (obok zegara) i odświeżanie działa dalej.
+  Kliknij ikonę, aby wrócić. Całkowite zamknięcie: prawy przycisk na ikonie → „Zakończ”.
+  To zachowanie wyłączysz w Ustawieniach.
+- O nowych **zielonych** ofertach, a opcjonalnie także o obniżce ceny do zielonej, informuje
+  **powiadomienie Windows**. Każda oferta jest zgłaszana tylko raz.
+
+### Powiadomienia Telegram
+
+1. W Telegramie otwórz **@BotFather**, wyślij `/newbot` i nadaj botowi nazwę. Dostaniesz **token**
+   (np. `123456789:AAH…`).
+2. Otwórz rozmowę ze swoim nowym botem i wyślij mu `/start`.
+3. W PhoneBot: **⚙ Ustawienia → Powiadomienia i AI**. Wklej token i kliknij **Pobierz chat ID**.
+4. Kliknij **Wyślij test**. Na Telegramie powinna przyjść wiadomość.
+5. Zaznacz „Wysyłaj powiadomienia na Telegram” i zapisz.
+
+![Ustawienia powiadomień i AI](docs/screenshots/ustawienia_powiadomienia.png)
+
+Każda wiadomość zawiera model, cenę, szacowany zysk, max cenę, sugestię negocjacji, lokalizację,
+czerwone flagi i link do ogłoszenia. Na jedno odświeżenie wysyłanych jest maksymalnie 5 osobnych
+wiadomości (do ustawienia), a resztę dostajesz w jednym podsumowaniu.
+
+### Analiza opisów przez AI (opcjonalna)
+
+Reguły tekstowe rozpoznają typowe sformułowania, ale nie każde. Po włączeniu analizy
+opisy **nowych** ofert trafiają do modelu Claude (API Anthropic). Model zwraca usterki i czerwone flagi
+w ściśle określonym formacie. Wynik jest **dokładany** do wyniku reguł, nigdy go nie usuwa;
+w oknie szczegółów usterki znalezione przez AI mają dopisek „(AI)”, a model dodaje krótką uwagę.
+
+1. Załóż konto na <https://console.anthropic.com>, doładuj środki i utwórz **klucz API** (`sk-ant-…`).
+2. **⚙ Ustawienia → Powiadomienia i AI**: wklej klucz, zaznacz „Analizuj opisy nowych ofert”.
+3. Model domyślny to `claude-opus-5` (najdokładniejszy). Tańsze opcje to `claude-sonnet-5`
+   i `claude-haiku-4-5`, z nieco mniejszą dokładnością. Koszt ogranicza limit ofert na odświeżenie
+   (domyślnie 20). Każda oferta jest analizowana tylko raz; ponownie dopiero po zmianie opisu.
+   Aktualne ceny API: <https://www.anthropic.com/pricing>.
+
+Błąd AI (np. zły klucz, brak środków) nie przerywa pobierania. Pasek stanu pokaże „AI: BŁĄD”,
+a szczegóły są w podpowiedzi i w logu.
+
+Token Telegrama i klucz API są przechowywane w lokalnej bazie aplikacji bez szyfrowania.
 
 ### Twoja miejscowość
 
@@ -178,7 +247,9 @@ phonebot/
   storage/       SQLite: schemat z migracjami, repozytoria
   core/filters.py  odsiewanie akcesoriów i ogłoszeń „kupię”
   net/http.py    klient HTTP: limit zapytań na host, ponawianie (tenacity), cache odpowiedzi
-  services/      evaluator.py (baza + wycena), scanner.py (równoległe pobieranie z izolacją błędów)
+  services/      evaluator.py (baza + wycena), scanner.py (równoległe pobieranie z izolacją błędów),
+                 post_scan.py (AI + powiadomienia po skanie), ai_analysis.py (Claude),
+                 notifications.py (Telegram)
   core/view_filter.py  filtry widoku;  core/places.py  wbudowana lista miejscowości
   net/geocode.py wyszukiwanie miejscowości (OpenStreetMap Nominatim)
   sources/       adaptery portali: base.py (interfejs), olx.py, allegro_lokalnie.py, vinted.py,
@@ -188,6 +259,8 @@ phonebot/
                  settings_dialog.py, parts_editor.py, location_dialog.py
 tests/           testy jednostkowe (+ fixtures z przykładowymi odpowiedziami OLX)
 tools/           screenshot.py — zrzut okna na danych testowych
+phonebot.spec    konfiguracja PyInstaller (PhoneBot.exe); run_phonebot.py — punkt wejścia
+assets/          ikona aplikacji
 ```
 
 Aby dodać kolejny portal, utwórz plik w `sources/` z klasą dziedziczącą po
@@ -200,8 +273,9 @@ Awaria jednego adaptera jest izolowana i nie zatrzymuje pozostałych.
 2. ✅ Adapter OLX i podstawowa tabela ofert w GUI.
 3. ✅ Kolorowanie, werdykty i rekomendacje negocjacji w GUI (okno szczegółów).
 4. ✅ Allegro Lokalnie i Vinted, filtry, tryby, okno ustawień, wybór miejscowości i edytor tabeli części.
-5. Automatyczne odświeżanie, powiadomienia Windows i Telegram, opcjonalna
-   analiza opisów przez AI (Claude) oraz gotowy plik `.exe`.
+5. ✅ Automatyczne odświeżanie, zasobnik systemowy, powiadomienia Windows i Telegram, opcjonalna
+   analiza opisów przez AI (Claude), wydajność (5000 ofert: wczytanie ok. 0,7 s, filtrowanie
+   poniżej 10 ms) oraz gotowy plik `PhoneBot.exe` budowany automatycznie przez GitHub Actions.
 
 ## Uwaga o źródłach danych
 

@@ -107,7 +107,7 @@ class EditableTable(QWidget):
 
 GENERAL = [
     Field("refresh_minutes", "Automatyczne odświeżanie co", "int", 0, 1440, 5, " min",
-          tip="0 = tylko ręcznie (działa od etapu 5)"),
+          tip="0 = tylko ręcznie"),
     Field("price_min", "Pobieraj oferty od ceny", "float", 0, 20000, 50, " zł"),
     Field("price_max", "Pobieraj oferty do ceny (0 = bez limitu)", "float", 0, 20000, 50, " zł"),
     Field("request_delay_s", "Odstęp między zapytaniami do portalu", "float", 1, 60, 0.5, " s", 1),
@@ -155,7 +155,7 @@ class SettingsDialog(QDialog):
     def __init__(self, settings: Settings, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Ustawienia")
-        self.resize(760, 640)
+        self.resize(900, 700)
         self.settings = copy.deepcopy(settings)
         self._readers: list[Callable[[Settings], None]] = []
 
@@ -165,6 +165,7 @@ class SettingsDialog(QDialog):
         tabs.addTab(self._buying_tab(), "Zakup i naprawa")
         tabs.addTab(self._market_tab(), "Wycena rynkowa")
         tabs.addTab(self._verdict_tab(), "Werdykt i flagi")
+        tabs.addTab(self._notify_tab(), "Powiadomienia i AI")
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
         buttons.button(QDialogButtonBox.StandardButton.Save).setText("Zapisz")
@@ -361,6 +362,96 @@ class SettingsDialog(QDialog):
         self._readers.append(lambda st: setattr(st, "flag_penalties",
                                                 {k: w.value() for k, w in self.penalties.items()}))
         return self._page(form, pen)
+
+    def _notify_tab(self) -> QWidget:
+        s = self.settings
+        general = QGroupBox("Działanie w tle i powiadomienia")
+        general.setLayout(self._form([
+            Field("minimize_to_tray", "Zamknięcie okna chowa do zasobnika", "bool"),
+            Field("notify_desktop", "Powiadomienia Windows o nowych zielonych ofertach", "bool"),
+            Field("notify_price_drops", "Powiadamiaj też o obniżce ceny do zielonej", "bool"),
+            Field("notify_max_per_scan", "Maks. osobnych powiadomień na odświeżenie", "int", 1, 50),
+        ]))
+
+        tg = QGroupBox("Telegram")
+        tg_form = self._form([Field("telegram_enabled", "Wysyłaj powiadomienia na Telegram", "bool")])
+        self.tg_token = QLineEdit(s.telegram_bot_token)
+        self.tg_token.setEchoMode(QLineEdit.EchoMode.Password)
+        self.tg_token.setPlaceholderText("token od @BotFather, np. 123456:ABC…")
+        self.tg_chat = QLineEdit(s.telegram_chat_id)
+        self.tg_chat.setPlaceholderText("np. 123456789")
+        find_btn, test_btn = QPushButton("Pobierz chat ID"), QPushButton("Wyślij test")
+        find_btn.clicked.connect(self._telegram_find_chat)
+        test_btn.clicked.connect(self._telegram_test)
+        self.tg_status = QLabel("Instrukcja: README → „Powiadomienia Telegram”.")
+        self.tg_status.setWordWrap(True)
+        self.tg_status.setStyleSheet("color: #868e96;")
+        row = QHBoxLayout()
+        row.addWidget(self.tg_chat, 1)
+        row.addWidget(find_btn)
+        row.addWidget(test_btn)
+        tg_form.addRow("Token bota:", self.tg_token)
+        tg_form.addRow("Chat ID:", row)
+        tg_form.addRow(self.tg_status)
+        tg.setLayout(tg_form)
+        self._readers.append(lambda st: (setattr(st, "telegram_bot_token", self.tg_token.text().strip()),
+                                         setattr(st, "telegram_chat_id", self.tg_chat.text().strip())))
+
+        ai = QGroupBox("Analiza opisów przez AI (Claude, płatne API Anthropic)")
+        ai_form = self._form([
+            Field("llm_enabled", "Analizuj opisy nowych ofert", "bool",
+                  tip="Uzupełnia wykrywanie usterek i czerwonych flag. Każda oferta analizowana raz."),
+            Field("llm_max_per_scan", "Maks. ofert na odświeżenie", "int", 1, 200,
+                  tip="Ogranicza koszty — pozostałe oferty zostaną przeanalizowane przy kolejnych odświeżeniach"),
+        ])
+        self.ai_key = QLineEdit(s.anthropic_api_key)
+        self.ai_key.setEchoMode(QLineEdit.EchoMode.Password)
+        self.ai_key.setPlaceholderText("sk-ant-… (puste = zmienna środowiskowa ANTHROPIC_API_KEY)")
+        self.ai_model = QComboBox()
+        self.ai_model.setEditable(True)
+        self.ai_model.addItems(["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"])
+        self.ai_model.setCurrentText(s.llm_model)
+        self.ai_model.setToolTip("claude-opus-5 — najdokładniejszy; claude-sonnet-5 / claude-haiku-4-5 — tańsze")
+        ai_form.addRow("Klucz API:", self.ai_key)
+        ai_form.addRow("Model:", self.ai_model)
+        ai.setLayout(ai_form)
+        self._readers.append(lambda st: (setattr(st, "anthropic_api_key", self.ai_key.text().strip()),
+                                         setattr(st, "llm_model", self.ai_model.currentText().strip()
+                                                 or "claude-opus-5")))
+        note = QLabel("Uwaga: token Telegrama i klucz API są zapisywane w lokalnej bazie aplikacji "
+                      "(%LOCALAPPDATA%\\PhoneBot) bez szyfrowania — nie udostępniaj tego pliku.")
+        note.setWordWrap(True)
+        note.setStyleSheet("color: #868e96;")
+        return self._page(general, tg, ai, note)
+
+    def _run_bg(self, func, on_ok) -> None:
+        from .workers import FuncWorker, start_in_thread
+
+        worker = FuncWorker(func)
+        worker.finished.connect(on_ok)
+        worker.failed.connect(lambda msg: self.tg_status.setText(f"❌ {msg}"))
+        self._bg_worker = worker  # referencja chroni przed GC
+        start_in_thread(worker, self)
+
+    def _telegram_find_chat(self) -> None:
+        from ..services.notifications import TelegramClient
+
+        token = self.tg_token.text()
+        self.tg_status.setText("Sprawdzam wiadomości bota…")
+
+        def found(chat_id: str) -> None:
+            self.tg_chat.setText(chat_id)
+            self.tg_status.setText(f"✅ Znaleziono chat ID: {chat_id}")
+
+        self._run_bg(lambda: TelegramClient(token).find_chat_id(), found)
+
+    def _telegram_test(self) -> None:
+        from ..services.notifications import TelegramClient
+
+        token, chat = self.tg_token.text(), self.tg_chat.text()
+        self.tg_status.setText("Wysyłam wiadomość testową…")
+        self._run_bg(lambda: TelegramClient(token, chat).send("✅ PhoneBot: powiadomienia działają."),
+                     lambda _r: self.tg_status.setText("✅ Wysłano — sprawdź Telegram."))
 
     # ---------------------------------------------------------------- wynik ---
 

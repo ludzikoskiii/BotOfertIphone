@@ -16,7 +16,34 @@ from .storage.repositories import PartsRepository
 log = logging.getLogger(__name__)
 
 
+def self_test() -> int:
+    """Sprawdza, czy spakowana aplikacja ma wszystkie moduły i potrafi otworzyć okno."""
+    import os
+    import tempfile
+    from pathlib import Path
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    import anthropic  # noqa: F401  (ładowane leniwie w analizie AI)
+
+    from .sources import REGISTRY
+    from .ui.main_window import MainWindow
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    tmp = Path(tempfile.mkdtemp())
+    conn = open_database(tmp / "selftest.sqlite3")
+    PartsRepository(conn).seed_defaults_if_empty()
+    window = MainWindow(conn, tmp / "selftest.sqlite3", thumbs_dir=tmp)
+    window._quitting = True
+    window.close()
+    conn.close()
+    app.processEvents()
+    print(f"PhoneBot {__version__} self-test OK; portale: {', '.join(sorted(REGISTRY))}")
+    return 0
+
+
 def main() -> int:
+    if "--self-test" in sys.argv:
+        return self_test()
     setup_logging()
     log.info("PhoneBot %s — start", __version__)
     path = db_path()
@@ -35,7 +62,10 @@ def main() -> int:
 
     from .ui.main_window import MainWindow
 
+    # aplikacja żyje w zasobniku — kończy ją „Zakończ” albo zamknięcie okna (gdy zasobnik wyłączony)
+    app.setQuitOnLastWindowClosed(False)
     window = MainWindow(conn, path)
+    window.quit_on_close = True
     window.show()
     code = app.exec()
     conn.close()

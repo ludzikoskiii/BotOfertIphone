@@ -141,14 +141,19 @@ class Settings:
 
     # --- odświeżanie i powiadomienia ---
     refresh_minutes: int = 15
+    minimize_to_tray: bool = True
     notify_desktop: bool = True
+    notify_price_drops: bool = True
+    notify_max_per_scan: int = 5
     telegram_enabled: bool = False
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
 
     # --- analiza opisów przez AI (opcjonalna) ---
     llm_enabled: bool = False
-    anthropic_api_key: str = ""
+    anthropic_api_key: str = ""  # puste = zmienna środowiskowa ANTHROPIC_API_KEY
+    llm_model: str = "claude-opus-5"
+    llm_max_per_scan: int = 20
 
     # ---------------------------------------------------------------- API ---
 

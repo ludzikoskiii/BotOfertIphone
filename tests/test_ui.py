@@ -116,7 +116,7 @@ def test_scan_runs_in_background_thread(window, monkeypatch):
         time.sleep(0.01)
     assert window._thread is None
     assert seen_threads and seen_threads[0] is not threading.main_thread()
-    assert window._status.text() == "OLX: 1 ofert (1 nowych)"
+    assert window._status.text().endswith("OLX: 1 ofert (1 nowych)")
     assert window.refresh_action.isEnabled()
 
 

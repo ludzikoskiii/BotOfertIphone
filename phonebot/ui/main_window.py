@@ -3,12 +3,14 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from datetime import datetime, timedelta
 from pathlib import Path
 
-from PySide6.QtCore import QModelIndex, QPoint, QSize, QSortFilterProxyModel, Qt, QThread, QUrl
+from PySide6.QtCore import QModelIndex, QPoint, QSize, QSortFilterProxyModel, Qt, QThread, QTimer, QUrl
 from PySide6.QtGui import QAction, QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QComboBox,
     QDockWidget,
     QHeaderView,
@@ -16,6 +18,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenu,
     QStackedWidget,
+    QSystemTrayIcon,
     QTableView,
     QToolBar,
     QWidget,
@@ -29,6 +32,7 @@ from ..services.evaluator import Evaluator
 from ..services.scanner import ScanReport
 from ..storage.repositories import OfferRepository, PartsRepository, SettingsRepository
 from .filters_panel import FiltersPanel
+from .icons import app_icon
 from .images import THUMB_SIZE, ThumbnailCache
 from .location_dialog import LocationDialog
 from .offer_details import PHOTO_SIZE, OfferDetailsDialog
@@ -75,7 +79,12 @@ class MainWindow(QMainWindow):
         self._worker: ScanWorker | None = None  # referencja chroni przed usunięciem przez GC
 
         self.setWindowTitle("PhoneBot — opłacalne iPhone'y")
+        self.setWindowIcon(app_icon())
         self.resize(1400, 800)
+        self._quitting = False
+        self.quit_on_close = False  # ustawiane w app.py; w testach okno nie kończy aplikacji
+        self._tray_hint_shown = False
+        self._next_refresh: datetime | None = None
 
         cache_dir = thumbs_dir or thumbnails_dir()
         self.thumbs = ThumbnailCache(cache_dir, self)
@@ -91,6 +100,12 @@ class MainWindow(QMainWindow):
         self._build_filters()
         self._status = QLabel("Gotowy.")
         self.statusBar().addWidget(self._status, 1)
+        self.auto_label = QLabel()
+        self.statusBar().addPermanentWidget(self.auto_label)
+        self._build_tray()
+        self.refresh_timer = QTimer(self)
+        self.refresh_timer.timeout.connect(self._auto_refresh)
+        self._configure_timer()
         self.reload()
 
     # ---------------------------------------------------------------- UI ---
@@ -179,6 +194,60 @@ class MainWindow(QMainWindow):
         self.stack.addWidget(self.empty_label)
         self.setCentralWidget(self.stack)
 
+    def _build_tray(self) -> None:
+        self.tray: QSystemTrayIcon | None = None
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            return
+        tray = QSystemTrayIcon(app_icon(), self)
+        tray.setToolTip("PhoneBot")
+        menu = QMenu(self)
+        menu.addAction("Pokaż okno", self.show_from_tray)
+        menu.addAction("Odśwież teraz", self.start_scan)
+        menu.addSeparator()
+        menu.addAction("Zakończ", self.quit_app)
+        tray.setContextMenu(menu)
+        tray.activated.connect(lambda reason: self.show_from_tray()
+                               if reason == QSystemTrayIcon.ActivationReason.Trigger else None)
+        tray.messageClicked.connect(self.show_from_tray)
+        tray.show()
+        self._tray_menu = menu
+        self.tray = tray
+
+    def show_from_tray(self) -> None:
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+        if self.tray:
+            self.tray.setIcon(app_icon())
+
+    def quit_app(self) -> None:
+        self._quitting = True
+        self.close()
+
+    # ------------------------------------------------ auto-odświeżanie ---
+
+    def _configure_timer(self) -> None:
+        minutes = self.settings.refresh_minutes
+        if minutes > 0:
+            self.refresh_timer.start(minutes * 60_000)
+            self._next_refresh = datetime.now() + timedelta(minutes=minutes)
+        else:
+            self.refresh_timer.stop()
+            self._next_refresh = None
+        self._update_auto_label()
+
+    def _update_auto_label(self) -> None:
+        if self._next_refresh is None:
+            self.auto_label.setText("Auto-odświeżanie: wyłączone ")
+        else:
+            self.auto_label.setText(f"Auto co {self.settings.refresh_minutes} min · "
+                                    f"następne {self._next_refresh:%H:%M} ")
+
+    def _auto_refresh(self) -> None:
+        self._next_refresh = datetime.now() + timedelta(minutes=self.settings.refresh_minutes)
+        self._update_auto_label()
+        self.start_scan()
+
     def _build_filters(self) -> None:
         self.filters = FiltersPanel(self.settings.view_filter, self.settings.location_name, self)
         self.filters.changed.connect(self._filter_changed)
@@ -219,6 +288,7 @@ class MainWindow(QMainWindow):
         self.settings = settings
         self.settings_repo.save(settings)
         self.limiter.delay_s = settings.request_delay_s
+        self._configure_timer()
         self.filters.set_location_name(settings.location_name)
         self.mode_combo.blockSignals(True)
         self.mode_combo.setCurrentIndex(self.mode_combo.findData(settings.mode))
@@ -281,10 +351,36 @@ class MainWindow(QMainWindow):
         summary = "; ".join(
             f"{s.name}: {s.saved} ofert ({s.new} nowych)" if s.ok else f"{s.name}: BŁĄD" for s in report.sources
         )
-        self._status.setText(summary or "Brak włączonych portali.")
-        if errors:
-            self._status.setToolTip("\n".join(errors))
+        post = getattr(report, "post", None)
+        if post is not None:
+            if post.ai_analyzed:
+                summary += f"; AI: {post.ai_analyzed} opisów"
+            if post.ai_error:
+                errors.append(f"Analiza AI: {post.ai_error}")
+                summary += "; AI: BŁĄD"
+            if post.telegram_error:
+                errors.append(post.telegram_error)
+                summary += "; Telegram: BŁĄD"
+        self._status.setText(f"{datetime.now():%H:%M} · " + (summary or "Brak włączonych portali."))
+        self._status.setToolTip("\n".join(errors))
         self.reload()
+        if post is not None and post.green:
+            self.notify_green(post.green)
+
+    def notify_green(self, green: list) -> None:
+        """Powiadomienie na pulpicie o nowych zielonych ofertach."""
+        n = len(green)
+        title = f"PhoneBot: {n} {'nowa zielona oferta' if n == 1 else 'nowe zielone oferty'}"
+        lines = [f"{g.headline} · zysk {g.profit:,.0f} zł".replace(",", " ") if g.profit is not None else g.headline
+                 for g in green[:4]]
+        if n > 4:
+            lines.append(f"…i {n - 4} więcej")
+        self.last_notification = (title, "\n".join(lines))
+        if self.settings.notify_desktop and self.tray is not None:
+            self.tray.showMessage(title, "\n".join(lines), app_icon(), 15_000)
+            if not self.isVisible() or self.isMinimized():
+                self.tray.setIcon(app_icon(badge=True))
+        QApplication.alert(self)
 
     def _scan_failed(self, message: str) -> None:
         self._status.setText(f"Błąd pobierania: {message}")
@@ -354,6 +450,21 @@ class MainWindow(QMainWindow):
         menu.exec(self.table.viewport().mapToGlobal(pos))
 
     def closeEvent(self, event) -> None:  # noqa: N802
+        if not self._quitting and self.settings.minimize_to_tray and self.tray is not None:
+            # zamknięcie okna chowa aplikację do zasobnika — odświeżanie działa dalej
+            event.ignore()
+            self.hide()
+            if not self._tray_hint_shown:
+                self.tray.showMessage("PhoneBot działa w tle",
+                                      "Oferty są dalej odświeżane. Kliknij ikonę, aby otworzyć okno.",
+                                      app_icon(), 5000)
+                self._tray_hint_shown = True
+            return
+        self.refresh_timer.stop()
+        if self.tray is not None:
+            self.tray.hide()
+        if self.quit_on_close:
+            QApplication.quit()
         if self._thread is not None:
             self._thread.quit()
             self._thread.wait(3000)

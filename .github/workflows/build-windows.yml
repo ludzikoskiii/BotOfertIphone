@@ -1,0 +1,38 @@
+name: build-windows
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Zależności
+        run: python -m pip install -r requirements.txt pyinstaller
+      - name: Budowanie PhoneBot.exe
+        run: pyinstaller --noconfirm --clean phonebot.spec
+      - name: Self-test pliku exe
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath dist\PhoneBot.exe -ArgumentList '--self-test' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "self-test nie powiódł się (kod $($p.ExitCode))" }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PhoneBot-windows
+          path: dist/PhoneBot.exe
+          retention-days: 30
+      - name: Wydanie (tylko dla tagów v*)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/PhoneBot.exe

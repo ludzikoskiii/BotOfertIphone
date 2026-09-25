@@ -136,3 +136,25 @@ def test_evaluator_end_to_end(conn):
     assert v.market.value == 1925 * 0.9
     assert v.verdict is Verdict.BUY
     assert offer.distance_km is not None and 20 < offer.distance_km < 40
+
+
+def test_upgrade_from_v1_keeps_offers(tmp_path):
+    import sqlite3
+
+    from phonebot.storage.db import connect, migrate
+
+    path = tmp_path / "old.sqlite3"
+    old = sqlite3.connect(path)
+    for stmt in (s.strip() for s in MIGRATIONS[0].split(";")):
+        if stmt:
+            old.execute(stmt)
+    old.execute("PRAGMA user_version = 1")
+    old.execute("INSERT INTO offers (source, source_id, url, title, price, condition, first_seen, last_seen) "
+                "VALUES ('olx', '1', 'u', 'iPhone 13', 1000, 'good', '2026-09-01T00:00:00+00:00', "
+                "'2026-09-01T00:00:00+00:00')")
+    old.commit()
+    old.close()
+    conn = connect(path)
+    assert migrate(conn) == len(MIGRATIONS)
+    offer = OfferRepository(conn).get(1)
+    assert offer.raw.title == "iPhone 13" and offer.ai_note is None

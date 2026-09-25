@@ -127,10 +127,16 @@ def build_details_html(
     parts.append(_row("Model", escape(p.model or "nierozpoznany")))
     parts.append(_row("Pamięć", format_storage(p.storage_gb)))
     parts.append(_row("Stan", escape(p.condition.label)))
-    parts.append(_row("Usterki", escape(", ".join(d.label for d in p.defects) or "brak wykrytych")))
+    defects = ", ".join(d.label + (" (AI)" if d in offer.ai_defects else "") for d in p.defects)
+    parts.append(_row("Usterki", escape(defects or "brak wykrytych")))
     parts.append(_row("Kondycja baterii", f"{p.battery_health}%" if p.battery_health else "—"))
     neg_txt = {True: "tak", False: "nie (cena ostateczna)", None: "brak informacji"}[p.negotiable]
     parts.append(_row("Do negocjacji", neg_txt))
+    if offer.ai_note is not None:
+        ai_txt = offer.ai_note or "brak uwag"
+        if offer.ai_flags:
+            ai_txt += " · flagi: " + ", ".join(f.label for f in offer.ai_flags)
+        parts.append(_row("Analiza AI", escape(ai_txt)))
     parts.append("</table>")
 
     if price_history and len(price_history) > 1:

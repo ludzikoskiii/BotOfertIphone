@@ -48,6 +48,8 @@ class ScanReport:
     sources: list[SourceReport] = field(default_factory=list)
     new_offer_ids: list[int] = field(default_factory=list)
     price_drop_ids: list[int] = field(default_factory=list)
+    first_scan: bool = False  # baza była pusta przed tym skanem
+    post: object = None  # PostScanResult (uzupełnia worker)
 
     @property
     def new_count(self) -> int:
@@ -83,6 +85,7 @@ class Scanner:
             max_pages=s.max_pages_per_query,
         )
         report = ScanReport()
+        report.first_scan = self.conn.execute("SELECT COUNT(*) FROM offers").fetchone()[0] == 0
         async with self._http_factory() as http:
             adapters = self._adapter_factory(http, s)
             if not adapters:

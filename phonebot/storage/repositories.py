@@ -15,6 +15,7 @@ from ..core.models import (
     ParsedInfo,
     RawOffer,
     RedFlag,
+    merge_ai_findings,
 )
 from ..core.parts import PartPrice, default_parts
 from ..core.settings import Settings
@@ -59,7 +60,8 @@ class OfferRepository:
     def upsert(self, raw: RawOffer, parsed: ParsedInfo, seen_at: datetime | None = None) -> UpsertResult:
         seen = _iso(seen_at or utcnow())
         existing = self.conn.execute(
-            "SELECT id, price FROM offers WHERE source = ? AND source_id = ?", (raw.source, raw.source_id)
+            "SELECT id, price, description FROM offers WHERE source = ? AND source_id = ?",
+            (raw.source, raw.source_id),
         ).fetchone()
         fields = {
             "url": raw.url, "title": raw.title, "description": raw.description, "price": raw.price,
@@ -89,6 +91,10 @@ class OfferRepository:
             f"UPDATE offers SET {assignments}, last_seen = ?, is_active = 1 WHERE id = ?",
             [*fields.values(), seen, offer_id],
         )
+        if existing["description"] != raw.description:  # opis zmieniony → analiza AI od nowa
+            self.conn.execute(
+                "UPDATE offers SET ai_defects = NULL, ai_flags = NULL, ai_note = NULL, ai_checked_at = NULL "
+                "WHERE id = ?", (offer_id,))
         changed = abs(old_price - raw.price) >= 0.01
         if changed:
             self._add_price(offer_id, raw.price, seen)
@@ -136,6 +142,24 @@ class OfferRepository:
         )
         return [(_dt(r["seen_at"]), float(r["price"])) for r in rows]  # type: ignore[misc]
 
+    def pending_ai(self, offer_ids: list[int], limit: int, min_description: int = 30) -> list[sqlite3.Row]:
+        """Oferty z listy, które nie były jeszcze analizowane przez AI (z opisem, rozpoznanym modelem)."""
+        if not offer_ids or limit <= 0:
+            return []
+        marks = ",".join("?" * len(offer_ids))
+        return list(self.conn.execute(
+            f"SELECT id, title, description FROM offers WHERE id IN ({marks}) AND ai_checked_at IS NULL "
+            f"AND model IS NOT NULL AND length(description) >= ? ORDER BY id DESC LIMIT ?",
+            [*offer_ids, min_description, limit],
+        ))
+
+    def save_ai(self, offer_id: int, defects: list[Defect], flags: list[RedFlag], note: str) -> None:
+        self.conn.execute(
+            "UPDATE offers SET ai_defects = ?, ai_flags = ?, ai_note = ?, ai_checked_at = ? WHERE id = ?",
+            (json.dumps([d.value for d in defects]), json.dumps([f.value for f in flags]), note,
+             _iso(utcnow()), offer_id),
+        )
+
     def market_observations(self, model: str, window_days: int, now: datetime | None = None) -> list[MarketObservation]:
         """Ceny ofert danego modelu z okna czasowego; ta sama sztuka z kilku portali liczona raz."""
         since = _iso((now or utcnow()) - timedelta(days=window_days))
@@ -168,10 +192,16 @@ def _row_to_offer(row: sqlite3.Row) -> Offer:
         flags=[RedFlag(f) for f in json.loads(row["flags"]) if f in RedFlag._value2member_map_],
         battery_health=row["battery_health"], negotiable=_bool(row["negotiable"]),
     )
-    return Offer(
+    offer = Offer(
         raw=raw, parsed=parsed, id=int(row["id"]), status=OfferStatus(row["status"]),
         first_seen=_dt(row["first_seen"]), last_seen=_dt(row["last_seen"]), dedup_key=row["dedup_key"],
     )
+    if row["ai_checked_at"]:
+        ai_defects = [Defect(d) for d in json.loads(row["ai_defects"] or "[]") if d in Defect._value2member_map_]
+        ai_flags = [RedFlag(f) for f in json.loads(row["ai_flags"] or "[]") if f in RedFlag._value2member_map_]
+        offer.ai_defects, offer.ai_flags = merge_ai_findings(parsed, ai_defects, ai_flags)
+        offer.ai_note = row["ai_note"] or ""
+    return offer
 
 
 class PartsRepository:

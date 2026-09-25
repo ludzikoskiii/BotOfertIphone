@@ -80,6 +80,14 @@ MIGRATIONS: list[str] = [
         error         TEXT
     );
     """,
+    # v2 — wyniki analizy AI (opcjonalnej)
+    """
+    ALTER TABLE offers ADD COLUMN ai_defects TEXT;
+    ALTER TABLE offers ADD COLUMN ai_flags TEXT;
+    ALTER TABLE offers ADD COLUMN ai_note TEXT;
+    ALTER TABLE offers ADD COLUMN ai_checked_at TEXT;
+    CREATE INDEX idx_offers_first_seen ON offers (first_seen);
+    """,
 ]
 
 
