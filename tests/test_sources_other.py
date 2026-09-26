@@ -187,3 +187,55 @@ def test_vinted_expired_token_is_refreshed():
 def test_vinted_unexpected_json_means_format_changed():
     with pytest.raises(SourceFormatChanged, match="listy przedmiotów"):
         vinted_search(vinted_handler([], catalogue={"results": "nowy format"}))
+
+
+# ------------------------------------------------------------- Sprzedajemy.pl ---
+
+from phonebot.sources.sprzedajemy import SprzedajemyAdapter, city_from_url, offer_id  # noqa: E402
+
+SPRZEDAJEMY = (FIX / "sprzedajemy_page1.html").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("url, city", [
+    ("https://sprzedajemy.pl/iphone-13-kielce-4-0010c9-nr69433240", "Kielce"),
+    ("https://sprzedajemy.pl/iphone-13-128gb-zbity-ekran-nowy-targ-4-0010c9-nr69433241", "Nowy Targ"),
+    ("https://sprzedajemy.pl/etui-brzesko-4-0010c9-nr71699292", "Brzesko"),
+    ("https://sprzedajemy.pl/cos-innego", None),
+])
+def test_sprzedajemy_city_from_url(url, city):
+    assert city_from_url(url) == city
+
+
+def test_sprzedajemy_offer_id():
+    assert offer_id("https://sprzedajemy.pl/iphone-13-kielce-4-0010c9-nr69433240", "x") == "69433240"
+    assert offer_id(None, "fallback") == "fallback"
+
+
+def test_sprzedajemy_adapter():
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        return httpx.Response(200, text=SPRZEDAJEMY)
+
+    async def go():
+        async with client(handler) as http:
+            return await SprzedajemyAdapter(http, Settings()).search(
+                SearchQuery(Mode.RESELL, phrases=["iphone 13"], price_max=2500))
+
+    offers = {o.source_id: o for o in run(go())}
+    assert calls[0].url.params["inp_text"] == "iphone 13"
+    assert set(offers) == {"69433241", "71699292", "69433240"}  # 3000 zł odfiltrowane przez price_max
+    o = offers["69433241"]
+    assert (o.source, o.price, o.city) == ("sprzedajemy", 700, "Nowy Targ")
+    assert o.url.endswith("nr69433241") and o.photos == ["https://thumbs.img-sprzedajemy.pl/1.jpg"]
+
+
+def test_sprzedajemy_layout_change_and_no_results():
+    async def go(html):
+        async with client(lambda r: httpx.Response(200, text=html)) as http:
+            return await SprzedajemyAdapter(http, Settings()).search(SearchQuery(Mode.RESELL, phrases=["x"]))
+
+    assert run(go("<html>Brak ogłoszeń spełniających kryteria</html>")) == []
+    with pytest.raises(SourceFormatChanged):
+        run(go("<html>zupełnie nowy wygląd</html>"))

@@ -92,7 +92,9 @@ def test_price_drop_detected(conn):
 
 
 def test_disabled_sources(conn):
-    s = Settings(enabled_sources={"olx": False, "allegro_lokalnie": False, "vinted": False})
+    from phonebot.sources import REGISTRY
+
+    s = Settings(enabled_sources={k: False for k in REGISTRY})
     from phonebot.services.scanner import default_adapters
     assert default_adapters(None, s) == []
 

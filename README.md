@@ -1,7 +1,7 @@
 # PhoneBot — wyszukiwarka opłacalnych ofert iPhone'ów
 
 Aplikacja desktopowa (Windows) do wyszukiwania ofert używanych iPhone'ów na OLX.pl,
-Allegro Lokalnie i Vinted, wyceny ich opłacalności i podpowiadania, czy i za ile kupić.
+Allegro Lokalnie, Vinted i Sprzedajemy.pl, wyceny ich opłacalności i podpowiadania, czy i za ile kupić.
 
 > **Status: wszystkie 5 etapów gotowe.** Trzy portale, wycena, werdykty i negocjacje, filtry,
 > ustawienia, automatyczne odświeżanie, powiadomienia Windows i Telegram, opcjonalna analiza AI
@@ -324,6 +324,10 @@ pokaże błąd, a pozostałe portale działają normalnie. Katalog Vinted nie za
 więc usterki rozpoznawane są tylko z tytułu. Do kosztu zakupu doliczana jest opłata za ochronę
 kupujących: dokładna, jeśli podaje ją Vinted, w przeciwnym razie z ustawień (domyślnie 5% + 2,90 zł,
 wartość orientacyjna).
+
+Sprzedajemy.pl nie ma API. Strona wyników zawiera listę ofert w standardowym formacie JSON-LD,
+którą czyta ten sam uniwersalny ekstraktor co Allegro Lokalnie. Miasto jest odczytywane z adresu
+ogłoszenia. Pobierana jest pierwsza strona wyników na frazę, a ceny filtruje sama aplikacja.
 
 Adaptery Allegro Lokalnie i Vinted są przetestowane na przykładowych danych w `tests/fixtures/`.
 Pierwsze uruchomienie na prawdziwych portalach może wymagać dopasowania.

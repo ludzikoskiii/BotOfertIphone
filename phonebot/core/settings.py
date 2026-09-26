@@ -90,7 +90,8 @@ class Settings:
     buy_shipping_cost: float = 15.0
     # opłata kupującego per portal: [procent ceny, kwota stała] — wartości orientacyjne
     buyer_fees: dict[str, list[float]] = field(
-        default_factory=lambda: {"olx": [0.0, 0.0], "allegro_lokalnie": [0.0, 0.0], "vinted": [5.0, 2.9]}
+        default_factory=lambda: {"olx": [0.0, 0.0], "allegro_lokalnie": [0.0, 0.0], "vinted": [5.0, 2.9],
+                                 "sprzedajemy": [0.0, 0.0]}
     )
     pickup_cost_per_km: float = 1.0  # liczone w obie strony
     pickup_flat_cost: float = 100.0  # gdy brak wysyłki i nieznana odległość
@@ -125,7 +126,7 @@ class Settings:
 
     # --- pobieranie ---
     enabled_sources: dict[str, bool] = field(
-        default_factory=lambda: {"olx": True, "allegro_lokalnie": True, "vinted": True}
+        default_factory=lambda: {"olx": True, "allegro_lokalnie": True, "vinted": True, "sprzedajemy": True}
     )
     request_delay_s: float = 4.0
     source_timeout_s: float = 180.0  # maks. czas pobierania z jednego portalu

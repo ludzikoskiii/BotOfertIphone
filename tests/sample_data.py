@@ -27,6 +27,8 @@ def mock_portals(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, text="", headers={"set-cookie": "access_token_web=tok; Path=/; Domain=.vinted.pl"})
     if host == "api.vinted.pl":  # nowy katalog (od września 2026)
         return httpx.Response(200, json=json.loads((FIX / "vinted_svc_catalogue.json").read_text(encoding="utf-8")))
+    if host == "sprzedajemy.pl":
+        return httpx.Response(200, text=(FIX / "sprzedajemy_page1.html").read_text(encoding="utf-8"))
     return httpx.Response(404)
 
 

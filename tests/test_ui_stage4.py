@@ -42,8 +42,9 @@ def test_three_portals_scanned(window):
     assert all(s.ok for s in by_source.values()), [s.error for s in by_source.values()]
     assert by_source["olx"].saved == 12
     assert by_source["allegro_lokalnie"].saved == 2  # etui odrzucone
-    assert by_source["vinted"].saved == 2  # oferta w EUR odrzucona
-    assert sources_shown(window) == {"OLX", "Allegro Lokalnie", "Vinted"}
+    assert by_source["vinted"].saved == 2  # oferta w obcej walucie odrzucona
+    assert by_source["sprzedajemy"].saved == 3  # etui odrzucone
+    assert sources_shown(window) == {"OLX", "Allegro Lokalnie", "Vinted", "Sprzedajemy.pl"}
 
 
 def test_filters_apply_and_persist(window):
