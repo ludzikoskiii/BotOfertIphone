@@ -75,13 +75,16 @@ class AllegroLokalnieAdapter(SourceAdapter):
         return await search_all_phrases(query.phrases, lambda p, out: self._search_phrase(p, query, out))
 
     async def _search_phrase(self, phrase: str, query: SearchQuery, out: dict[str, RawOffer]) -> None:
-        url = SEARCH_URL.format(phrase=quote(phrase))
+        path = self.category()["path"]
+        url = (f"{BASE_URL}/oferty/{path}/q/{quote(phrase)}" if path  # tylko kategoria telefonów (ID w adresie)
+               else SEARCH_URL.format(phrase=quote(phrase)))
+        price_min = self.price_floor(query)
         for page in range(1, query.max_pages + 1):
             params: dict[str, str | int] = {"sort": "startingTime-desc"}
             if page > 1:
                 params["page"] = page
-            if query.price_min:
-                params["price_from"] = int(query.price_min)
+            if price_min:
+                params["price_from"] = int(price_min)
             if query.price_max:
                 params["price_to"] = int(query.price_max)
             html = await self.http.get_text(url, params=params)

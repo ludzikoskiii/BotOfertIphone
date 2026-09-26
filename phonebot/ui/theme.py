@@ -18,6 +18,7 @@ ACCENT = {
 VERDICT_COLOR = {
     Verdict.BUY: "#2b8a3e",
     Verdict.NEGOTIATE: "#e67700",
+    Verdict.VERIFY: "#868e96",
     Verdict.SKIP: "#c92a2a",
 }
 COLOR_LABEL = {
@@ -62,8 +63,10 @@ LIGHT = Palette(
     text="#212529", muted="#6c757d", accent="#1c7ed6",
     selection="#d0ebff", selection_text="#212529",
     positive="#2b8a3e", negative="#c92a2a", warning="#d9480f", watched="#fff9db",
-    verdict_bg={Verdict.BUY: "#d3f9d8", Verdict.NEGOTIATE: "#fff3bf", Verdict.SKIP: "#ffe3e3"},
-    verdict_fg={Verdict.BUY: "#2b8a3e", Verdict.NEGOTIATE: "#b35c00", Verdict.SKIP: "#c92a2a"},
+    verdict_bg={Verdict.BUY: "#d3f9d8", Verdict.NEGOTIATE: "#fff3bf", Verdict.VERIFY: "#e9ecef",
+                Verdict.SKIP: "#ffe3e3"},
+    verdict_fg={Verdict.BUY: "#2b8a3e", Verdict.NEGOTIATE: "#b35c00", Verdict.VERIFY: "#495057",
+                Verdict.SKIP: "#c92a2a"},
 )
 DARK = Palette(
     name="dark", dark=True,
@@ -71,8 +74,10 @@ DARK = Palette(
     text="#e9ecef", muted="#9a9ea6", accent="#4dabf7",
     selection="#1d3b57", selection_text="#f1f3f5",
     positive="#69db7c", negative="#ff8787", warning="#ffc078", watched="#2e2a17",
-    verdict_bg={Verdict.BUY: "#1e3a26", Verdict.NEGOTIATE: "#3b3119", Verdict.SKIP: "#43201f"},
-    verdict_fg={Verdict.BUY: "#69db7c", Verdict.NEGOTIATE: "#ffd43b", Verdict.SKIP: "#ff8787"},
+    verdict_bg={Verdict.BUY: "#1e3a26", Verdict.NEGOTIATE: "#3b3119", Verdict.VERIFY: "#34363c",
+                Verdict.SKIP: "#43201f"},
+    verdict_fg={Verdict.BUY: "#69db7c", Verdict.NEGOTIATE: "#ffd43b", Verdict.VERIFY: "#c1c2c5",
+                Verdict.SKIP: "#ff8787"},
 )
 PALETTES = {"light": LIGHT, "dark": DARK}
 

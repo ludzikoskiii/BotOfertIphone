@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPlainTextEdit,
     QPushButton,
+    QScrollArea,
     QSpinBox,
     QTableWidget,
     QTableWidgetItem,
@@ -33,7 +34,8 @@ from PySide6.QtWidgets import (
 from ..core.market import manual_key
 from ..core.models import RedFlag
 from ..core.places import Place
-from ..core.settings import MIN_PROFIT_MODE_LABELS, SalesChannel, Settings
+from ..core.sanity import VERDICT_CHOICES
+from ..core.settings import MIN_PROFIT_MODE_LABELS, VINTED_COUNTRY_MODES, SalesChannel, Settings
 from .location_dialog import LocationDialog
 from .table_model import SOURCE_NAMES
 from .theme import THEME_LABELS
@@ -43,13 +45,14 @@ from .theme import THEME_LABELS
 class Field:
     path: str
     label: str
-    kind: str = "float"  # float | int | bool | mode
+    kind: str = "float"  # float | int | bool | mode | pct (ułamek pokazywany w %) | choice
     minimum: float = 0
     maximum: float = 100000
     step: float = 1
     suffix: str = ""
     decimals: int = 0
     tip: str = ""
+    choices: dict[str, str] | None = None  # dla kind="choice": wartość → etykieta
 
 
 def _get(obj: Any, path: str) -> Any:
@@ -134,13 +137,36 @@ MARKET = [
     Field("new_condition_multiplier", "Mnożnik dla nowych (×)", "float", 1, 2, 0.01, "", 2),
     Field("storage_step_pct", "Wzrost wartości na podwojenie pamięci", "float", 0, 50, 1, " %", 1),
     Field("min_valid_price", "Ignoruj ceny poniżej", suffix=" zł"),
+    Field("market_floor_ratio", "Pomijaj w wycenie ceny poniżej", "pct", 0, 90, 5, " % mediany",
+          tip="Chroni wycenę przed akcesoriami i oszustwami, które przeszły filtry"),
+]
+SANITY = [
+    Field("sanity.price_min_ratio_working", "Cena podejrzana (telefon sprawny) poniżej", "pct", 0, 100, 5,
+          " % wartości rynkowej", tip="Taka oferta dostaje najwyżej DO WERYFIKACJI — nigdy KUPUJ"),
+    Field("sanity.price_min_ratio_damaged", "Cena podejrzana (uszkodzony / na części) poniżej", "pct", 0, 100, 5,
+          " % wartości rynkowej", tip="Niższy próg, bo tanie uszkodzone telefony to normalna okazja do naprawy"),
+    Field("sanity.profit_max_pct", "Zysk do weryfikacji powyżej", "float", 10, 10000, 10, " % inwestycji"),
+    Field("sanity.unknown_storage_verify", "Nieznana pamięć → najwyżej DO WERYFIKACJI", "bool"),
+    Field("sanity.soft_flag_cap", "Oferta z flagą ostrzegawczą (np. brak zdjęć)", "choice", choices=VERDICT_CHOICES),
+    Field("sanity.hard_flag_cap", "Oferta z poważną flagą (iCloud, IMEI, podróbka)", "choice",
+          choices=VERDICT_CHOICES),
+]
+SERIAL = [
+    Field("sanity.serial_enabled", "Wykrywaj sprzedawców seryjnych i ukrywaj ich oferty", "bool"),
+    Field("sanity.serial_min_offers", "Liczba tanich ofert jednego sprzedawcy", "int", 2, 50),
+    Field("sanity.serial_price_ratio", "„Tania” oferta — poniżej", "pct", 5, 100, 5, " % wartości rynkowej"),
+]
+COUNTRY = [
+    Field("vinted_country_mode", "Oferty z Vinted", "choice", choices=VINTED_COUNTRY_MODES),
+    Field("seller_lookups_per_scan", "Sprawdzaj kraj — sprzedawców na odświeżenie", "int", 0, 200,
+          tip="Każdy sprzedawca to jedno zapytanie do Vinted (wynik jest zapamiętywany na 30 dni). "
+              "0 = tylko język tytułu."),
 ]
 VERDICT = [
     Field("negotiation_margin_pct", "Margines negocjacji ponad max cenę", "float", 0, 100, 1, " %", 1),
     Field("negotiable_bonus_pct", "Dodatkowy margines, gdy „do negocjacji”", "float", 0, 100, 1, " %", 1),
     Field("opening_ratio", "Cena otwierająca (× max cena)", "float", 0.5, 1, 0.01, "", 2),
     Field("buy_try_discount_pct", "Przy KUPUJ zaproponuj taniej o", "float", 0, 50, 1, " %", 1),
-    Field("hard_flags_force_skip", "Poważne flagi wymuszają ODPUŚĆ", "bool"),
     Field("suspicious_price_ratio_working", "„Podejrzanie tanio” (sprawny) poniżej × wartości", "float", 0, 1, 0.05,
           "", 2),
     Field("suspicious_price_ratio_damaged", "„Podejrzanie tanio” (uszkodzony) poniżej × wartości", "float", 0, 1,
@@ -168,6 +194,7 @@ class SettingsDialog(QDialog):
         tabs.addTab(self._market_tab(), "Wycena rynkowa")
         tabs.addTab(self._verdict_tab(), "Werdykt i flagi")
         tabs.addTab(self._filter_tab(), "Filtr ogłoszeń")
+        tabs.addTab(self._safety_tab(), "Zabezpieczenia")
         tabs.addTab(self._notify_tab(), "Powiadomienia i AI")
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
@@ -192,6 +219,17 @@ class SettingsDialog(QDialog):
             elif f.kind == "mode":
                 w = QComboBox()
                 for key, label in MIN_PROFIT_MODE_LABELS.items():
+                    w.addItem(label, key)
+                w.setCurrentIndex(max(0, w.findData(value)))
+                self._readers.append(lambda s, w=w, f=f: _set(s, f.path, w.currentData()))
+            elif f.kind == "pct":
+                w = QDoubleSpinBox(minimum=f.minimum, maximum=f.maximum, singleStep=f.step, suffix=f.suffix or " %",
+                                   decimals=f.decimals)
+                w.setValue(float(value) * 100)
+                self._readers.append(lambda s, w=w, f=f: _set(s, f.path, round(w.value() / 100, 4)))
+            elif f.kind == "choice":
+                w = QComboBox()
+                for key, label in (f.choices or {}).items():
                     w.addItem(label, key)
                 w.setCurrentIndex(max(0, w.findData(value)))
                 self._readers.append(lambda s, w=w, f=f: _set(s, f.path, w.currentData()))
@@ -220,7 +258,11 @@ class SettingsDialog(QDialog):
             else:
                 lay.addWidget(w)
         lay.addStretch(1)
-        return page
+        scroll = QScrollArea()  # długie zakładki przewijają się zamiast ściskać pola
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        scroll.setWidget(page)
+        return scroll
 
     # ---------------------------------------------------------------- zakładki ---
 
@@ -378,6 +420,56 @@ class SettingsDialog(QDialog):
         self._readers.append(lambda st: setattr(st, "flag_penalties",
                                                 {k: w.value() for k, w in self.penalties.items()}))
         return self._page(form, pen)
+
+    def _safety_tab(self) -> QWidget:
+        s = self.settings
+        intro = QLabel("Reguły, które chronią przed fałszywymi okazjami. Oferta, która nie przejdzie testu, "
+                       "dostaje najwyżej werdykt <b>DO WERYFIKACJI</b> (szary) albo trafia do „Odrzucone”.")
+        intro.setWordWrap(True)
+        verdict = QGroupBox("Testy sensowności i limity werdyktu")
+        verdict.setLayout(self._form(SANITY))
+        filt = QGroupBox("Filtr tytułu")
+        filt.setLayout(self._form([Field("listing_filter.multi_model_reject",
+                                         "Odrzucaj tytuły z kilkoma generacjami („13 14 15”, „12/13/14”)", "bool")]))
+        serial = QGroupBox("Sprzedawcy seryjni (wiele tanich „iPhone'ów” od jednej osoby)")
+        serial.setLayout(self._form(SERIAL))
+        country = QGroupBox("Kraj ofert (Vinted pokazuje też ogłoszenia z zagranicy)")
+        country.setLayout(self._form(COUNTRY))
+
+        portals = QGroupBox("Kategorie i minimalna cena pobierania na portalach")
+        grid = QFormLayout(portals)
+        self.category_edits: dict[str, tuple[QLineEdit, QLineEdit]] = {}
+        self.min_price_edits: dict[str, QDoubleSpinBox] = {}
+        for key, name in SOURCE_NAMES.items():
+            cat = s.source_categories.get(key, {})
+            cid, path = QLineEdit(str(cat.get("id", ""))), QLineEdit(str(cat.get("path", "")))
+            cid.setMaximumWidth(80)
+            cid.setPlaceholderText("ID")
+            path.setPlaceholderText("adres kategorii (puste = wszystkie kategorie)")
+            price = QDoubleSpinBox(minimum=0, maximum=5000, singleStep=10, suffix=" zł", decimals=0)
+            price.setValue(float(s.source_min_price.get(key, 0) or 0))
+            row = QHBoxLayout()
+            row.addWidget(QLabel("ID:"))
+            row.addWidget(cid)
+            row.addWidget(path, 1)
+            row.addWidget(QLabel("od ceny:"))
+            row.addWidget(price)
+            grid.addRow(name + ":", row)
+            self.category_edits[key] = (cid, path)
+            self.min_price_edits[key] = price
+        note = QLabel("Vinted: API nie pozwala filtrować po kategorii (sprawdzone), dlatego tanie akcesoria "
+                      "odcina minimalna cena pobierania. Allegro Lokalnie ma tylko wspólną kategorię "
+                      "„Telefony i akcesoria”.")
+        note.setWordWrap(True)
+        note.setObjectName("muted")
+        grid.addRow(note)
+        self._readers.append(self._read_portals)
+        return self._page(intro, verdict, filt, serial, country, portals)
+
+    def _read_portals(self, s: Settings) -> None:
+        s.source_categories = {k: {"id": cid.text().strip(), "path": path.text().strip().strip("/")}
+                               for k, (cid, path) in self.category_edits.items()}
+        s.source_min_price = {k: float(w.value()) for k, w in self.min_price_edits.items() if w.value() > 0}
 
     _FILTER_LISTS = (
         ("accessory_words", "Akcesoria (odrzucane, gdy są przedmiotem sprzedaży)"),

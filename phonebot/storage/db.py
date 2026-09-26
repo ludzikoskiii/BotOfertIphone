@@ -121,6 +121,24 @@ MIGRATIONS: list[str] = [
         PRIMARY KEY (source, source_id)
     );
     """,
+    # v5 — sprzedawcy: kraj (Vinted pokazuje oferty z zagranicy) i sprzedawcy seryjni tanich „iPhone'ów”
+    """
+    ALTER TABLE offers ADD COLUMN seller_id TEXT;
+    CREATE INDEX idx_offers_seller ON offers (source, seller_id);
+
+    CREATE TABLE sellers (
+        source         TEXT NOT NULL,
+        seller_id      TEXT NOT NULL,
+        login          TEXT,
+        country_code   TEXT,
+        business       INTEGER,
+        checked_at     TEXT,
+        serial         INTEGER NOT NULL DEFAULT 0,
+        serial_reason  TEXT,
+        serial_at      TEXT,
+        PRIMARY KEY (source, seller_id)
+    );
+    """,
 ]
 
 

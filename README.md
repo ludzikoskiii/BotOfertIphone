@@ -135,21 +135,79 @@ i filtr promienia.
 
 Zanim oferta trafi do tabeli, przechodzi przez kilka etapów:
 
-1. **Kategoria portalu** — np. „Akcesoria GSM” odpada, „Telefony” przechodzi.
+1. **Kategoria portalu** — szukanie odbywa się w kategorii telefonów (po ID kategorii, patrz niżej);
+   gdy portal podaje kategorię oferty, „Akcesoria GSM” odpada.
 2. **„Kupię / zamienię / szukam”** na początku tytułu → odrzucone („Sprzedam lub zamienię” przechodzi).
-3. **Akcesoria i części z kontekstem** — „Etui do iPhone 13” odpada, ale „iPhone 13 128GB + etui gratis”
-   czy „iPhone 12 z pudełkiem i ładowarką” przechodzą. „Sam wyświetlacz iPhone 11” odpada,
-   a „iPhone 11 zbity wyświetlacz” i „iPhone XR na części” to cały telefon.
-4. **Model** — ogłoszenie bez rozpoznanego modelu iPhone'a odpada.
-5. **Test ceny** — cena poniżej 15% mediany rynkowej: jeśli opis wskazuje na akcesorium/atrapę,
-   oferta odpada; w przeciwnym razie zostaje z czerwoną flagą „Cena nierealnie niska — sprawdź”
-   i nigdy nie dostaje zielonego „KUPUJ”.
+3. **Kilka generacji w tytule** — „13 14 15”, „12/13/14”, „iPhone 7 8 SE” to prawie zawsze etui lub szkło.
+   Pojemność („128 GB”), bateria („85%”), okres („11 miesięcy”), ocena („8/10”) i wersja iOS nie są liczone.
+4. **Akcesoria i części z kontekstem** — „Etui do iPhone 13” odpada, ale „iPhone 13 128GB + etui gratis”
+   czy „iPhone 12 z pudełkiem i ładowarką” przechodzą. Lista słów obejmuje języki sąsiednie
+   (czeski/słowacki: *obal, kryt, pouzdro*; niemiecki: *Hülle, Panzerglas*; litewski: *dėklas*;
+   angielski: *case, cover, screen protector*; także francuski/hiszpański/włoski).
+5. **Model** — ogłoszenie bez rozpoznanego modelu iPhone'a odpada.
+6. **Kraj (Vinted)** — patrz „Oferty z zagranicy” niżej.
+7. **Sprzedawca seryjny** — patrz niżej.
+8. **Test ceny** — cena poniżej 15% mediany rynkowej: jeśli opis wskazuje na akcesorium/atrapę,
+   oferta odpada; w przeciwnym razie zostaje z czerwoną flagą „Cena nierealnie niska — sprawdź”.
 
 Odrzucone ogłoszenia z powodem znajdziesz pod przyciskiem **🚫 Odrzucone** na pasku narzędzi.
 Przycisk **„✔ To jest telefon”** przywraca ofertę do tabeli i zapamiętuje ją, więc filtr nie odrzuci
 jej ponownie. Listy słów (akcesoria, części, „kupię”, słowa dodatków itd.) oraz próg ceny edytujesz
 w **Ustawienia → Filtr ogłoszeń**; zakładka podpowiada też słowa, które najczęściej dawały
-fałszywe odrzucenia.
+fałszywe odrzucenia. Po zmianie reguł (także po aktualizacji programu) oferty zapisane wcześniej
+są sprawdzane ponownie — to, co nie przejdzie, trafia do „Odrzucone” (obserwowanych nie rusza).
+
+### Zabezpieczenia werdyktu i „DO WERYFIKACJI”
+
+Nowy werdykt **DO WERYFIKACJI** (szara etykieta) oznacza: „wygląda na okazję, ale coś się nie zgadza —
+najpierw sprawdź ogłoszenie”. Taka oferta nigdy nie jest zielona i nie wywołuje powiadomienia.
+Wszystkie progi są w **Ustawienia → Zabezpieczenia**:
+
+| Reguła | Domyślnie | Skutek |
+|---|---|---|
+| Cena poniżej % wartości rynkowej (sprawny) | 30% | najwyżej DO WERYFIKACJI |
+| Cena poniżej % wartości rynkowej (uszkodzony / na części) | 15% | najwyżej DO WERYFIKACJI |
+| Zysk powyżej % zainwestowanej kwoty | 150% | najwyżej DO WERYFIKACJI |
+| Nieznana pamięć (wycena z mediany wszystkich pojemności) | włączone | najwyżej DO WERYFIKACJI |
+| Flaga ostrzegawcza (brak zdjęć, simlock, niesprawdzony…) | — | najwyżej NEGOCJUJ |
+| Poważna flaga (iCloud, IMEI, MDM, podróbka) | — | najwyżej DO WERYFIKACJI |
+
+Uszkodzone telefony mają niższy próg ceny, bo tani uszkodzony iPhone to normalna okazja do naprawy.
+W szczegółach oferty widać, który powód obniżył werdykt („Werdykt obniżony z KUPUJ na …”).
+
+**Czysta wycena rynkowa.** Oferty bez rozpoznanej pamięci nie są już danymi rynkowymi (to najczęściej
+akcesoria), ceny poniżej 30% mediany są pomijane, a oferty z flagą „cena nierealnie niska” nie wchodzą
+do mediany. Wcześniej tanie etui zapisane jako „iPhone 13” obniżały wycenę prawdziwych telefonów.
+
+### Oferty z zagranicy (Vinted)
+
+Vinted pokazuje też ogłoszenia z innych krajów (np. z Czech). W ustawieniach wybierasz:
+
+- **Tylko oferty z Polski** (domyślnie) — odpada tytuł w obcym języku (np. „obal”, „prodám”, „Hülle”)
+  oraz oferta sprzedawcy, którego profil podaje inny kraj niż Polska;
+- **Wszystkie z wysyłką do Polski** — oferty zostają, zagraniczne dostają flagę „Sprzedawca z zagranicy”.
+
+Wyniki wyszukiwania Vinted nie zawierają kraju sprzedawcy, więc aplikacja sprawdza go w profilu
+sprzedawcy — tylko dla ofert, które przeszły filtr tekstu, najwyżej 20 sprzedawców na odświeżenie
+(ustawienie), z pamięcią na 30 dni. Pozostali są sprawdzani przy kolejnych odświeżeniach.
+
+### Sprzedawcy seryjni
+
+Jeśli jeden sprzedawca ma co najmniej 3 oferty „iPhone'ów” w cenie poniżej 40% wartości rynkowej,
+zostaje oznaczony, a wszystkie jego oferty trafiają do „Odrzucone” (etap „sprzedawca seryjny”) —
+także te, które wystawi później. Pomyłkę cofniesz przyciskiem **„✔ Sprzedawca jest w porządku”**
+w oknie „Odrzucone”. Wykrywanie działa tam, gdzie portal podaje identyfikator sprzedawcy (Vinted);
+Allegro Lokalnie i Sprzedajemy.pl go nie udostępniają, a zgadywanie po samym tytule dawało fałszywe alarmy.
+
+### Kategorie portali
+
+| Portal | Kategoria | ID | Jak działa |
+|---|---|---|---|
+| Sprzedajemy.pl | Elektronika > Telefony > Telefony komórkowe > Apple iPhone | 1390 | szukanie w tej kategorii; aplikacja sprawdza ID kategorii w odpowiedzi |
+| Allegro Lokalnie | Telefony i akcesoria | 4 | portal nie ma osobnej kategorii samych telefonów — akcesoria odsiewa filtr tekstu |
+| Vinted | Telefony komórkowe | 3661 | **API Vinted ignoruje filtr kategorii** (sprawdzone 5 wariantami parametru), dlatego tanie akcesoria odcina minimalna cena pobierania (domyślnie 150 zł) |
+
+ID, adresy kategorii i minimalne ceny edytujesz w **Ustawienia → Zabezpieczenia**.
 
 ### Okno główne
 
@@ -163,7 +221,7 @@ i „▤ Szczegóły” (Ctrl+D). Ich szerokość zmienisz, przeciągając kraw�
   i poszerzać; „Przywróć domyślne kolumny” cofa zmiany. Nagłówek jest zawsze widoczny przy przewijaniu.
 - Każdą kolumnę można sortować kliknięciem nagłówka. Domyślnie tabela jest posortowana
   po szacowanym zysku, malejąco.
-- **Werdykt** to kolorowa etykieta z tekstem: 🟢 KUPUJ, 🟡 NEGOCJUJ, 🔴 ODPUŚĆ.
+- **Werdykt** to kolorowa etykieta z tekstem: 🟢 KUPUJ, 🟡 NEGOCJUJ, ⚪ DO WERYFIKACJI, 🔴 ODPUŚĆ.
   Ocena 0–100 jest w podpowiedzi i w kolumnie „Ocena”. Tło wierszy jest neutralne,
   a oferty obserwowane są lekko wyróżnione.
 - Ceny mają format „1 250 zł” i są wyrównane do prawej. **Zysk dodatni jest zielony, ujemny czerwony.**
@@ -299,7 +357,10 @@ phonebot/
     settings.py      wszystkie ustawienia (JSON w bazie)
     geo.py           odległości
   storage/       SQLite: schemat z migracjami, repozytoria
-  core/listing_filter.py  wieloetapowy filtr: akcesoria, części, „kupię”, test ceny
+  core/listing_filter.py  wieloetapowy filtr: akcesoria, części, „kupię”, kilka generacji, test ceny
+  core/sanity.py  zabezpieczenia werdyktu (DO WERYFIKACJI, limity przy flagach)
+  core/language.py  rozpoznawanie języka tytułu (oferty z zagranicy na Vinted)
+  services/offer_guard.py  reguły odrzucania w jednym miejscu (kraj, sprzedawcy seryjni, ponowne filtrowanie)
   net/http.py    klient HTTP: limit zapytań na host, ponawianie (tenacity), cache odpowiedzi
   services/      evaluator.py (baza + wycena), scanner.py (równoległe pobieranie z izolacją błędów),
                  post_scan.py (AI + powiadomienia po skanie), ai_analysis.py (Claude),
@@ -331,6 +392,9 @@ Awaria jednego adaptera jest izolowana i nie zatrzymuje pozostałych.
    analiza opisów przez AI (Claude) oraz gotowy plik `PhoneBot.exe` budowany automatycznie przez GitHub Actions.
 6. ✅ Wieloetapowy filtr akcesoriów z widokiem „Odrzucone”, nowy układ okna (filtry | tabela | szczegóły),
    motyw jasny/ciemny i optymalizacja wydajności.
+7. ✅ Zabezpieczenia regułowe: werdykt DO WERYFIKACJI, testy sensowności ceny i zysku, limity werdyktu
+   przy flagach, kilka generacji w tytule, słowa w językach sąsiednich, kraj ofert Vinted, sprzedawcy
+   seryjni, kategorie portali po ID, czysta wycena rynkowa.
 
 ### Wydajność
 

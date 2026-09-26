@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
 
 from ..core.listing_filter import STAGE_LABELS
 from ..sources import SOURCE_NAMES
-from ..storage.repositories import RejectedRepository
+from ..storage.repositories import RejectedRepository, SellerRepository
 
 ID_ROLE = Qt.ItemDataRole.UserRole
 
@@ -56,6 +56,11 @@ class RejectedDialog(QDialog):
         self.restore_btn = QPushButton("✔ To jest telefon")
         self.restore_btn.setToolTip("Przywróć ofertę do wyników i nie odrzucaj jej w przyszłości")
         self.restore_btn.clicked.connect(self.restore_selected)
+        self.seller_ok_btn = QPushButton("✔ Sprzedawca jest w porządku")
+        self.seller_ok_btn.setToolTip("Usuń oznaczenie „sprzedawca seryjny” i przywróć wszystkie jego oferty")
+        self.seller_ok_btn.clicked.connect(self.trust_selected_seller)
+        self.seller_ok_btn.setEnabled(False)
+        self.table.itemSelectionChanged.connect(self._selection_changed)
         open_btn = QPushButton("Otwórz ogłoszenie")
         open_btn.clicked.connect(self.open_selected)
         close_btn = QPushButton("Zamknij")
@@ -68,6 +73,7 @@ class RejectedDialog(QDialog):
         top.addWidget(self.count_label)
         buttons = QHBoxLayout()
         buttons.addWidget(self.restore_btn)
+        buttons.addWidget(self.seller_ok_btn)
         buttons.addWidget(open_btn)
         buttons.addStretch(1)
         buttons.addWidget(close_btn)
@@ -112,6 +118,30 @@ class RejectedDialog(QDialog):
         if offer_id is not None:
             self.restored.emit(offer_id)
         return offer_id
+
+    def _selection_changed(self) -> None:
+        rid = self._selected_id()
+        r = self._items.get(rid) if rid is not None else None
+        self.seller_ok_btn.setEnabled(bool(r and r.stage == "seller" and r.raw.params.get("seller_id")))
+
+    def trust_selected_seller(self) -> int:
+        """Sprzedawca oznaczony jako seryjny przez pomyłkę: zdejmij oznaczenie, przywróć jego oferty."""
+        rid = self._selected_id()
+        r = self._items.get(rid) if rid is not None else None
+        seller_id = r.raw.params.get("seller_id") if r else None
+        if not r or not seller_id:
+            return 0
+        SellerRepository(self.repo.conn).unmark_serial(r.source, str(seller_id))
+        restored = 0
+        for other in self.repo.list():
+            if other.source == r.source and other.stage == "seller" and \
+                    str(other.raw.params.get("seller_id")) == str(seller_id):
+                offer_id = self.repo.restore(other.id)
+                if offer_id is not None:
+                    restored += 1
+                    self.restored.emit(offer_id)
+        self.reload()
+        return restored
 
     def open_selected(self) -> None:
         rid = self._selected_id()

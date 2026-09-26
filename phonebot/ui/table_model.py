@@ -20,7 +20,6 @@ SORT_ROLE = Qt.ItemDataRole.UserRole + 1
 OFFER_ROLE = Qt.ItemDataRole.UserRole + 2
 VERDICT_ROLE = Qt.ItemDataRole.UserRole + 3
 
-_VERDICT_ORDER = {Verdict.BUY: 2, Verdict.NEGOTIATE: 1, Verdict.SKIP: 0}
 _NO_VALUE = float("-inf")
 _RIGHT = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
 _CENTER = Qt.AlignmentFlag.AlignCenter
@@ -314,7 +313,7 @@ class OffersTableModel(QAbstractTableModel):
             case Col.MAX_BUY:
                 return val.max_buy_price if val.max_buy_price is not None else _NO_VALUE
             case Col.VERDICT:
-                return _VERDICT_ORDER[val.verdict] * 1000 + val.score
+                return val.verdict.rank * 1000 + val.score
             case Col.SCORE:
                 return val.score
             case Col.FLAGS:

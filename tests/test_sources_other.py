@@ -66,7 +66,9 @@ def test_allegro_lokalnie_adapter():
 
     offers = {o.source_id: o for o in run(go())}
     assert len(calls) == 2  # druga strona nie wniosła nowych ofert → koniec
-    assert calls[0].path == "/oferty/q/iphone" and calls[0].params["price_to"] == "3000"
+    # szukanie w kategorii „Telefony i akcesoria” (ID 4 w adresie)
+    assert calls[0].path == "/oferty/elektronika/telefony-i-akcesoria-4/q/iphone"
+    assert calls[0].params["price_to"] == "3000"
     o = offers["a1b2c3"]
     assert o.source == "allegro_lokalnie"
     assert o.params["condition"] == "damaged" and o.shipping_available is True
@@ -89,7 +91,8 @@ def test_vinted_parse_item_new_format():
     raw = parse_item(VINTED_NEW["items"][0])
     assert raw.source == "vinted" and raw.price == 1450 and raw.currency == "PLN"
     assert raw.url == "https://www.vinted.pl/items/10090626301-iphone-13-128-gb"  # link względny → pełny
-    assert raw.params == {"condition": "used", "buyer_fee": "75.40"}  # opłata z pola service_fee
+    assert raw.params == {"condition": "used", "buyer_fee": "75.40",  # opłata z pola service_fee
+                          "seller_id": "3189278415", "seller": "sprzedawca", "seller_business": "0"}
     assert raw.photos == ["https://images1.vinted.net/t/1/310x430.webp"]
     assert raw.shipping_available is True
     assert parse_item(VINTED_NEW["items"][2]).currency == "USD"
@@ -97,7 +100,8 @@ def test_vinted_parse_item_new_format():
 
 def test_vinted_parse_item_old_format_still_supported():
     raw = parse_item(VINTED["items"][0])
-    assert raw.price == 1450 and raw.params == {"condition": "used", "buyer_fee": "75.00"}
+    assert raw.price == 1450
+    assert raw.params == {"condition": "used", "buyer_fee": "75.00", "seller_id": "7", "seller": "ania"}
     assert parse_item(VINTED["items"][1]).price == 700
     assert parse_item(VINTED["items"][2]).currency == "EUR"
 

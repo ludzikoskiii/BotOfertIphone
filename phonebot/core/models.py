@@ -106,6 +106,10 @@ class RedFlag(StrEnum):
     UNTESTED = "untested"
     UNKNOWN_REPAIR_COST = "unknown_repair_cost"
     PRICE_UNREALISTIC = "price_unrealistic"
+    PROFIT_UNREALISTIC = "profit_unrealistic"
+    STORAGE_UNKNOWN = "storage_unknown"
+    SERIAL_SELLER = "serial_seller"
+    FOREIGN_SELLER = "foreign_seller"
 
     @property
     def label(self) -> str:
@@ -130,13 +134,26 @@ _FLAG_INFO = {
     RedFlag.UNTESTED: ("Niesprawdzony / „sprzedaję jak jest”", Severity.SOFT),
     RedFlag.UNKNOWN_REPAIR_COST: ("Nieznany koszt naprawy", Severity.SOFT),
     RedFlag.PRICE_UNREALISTIC: ("Cena nierealnie niska — sprawdź ogłoszenie", Severity.HARD),
+    RedFlag.PROFIT_UNREALISTIC: ("Zysk nierealnie wysoki — sprawdź ogłoszenie", Severity.HARD),
+    RedFlag.STORAGE_UNKNOWN: ("Nieznana pamięć — wycena przybliżona", Severity.SOFT),
+    RedFlag.SERIAL_SELLER: ("Sprzedawca seryjny (wiele tanich „iPhone'ów”)", Severity.HARD),
+    RedFlag.FOREIGN_SELLER: ("Sprzedawca z zagranicy", Severity.SOFT),
 }
 
 
 class Verdict(StrEnum):
     BUY = "KUPUJ"
     NEGOTIATE = "NEGOCJUJ"
+    VERIFY = "DO WERYFIKACJI"  # wygląda na okazję, ale coś się nie zgadza — najpierw sprawdź
     SKIP = "ODPUŚĆ"
+
+    @property
+    def rank(self) -> int:
+        """Kolejność od najlepszego: KUPUJ > NEGOCJUJ > DO WERYFIKACJI > ODPUŚĆ."""
+        return _VERDICT_RANK[self]
+
+
+_VERDICT_RANK = {Verdict.BUY: 3, Verdict.NEGOTIATE: 2, Verdict.VERIFY: 1, Verdict.SKIP: 0}
 
 
 class RowColor(StrEnum):

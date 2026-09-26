@@ -25,6 +25,7 @@ from .models import (
 )
 from .negotiation import color_for, compute_score, floor10, negotiation_margin, recommend
 from .parts import PartsCatalog
+from .sanity import verdict_cap
 from .settings import ProfitRule, Settings
 
 
@@ -179,10 +180,21 @@ def evaluate(offer: Offer, market: MarketEstimate, parts: PartsCatalog, settings
     max_outlay = max_buy_price(value - fixed_costs, repair_total + acquisition.amount + fee_fixed, rule)
     max_buy = floor10(max_outlay / (1 + fee_rate))
 
-    ratio = settings.suspicious_price_ratio_damaged if offer.parsed.condition.market_class == "damaged" \
-        else settings.suspicious_price_ratio_working
-    if price < value * ratio:
+    damaged = offer.parsed.condition.market_class == "damaged"
+    sanity = settings.sanity
+    # test sensowności ceny: dużo poniżej rynku to zwykle akcesorium, część, atrapa albo oszustwo
+    unrealistic_ratio = sanity.price_min_ratio_damaged if damaged else sanity.price_min_ratio_working
+    if price < value * unrealistic_ratio and RedFlag.PRICE_UNREALISTIC not in flags:
+        flags.append(RedFlag.PRICE_UNREALISTIC)
+    ratio = settings.suspicious_price_ratio_damaged if damaged else settings.suspicious_price_ratio_working
+    if price < value * ratio and RedFlag.PRICE_UNREALISTIC not in flags:
         flags.append(RedFlag.SUSPICIOUSLY_CHEAP)
+    # test sensowności zysku
+    if roi is not None and roi > sanity.profit_max_pct:
+        flags.append(RedFlag.PROFIT_UNREALISTIC)
+    # nieznana pamięć: wycena z mediany wszystkich wersji modelu — przybliżona
+    if sanity.unknown_storage_verify and offer.parsed.storage_gb is None:
+        flags.append(RedFlag.STORAGE_UNKNOWN)
 
     verdict, negotiation = recommend(price, max_buy, offer.parsed.negotiable, settings)
     if mode_mismatch:
@@ -190,21 +202,17 @@ def evaluate(offer: Offer, market: MarketEstimate, parts: PartsCatalog, settings
         negotiation = Negotiation(False, None, None, "Tryb szybkiego resellu: telefon wymaga naprawy.")
         reasons.append("Telefon ma usterki wymagające naprawy — nie pasuje do trybu „Szybki resell”.")
 
-    if RedFlag.PRICE_UNREALISTIC in flags and verdict is Verdict.BUY:
-        # nierealnie niska cena: zamiast „okazji” — najpierw sprawdzić ogłoszenie
-        verdict = Verdict.NEGOTIATE
-        negotiation = Negotiation(False, None, negotiation.max_price,
-                                  "Cena nierealnie niska — przed zakupem sprawdź ogłoszenie (czy to na pewno cały, "
-                                  "sprawny telefon, a nie akcesorium, część lub oszustwo).")
-        reasons.append("Cena nierealnie niska względem rynku — wymaga sprawdzenia, nie traktuj jako pewnej okazji.")
-
-    hard = [f for f in flags if f.severity.value == "hard"]
-    if hard and settings.hard_flags_force_skip and verdict is not Verdict.SKIP:
-        verdict = Verdict.SKIP
-        negotiation = Negotiation(False, None, None, "Twarda czerwona flaga — pominięto.")
-
+    # każda flaga ogranicza najlepszy możliwy werdykt
+    cap, limiting = verdict_cap(flags, sanity, hard_force_skip=settings.hard_flags_force_skip)
+    capped_from: Verdict | None = None
+    if verdict.rank > cap.rank:
+        capped_from, verdict = verdict, cap
+        negotiation = _capped_negotiation(cap, negotiation, limiting, price, max_buy)
     if not mode_mismatch:
-        reasons.insert(0, _summary(verdict, profit, roi, required, price, max_buy))
+        reasons.insert(0, _summary(capped_from or verdict, profit, roi, required, price, max_buy))
+    if capped_from is not None:
+        why = ", ".join(f.label for f in limiting)
+        reasons.insert(1, f"Werdykt obniżony z {capped_from.value} na {verdict.value}: {why}.")
     if repair_items:
         reasons.append(f"Naprawa: {', '.join(d.label for d in offer.parsed.defects) or 'nieokreślona'} "
                        f"— koszt ok. {repair_total:.0f} zł.")
@@ -218,7 +226,7 @@ def evaluate(offer: Offer, market: MarketEstimate, parts: PartsCatalog, settings
         margin=negotiation_margin(offer.parsed.negotiable, settings), confidence=market.confidence,
         flags=flags, settings=settings, mode_mismatch=mode_mismatch,
     )
-    if RedFlag.PRICE_UNREALISTIC in flags:
+    if verdict is Verdict.VERIFY or RedFlag.PRICE_UNREALISTIC in flags:
         score = min(score, settings.score_green - 1)  # najwyżej „przeciętna”, nigdy zielona
     return Valuation(
         mode=mode, market=market, repair_items=repair_items, repair_cost=repair_total,
@@ -226,6 +234,20 @@ def evaluate(offer: Offer, market: MarketEstimate, parts: PartsCatalog, settings
         required_profit=required, max_buy_price=max_buy, verdict=verdict, negotiation=negotiation,
         score=score, color=color_for(score, settings), flags=flags, reasons=reasons,
     )
+
+
+def _capped_negotiation(cap: Verdict, original: Negotiation, limiting: list[RedFlag], price: float,
+                        max_buy: float) -> Negotiation:
+    why = ", ".join(f.label.lower() for f in limiting)
+    if cap is Verdict.NEGOTIATE:
+        return Negotiation(True, original.opening_price, original.max_price,
+                           f"Cena mieści się w maksymalnej ({max_buy:.0f} zł), ale oferta ma ostrzeżenie ({why}). "
+                           "Dopytaj sprzedającego i negocjuj, zanim kupisz.")
+    if cap is Verdict.VERIFY:
+        return Negotiation(False, None, original.max_price,
+                           f"Do weryfikacji ({why}). Zanim zaproponujesz cenę, sprawdź zdjęcia, opis i sprzedającego — "
+                           "czy to na pewno cały, sprawny telefon, a nie akcesorium, część lub oszustwo.")
+    return Negotiation(False, None, None, f"Pominięto: {why}.")
 
 
 def _summary(verdict: Verdict, profit: float, roi: float | None, required: float, price: float, max_buy: float) -> str:

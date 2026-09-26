@@ -9,7 +9,7 @@ import logging
 import sqlite3
 from dataclasses import dataclass, field
 
-from ..core.models import OfferStatus, RowColor
+from ..core.models import OfferStatus, RowColor, Verdict
 from ..core.settings import Settings
 from ..storage.repositories import OfferRepository
 from .ai_analysis import AiAnalysisError, AiListing, ClaudeAnalyzer
@@ -85,7 +85,8 @@ def run_post_scan(conn: sqlite3.Connection, settings: Settings, report: ScanRepo
         if reason == "nowa" and repo.was_notified(offer_id):
             continue
         val = evaluator.evaluate(offer)
-        if val.color is RowColor.GREEN:
+        # tylko czyste okazje: zielona ocena i werdykt KUPUJ/NEGOCJUJ (nigdy DO WERYFIKACJI)
+        if val.color is RowColor.GREEN and val.verdict in (Verdict.BUY, Verdict.NEGOTIATE):
             greens.append((offer, val, reason))
     greens.sort(key=lambda x: x[1].expected_profit or 0, reverse=True)
     for offer, _, _ in greens:

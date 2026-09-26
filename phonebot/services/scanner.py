@@ -9,19 +9,19 @@ from __future__ import annotations
 import asyncio
 import logging
 import sqlite3
-import statistics
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
-from ..core.listing_filter import FilterDecision, ListingFilter
+from ..core.language import detect_language
 from ..core.models import RawOffer, RedFlag
-from ..core.normalizer import parse_offer
 from ..core.settings import Settings
 from ..net.http import HostRateLimiter, HttpClient, ResponseCache
 from ..sources import REGISTRY, SearchQuery, SourceAdapter, search_phrases
-from ..storage.repositories import FetchRunRepository, OfferRepository, RejectedRepository, utcnow
+from ..sources.base import SellerProfile
+from ..storage.repositories import FetchRunRepository, OfferRepository, SellerRepository, utcnow
+from .offer_guard import OfferGuard
 
 log = logging.getLogger(__name__)
 
@@ -36,6 +36,8 @@ class SourceReport:
     saved: int = 0
     new: int = 0
     skipped: int = 0  # odrzucone przez filtr ogłoszeń (lista: widok „Odrzucone oferty”)
+    foreign: int = 0  # odrzucone jako oferty z zagranicy (Vinted)
+    serial: int = 0  # odrzucone jako oferty sprzedawców seryjnych
     suspicious: int = 0  # przyjęte, ale z podejrzanie niską ceną
     error: str | None = None
     kind: str = "ok"  # ok | empty | error | network | blocked | changed | timeout
@@ -103,6 +105,7 @@ class Scanner:
         )
         report = ScanReport()
         report.first_scan = self.conn.execute("SELECT COUNT(*) FROM offers").fetchone()[0] == 0
+        OfferGuard(self.conn, s).refilter_stored()  # nowe reguły → sprawdź też oferty zapisane wcześniej
         async with self._http_factory() as http:
             adapters = self._adapter_factory(http, s)
             paused = {} if force else self._cooldowns()
@@ -117,12 +120,14 @@ class Scanner:
                 return report
             progress("Pobieranie: " + ", ".join(a.display_name for a in adapters))
             results = await asyncio.gather(*(self._run_adapter(a, query, progress) for a in adapters))
+            profiles = await self._lookup_sellers(adapters, results, progress)
 
+        self._save_profiles(profiles)
         runs = FetchRunRepository(self.conn)
         for adapter, (raw_offers, src_report) in zip(adapters, results, strict=True):
             run_id = runs.start(adapter.key)
             if raw_offers:
-                self._store(raw_offers, src_report, report)
+                self._store(raw_offers, src_report, report, international=adapter.international)
                 OfferRepository(self.conn).deactivate_missing(
                     adapter.key, utcnow() - timedelta(days=s.offer_stale_days)
                 )
@@ -160,40 +165,76 @@ class Scanner:
         rep.seconds = round(time.monotonic() - start, 1)
         return offers, rep
 
-    def _market_median(self, model: str, storage_gb: int | None, cache: dict) -> float | None:
-        """Mediana cen modelu (ta sama pojemność, gdy jest dość danych) — do testu ceny."""
-        key = (model, storage_gb)
-        if key not in cache:
-            obs = OfferRepository(self.conn).market_observations(model, self.settings.market_window_days)
-            prices = [o.price for o in obs if o.price >= self.settings.min_valid_price]
-            same = [o.price for o in obs if o.storage_gb == storage_gb and o.price >= self.settings.min_valid_price]
-            use = same if len(same) >= 3 else prices
-            cache[key] = statistics.median(use) if len(use) >= 3 else None
-        return cache[key]
+    async def _lookup_sellers(self, adapters: list[SourceAdapter], results: list, progress: Progress
+                              ) -> dict[str, dict[str, SellerProfile]]:
+        """Kraj sprzedawców (portale międzynarodowe): tylko dla ofert, które przeszły filtr tekstu,
+        tylko nieznanych sprzedawców i z limitem zapytań na skan — reszta przy kolejnych skanach."""
+        s = self.settings
+        limit = max(0, int(s.seller_lookups_per_scan))
+        out: dict[str, dict[str, SellerProfile]] = {}
+        if not limit:
+            return out
+        guard = OfferGuard(self.conn, s)
+        sellers = SellerRepository(self.conn)
+        for adapter, (raw_offers, _rep) in zip(adapters, results, strict=True):
+            if not adapter.international or not raw_offers:
+                continue
+            ids = []
+            for raw in raw_offers:
+                sid = raw.params.get("seller_id")
+                if not sid or (s.vinted_country_mode == "pl" and detect_language(raw.title).foreign):
+                    continue  # kraj nieistotny: oferta i tak odpadnie
+                if guard.prepare(raw).decision.accepted:
+                    ids.append(str(sid))
+            need = sellers.needs_country(adapter.key, ids)[:limit]
+            if not need:
+                continue
+            progress(f"{adapter.display_name}: sprawdzanie kraju {len(need)} sprzedawców…")
+            budget = min(120.0, float(s.source_timeout_s))
+            try:
+                out[adapter.key] = await asyncio.wait_for(
+                    adapter.seller_countries(need, deadline=time.monotonic() + budget), timeout=budget + 30)
+            except Exception as e:  # brak kraju nie może zepsuć skanu
+                log.warning("%s: nie udało się sprawdzić sprzedawców: %s", adapter.display_name, e)
+        return out
 
-    def _store(self, raw_offers: list[RawOffer], rep: SourceReport, report: ScanReport) -> None:
-        repo = OfferRepository(self.conn)
-        rejected = RejectedRepository(self.conn)
-        listing_filter = ListingFilter(self.settings.listing_filter, rejected.whitelist())
-        threshold = self.settings.battery_health_threshold
-        medians: dict = {}
+    def _save_profiles(self, profiles: dict[str, dict[str, SellerProfile]]) -> None:
+        if not any(profiles.values()):
+            return
+        sellers = SellerRepository(self.conn)
         self.conn.execute("BEGIN")
         try:
-            for raw in raw_offers:
-                parsed = parse_offer(raw, battery_threshold=threshold)
-                decision = listing_filter.check(raw.title, model=parsed.model, category=raw.params.get("category"),
-                                                source=raw.source, source_id=raw.source_id)
-                if decision.accepted and raw.price < self.settings.min_valid_price:
-                    decision = FilterDecision(False, "price", f"cena {raw.price:.0f} zł poniżej minimalnej "
-                                                              f"({self.settings.min_valid_price:.0f} zł) — "
-                                                              "zwykle „za darmo” lub zamiana")
-                if decision.accepted and parsed.model:
-                    median = self._market_median(parsed.model, parsed.storage_gb, medians)
-                    decision = listing_filter.check_price(raw.price, median, raw.description,
-                                                          source=raw.source, source_id=raw.source_id)
+            for source, by_id in profiles.items():
+                for seller_id, prof in by_id.items():
+                    sellers.save_country(source, seller_id, prof.country_code, login=prof.login,
+                                         business=prof.business)
+            self.conn.execute("COMMIT")
+        except Exception:
+            self.conn.execute("ROLLBACK")
+            raise
+
+    def _store(self, raw_offers: list[RawOffer], rep: SourceReport, report: ScanReport, *,
+               international: bool = False) -> None:
+        repo = OfferRepository(self.conn)
+        guard = OfferGuard(self.conn, self.settings)
+        rejected = guard.rejected
+        source = raw_offers[0].source
+        self.conn.execute("BEGIN")
+        try:
+            items = [guard.prepare(raw) for raw in raw_offers]
+            serial = guard.detect_serial(items, source)
+            known = guard.sellers.get_many(source, [str(p.raw.params.get("seller_id") or "") for p in items])
+            for p in items:
+                raw, parsed, decision = p.raw, p.parsed, p.decision
+                if decision.accepted:
+                    decision = guard.seller_decision(p, known, serial, international) or decision
+                if decision.accepted:
+                    decision = guard.price_decision(p)
                 if not decision.accepted:
                     rejected.add(raw, decision.stage, decision.reason, decision.keyword)
                     rep.skipped += 1
+                    rep.foreign += decision.stage == "country"
+                    rep.serial += decision.stage == "seller"
                     continue
                 if decision.suspicious:
                     parsed.flags.append(RedFlag.PRICE_UNREALISTIC)

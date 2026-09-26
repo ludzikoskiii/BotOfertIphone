@@ -13,7 +13,7 @@ from .text import Phrase, any_match, normalize, phrase
 _GEN = r"(?P<gen>(?:1[0-9]e?|[6-9]s?)(?![0-9])|(?:x[sr]?|se|air)(?![a-z0-9]))"
 _VAR = r"(?:\s?(?P<var>pro max|promax|pro|plus|max|mini|air|\+))?"
 _SE = r"(?:\s(?P<se>20(?:16|20|22)|[123](?: ?gen\w*| generacj\w*)?)\b)?"
-_IPHONE_RE = re.compile(r"\b(?:iphone|iphon|ifon|ajfon|i phone)\s?" + _GEN + _VAR + _SE)
+_IPHONE_RE = re.compile(r"\b(?:iphone|iphon|ifon|ajfon|i phone)\s?(?:apple\s)?" + _GEN + _VAR + _SE)
 _BARE_RE = re.compile(r"^(?:apple\s)?" + _GEN + _VAR + _SE)
 
 _SE_GENERATIONS = {"2016": "2016", "1": "2016", "2020": "2020", "2": "2020", "2022": "2022", "3": "2022"}

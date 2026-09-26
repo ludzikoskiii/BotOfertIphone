@@ -73,7 +73,7 @@ class OfferRepository:
             "condition": parsed.condition.value, "defects": json.dumps([d.value for d in parsed.defects]),
             "flags": json.dumps([f.value for f in parsed.flags]), "battery_health": parsed.battery_health,
             "negotiable": None if parsed.negotiable is None else int(parsed.negotiable),
-            "dedup_key": dedup_key(parsed, raw),
+            "dedup_key": dedup_key(parsed, raw), "seller_id": raw.params.get("seller_id") or None,
         }
         if existing is None:
             cols = ["source", "source_id", *fields, "first_seen", "last_seen"]
@@ -108,6 +108,10 @@ class OfferRepository:
     def get(self, offer_id: int) -> Offer | None:
         row = self.conn.execute("SELECT * FROM offers WHERE id = ?", (offer_id,)).fetchone()
         return _row_to_offer(row) if row else None
+
+    def by_seller(self, source: str, seller_id: str, *, active_only: bool = True) -> list[Offer]:
+        sql = "SELECT * FROM offers WHERE source = ? AND seller_id = ?" + (" AND is_active = 1" if active_only else "")
+        return [_row_to_offer(r) for r in self.conn.execute(sql, (source, seller_id))]
 
     def list(self, *, include_hidden: bool = False, active_only: bool = True) -> list[Offer]:
         where = []
@@ -178,6 +182,7 @@ class OfferRepository:
             """
             SELECT MIN(id) AS id, price, storage_gb, condition FROM offers
             WHERE model = ? AND last_seen >= ?
+              AND flags NOT LIKE '%price_unrealistic%' AND flags NOT LIKE '%serial_seller%'
             GROUP BY COALESCE(dedup_key, 'id:' || id)
             """,
             (model, since),
@@ -258,9 +263,16 @@ class SettingsRepository:
         return Settings.from_json(row["value"] if row else None)
 
     def save(self, settings: Settings) -> None:
+        self.set_value(self.KEY, settings.to_json())
+
+    def get_value(self, key: str) -> str | None:
+        row = self.conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+        return row["value"] if row else None
+
+    def set_value(self, key: str, value: str) -> None:
         self.conn.execute(
             "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
-            (self.KEY, settings.to_json()),
+            (key, value),
         )
 
 
@@ -371,6 +383,12 @@ class RejectedRepository:
             "SELECT COALESCE(keyword, stage) AS k, COUNT(*) AS n FROM filter_whitelist GROUP BY k ORDER BY n DESC")
         return [(r["k"], int(r["n"])) for r in rows]
 
+    def reject_stored(self, offer: Offer, stage: str, reason: str, keyword: str | None = None) -> None:
+        """Przenosi zapisaną ofertę do odrzuconych (np. po zaostrzeniu filtra albo wykryciu sprzedawcy seryjnego)."""
+        self.add(offer.raw, stage, reason, keyword)
+        if offer.id is not None:
+            self.conn.execute("DELETE FROM offers WHERE id = ?", (offer.id,))
+
     def restore(self, rejected_id: int) -> int | None:
         """„To jest telefon”: dodaje do białej listy i przenosi ofertę do wyników. Zwraca id oferty."""
         from ..core.normalizer import parse_offer
@@ -387,3 +405,77 @@ class RejectedRepository:
         offer_id = OfferRepository(self.conn).upsert(raw, parse_offer(raw)).offer_id
         self.remove(raw.source, raw.source_id)
         return offer_id
+
+
+@dataclass
+class SellerInfo:
+    source: str
+    seller_id: str
+    login: str | None = None
+    country_code: str | None = None  # np. "PL", "CZ"; None = jeszcze nie sprawdzono
+    business: bool | None = None
+    checked_at: datetime | None = None
+    serial: bool = False
+    serial_reason: str | None = None
+
+
+class SellerRepository:
+    """Sprzedawcy: kraj z profilu (pamięć podręczna) i oznaczenie „sprzedawca seryjny”."""
+
+    def __init__(self, conn: sqlite3.Connection):
+        self.conn = conn
+
+    def get_many(self, source: str, seller_ids: list[str] | set[str]) -> dict[str, SellerInfo]:
+        ids = [i for i in dict.fromkeys(seller_ids) if i]
+        out: dict[str, SellerInfo] = {}
+        for chunk in (ids[i:i + 500] for i in range(0, len(ids), 500)):
+            rows = self.conn.execute(
+                f"SELECT * FROM sellers WHERE source = ? AND seller_id IN ({', '.join('?' * len(chunk))})",
+                [source, *chunk])
+            for r in rows:
+                out[r["seller_id"]] = _row_to_seller(r)
+        return out
+
+    def needs_country(self, source: str, seller_ids: list[str], max_age_days: int = 30) -> list[str]:
+        """Sprzedawcy bez sprawdzonego kraju (albo sprawdzeni dawno) — w kolejności podanej listy."""
+        known = self.get_many(source, seller_ids)
+        cutoff = utcnow() - timedelta(days=max_age_days)
+        # sprawdzony profil pamiętamy 30 dni — także bez kraju (nie pytamy portalu co odświeżenie)
+        return [i for i in dict.fromkeys(seller_ids) if i and (
+            i not in known or known[i].checked_at is None or known[i].checked_at < cutoff)]
+
+    def save_country(self, source: str, seller_id: str, country_code: str | None, *, login: str | None = None,
+                     business: bool | None = None) -> None:
+        self.conn.execute(
+            """
+            INSERT INTO sellers (source, seller_id, login, country_code, business, checked_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT (source, seller_id) DO UPDATE SET
+                login = COALESCE(excluded.login, login), country_code = excluded.country_code,
+                business = COALESCE(excluded.business, business), checked_at = excluded.checked_at
+            """,
+            (source, seller_id, login, (country_code or "").upper() or None,
+             None if business is None else int(business), _iso(utcnow())))
+
+    def mark_serial(self, source: str, seller_id: str, reason: str, login: str | None = None) -> None:
+        self.conn.execute(
+            """
+            INSERT INTO sellers (source, seller_id, login, serial, serial_reason, serial_at) VALUES (?, ?, ?, 1, ?, ?)
+            ON CONFLICT (source, seller_id) DO UPDATE SET
+                serial = 1, serial_reason = excluded.serial_reason, serial_at = excluded.serial_at,
+                login = COALESCE(excluded.login, login)
+            """, (source, seller_id, login, reason, _iso(utcnow())))
+
+    def unmark_serial(self, source: str, seller_id: str) -> None:
+        self.conn.execute("UPDATE sellers SET serial = 0, serial_reason = NULL WHERE source = ? AND seller_id = ?",
+                          (source, seller_id))
+
+    def serial_sellers(self, source: str | None = None) -> dict[tuple[str, str], SellerInfo]:
+        sql = "SELECT * FROM sellers WHERE serial = 1" + (" AND source = ?" if source else "")
+        rows = self.conn.execute(sql, (source,) if source else ())
+        return {(r["source"], r["seller_id"]): _row_to_seller(r) for r in rows}
+
+
+def _row_to_seller(r: sqlite3.Row) -> SellerInfo:
+    return SellerInfo(r["source"], r["seller_id"], r["login"], r["country_code"], _bool(r["business"]),
+                      _dt(r["checked_at"]), bool(r["serial"]), r["serial_reason"])

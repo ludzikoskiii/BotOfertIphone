@@ -124,20 +124,22 @@ def test_resell_mode_accepts_weak_battery():
 
 
 def test_suspiciously_cheap_flag():
-    offer = make_offer("iPhone 13 128GB", price=500)
+    offer = make_offer("iPhone 13 128GB", price=900)  # 45% rynku: ostrzeżenie, ale jeszcze nie „nierealnie”
     v = evaluate(offer, market(2000), PARTS, Settings(), Mode.RESELL)
-    assert RedFlag.SUSPICIOUSLY_CHEAP in v.flags
+    assert RedFlag.SUSPICIOUSLY_CHEAP in v.flags and RedFlag.PRICE_UNREALISTIC not in v.flags
+    assert v.verdict is Verdict.NEGOTIATE  # miękka flaga: najwyżej NEGOCJUJ
 
 
-def test_hard_flag_lowers_score_but_keeps_verdict_by_default():
+def test_hard_flag_caps_verdict_at_verify():
     clean = make_offer("iPhone 13 128GB", price=1000)
     locked = make_offer("iPhone 13 128GB", price=1000, description="blokada icloud")
     s = Settings()
     v_clean = evaluate(clean, market(2000), PARTS, s, Mode.RESELL)
     v_locked = evaluate(locked, market(2000), PARTS, s, Mode.RESELL)
-    assert v_locked.verdict is Verdict.BUY
-    assert v_locked.has_hard_flag
-    assert v_locked.score == v_clean.score - s.penalty(RedFlag.ICLOUD_LOCK)
+    assert v_clean.verdict is Verdict.BUY
+    assert v_locked.verdict is Verdict.VERIFY and v_locked.has_hard_flag
+    assert v_locked.score < v_clean.score
+    assert any("obniżony z KUPUJ" in r for r in v_locked.reasons)
 
 
 def test_hard_flag_can_force_skip():
@@ -193,5 +195,5 @@ def test_unrealistic_price_is_never_a_green_buy():
     offer = make_offer("iPhone 13 128GB", price=250)
     offer.parsed.flags.append(RedFlag.PRICE_UNREALISTIC)
     v = evaluate(offer, market(2000), PARTS, Settings(), Mode.RESELL)
-    assert v.verdict is Verdict.NEGOTIATE and v.color is not RowColor.GREEN
-    assert "sprawdź ogłoszenie" in v.negotiation.note
+    assert v.verdict is Verdict.VERIFY and v.color is not RowColor.GREEN
+    assert "Do weryfikacji" in v.negotiation.note

@@ -5,6 +5,11 @@ listę ofert w standardowym formacie JSON-LD (``ItemList`` z produktami: tytuł,
 cena, link, zdjęcie), którą czyta uniwersalny ekstraktor (``extract.py``).
 Miasto jest częścią adresu ogłoszenia, np.
 ``/iphone-13-kielce-4-0010c9-nr69433240`` → Kielce.
+
+Kategoria: wyszukiwanie odbywa się w kategorii „Apple iPhone” (ID 1390) przez jej adres
+(``/elektronika/telefony-i-akcesoria/telefony-komorkowe/apple-iphone``). Parametr
+``inp_category_id`` strony wyszukiwania jest ignorowany, więc adapter sprawdza ID kategorii
+w odpowiedzi (``catid``) i ostrzega, gdy portal zmieni adres.
 """
 from __future__ import annotations
 
@@ -24,6 +29,7 @@ log = logging.getLogger(__name__)
 BASE_URL = "https://sprzedajemy.pl"
 SEARCH_URL = BASE_URL + "/wszystkie-ogloszenia"
 
+_CATID_RE = re.compile(r'"catid":"([^"]+)"')
 _ID_RE = re.compile(r"-nr(\d+)(?:$|[/?#])")
 # „…-<miasto>-<kod kategorii>-<hash>-nr<id>”
 _CITY_RE = re.compile(r"/(?P<slug>[a-z0-9-]+?)-\d+-[0-9a-f]{6}-nr\d+")
@@ -93,7 +99,14 @@ class SprzedajemyAdapter(SourceAdapter):
     async def _search_phrase(self, phrase: str, query: SearchQuery, out: dict[str, RawOffer]) -> None:
         # Tylko pierwsza strona wyników na frazę — parametry stronicowania i filtrów cen
         # Sprzedajemy.pl nie są udokumentowane, więc ceny filtruje sama aplikacja.
-        html = await self.http.get_text(SEARCH_URL, params={"inp_text": phrase})
+        cat = self.category()
+        url = f"{BASE_URL}/{cat['path']}" if cat["path"] else SEARCH_URL
+        html = await self.http.get_text(url, params={"inp_text": phrase})
+        if cat["id"]:
+            m = _CATID_RE.search(html)
+            if m and cat["id"] not in m.group(1).split():
+                log.warning("Sprzedajemy.pl: strona nie jest w kategorii %s (catid %s) — sprawdź adres kategorii "
+                            "w ustawieniach", cat["id"], m.group(1))
         extracted = [o for o in offers_from_html(html, BASE_URL) if o.currency == "PLN"]
         if not extracted:
             if looks_like_no_results(html):
@@ -101,7 +114,8 @@ class SprzedajemyAdapter(SourceAdapter):
             raise SourceFormatChanged("nie znaleziono listy ofert (JSON-LD) na stronie — możliwa zmiana formatu")
         for o in extracted:
             raw = to_raw(o)
-            if query.price_min and raw.price < query.price_min:
+            price_min = self.price_floor(query)
+            if price_min and raw.price < price_min:
                 continue
             if query.price_max and raw.price > query.price_max:
                 continue

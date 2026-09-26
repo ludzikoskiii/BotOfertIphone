@@ -14,6 +14,7 @@ from typing import Any
 
 from .listing_filter import ListingFilterConfig
 from .models import Mode, RedFlag
+from .sanity import SanityConfig
 from .view_filter import ViewFilter
 
 MIN_PROFIT_MODES = ("amount", "percent", "max", "min")
@@ -68,7 +69,29 @@ def _default_penalties() -> dict[str, int]:
         RedFlag.UNTESTED.value: 15,
         RedFlag.UNKNOWN_REPAIR_COST.value: 10,
         RedFlag.PRICE_UNREALISTIC.value: 30,
+        RedFlag.PROFIT_UNREALISTIC.value: 20,
+        RedFlag.STORAGE_UNKNOWN.value: 5,
+        RedFlag.SERIAL_SELLER.value: 50,
+        RedFlag.FOREIGN_SELLER.value: 5,
     }
+
+
+def _default_categories() -> dict[str, dict[str, str]]:
+    """Kategorie telefonów na portalach: ID kategorii i adres, pod którym portal ją pokazuje."""
+    return {
+        # Allegro Lokalnie: „Telefony i akcesoria” (ID 4) — węższej kategorii dla telefonów portal nie ma
+        "allegro_lokalnie": {"id": "4", "path": "elektronika/telefony-i-akcesoria-4"},
+        # Sprzedajemy.pl: Elektronika > Telefony i akcesoria > Telefony komórkowe > Apple iPhone (ID 1390)
+        "sprzedajemy": {"id": "1390", "path": "elektronika/telefony-i-akcesoria/telefony-komorkowe/apple-iphone"},
+        # Vinted: „Telefony komórkowe” (ID 3661) — API katalogu ignoruje filtr kategorii, zostaje tylko informacyjnie
+        "vinted": {"id": "3661", "path": ""},
+    }
+
+
+VINTED_COUNTRY_MODES = {
+    "pl": "Tylko oferty z Polski (język tytułu + kraj z profilu sprzedawcy)",
+    "ship": "Wszystkie z wysyłką do Polski (zagraniczne oznaczone flagą)",
+}
 
 
 # kolumny tabeli ukryte domyślnie (nazwy z ui.table_model.Col, małymi literami)
@@ -116,6 +139,7 @@ class Settings:
     new_condition_multiplier: float = 1.15
     storage_step_pct: float = 8.0
     min_valid_price: float = 50.0
+    market_floor_ratio: float = 0.30  # ceny poniżej tej części mediany nie liczą się do wyceny rynkowej
     manual_market_values: dict[str, float] = field(default_factory=dict)  # "iPhone 13|128" -> zł
 
     # --- negocjacje i werdykt ---
@@ -140,11 +164,20 @@ class Settings:
     offer_stale_days: int = 7  # ukryj oferty niewidziane od tylu dni
     max_pages_per_query: int = 3
     watched_models: list[str] = field(default_factory=list)  # pusta = wszystkie
+    # kategorie telefonów per portal (puste „path” = szukaj we wszystkich kategoriach)
+    source_categories: dict[str, dict[str, str]] = field(default_factory=_default_categories)
+    # minimalna cena pobierania per portal — tanie akcesoria odpadają już na portalu (Vinted nie filtruje kategorii)
+    source_min_price: dict[str, float] = field(default_factory=lambda: {"vinted": 150.0})
+    # Vinted: kraj sprzedawcy
+    vinted_country_mode: str = "pl"
+    seller_lookups_per_scan: int = 20  # ilu sprzedawców sprawdzić na skan (profil = 1 zapytanie)
     price_min: float = 0.0
     price_max: float = 0.0  # 0 = bez limitu
 
     # --- filtr ogłoszeń (akcesoria, części, „kupię”, test ceny) ---
     listing_filter: ListingFilterConfig = field(default_factory=ListingFilterConfig)
+    # --- zabezpieczenia werdyktu (testy sensowności, limity przy flagach, sprzedawcy seryjni) ---
+    sanity: SanityConfig = field(default_factory=SanityConfig)
 
     # --- filtry widoku (zapamiętywane) ---
     view_filter: ViewFilter = field(default_factory=ViewFilter)
@@ -224,6 +257,16 @@ def _from_dict(cls: type, data: Any) -> Any:
         # nowe flagi dodane w kolejnych wersjach dostają domyślną karę
         for key, value in _default_penalties().items():
             obj.flag_penalties.setdefault(key, value)
+        # dawna opcja „poważne flagi wymuszają ODPUŚĆ” → limit werdyktu przy poważnej fladze
+        if obj.hard_flags_force_skip:
+            obj.sanity.hard_flag_cap = "ODPUŚĆ"
+            obj.hard_flags_force_skip = False
+        # listy słów zapisane przez starszą wersję: dopisz nowe słowa (np. akcesoria w innych językach)
+        saved = data.get("listing_filter")
+        if isinstance(saved, dict):
+            version = saved.get("defaults_version", 1)
+            if isinstance(version, int) and version < obj.listing_filter.defaults_version:
+                obj.listing_filter.upgrade_defaults(version)
     return obj
 
 

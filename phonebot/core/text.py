@@ -2,9 +2,21 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
 
 _PL_MAP = str.maketrans("ąćęłńóśźżĄĆĘŁŃÓŚŹŻ", "acelnoszzACELNOSZZ")
+# litery spoza polskiego alfabetu, których rozkład Unicode nie zamienia na łacińskie
+_EXTRA_MAP = str.maketrans({"ß": "ss", "ø": "o", "Ø": "O", "đ": "d", "Đ": "D", "æ": "ae", "Æ": "AE", "œ": "oe",
+                            "Œ": "OE", "ı": "i"})
+
+
+def fold_accents(text: str) -> str:
+    """Litery z akcentami innych języków → łacińskie (ü→u, ě→e, ė→e), żeby „Hülle” nie znikało."""
+    if text.isascii():
+        return text
+    text = text.translate(_EXTRA_MAP)
+    return "".join(c for c in unicodedata.normalize("NFKD", text) if not unicodedata.combining(c))
 
 # Znaki kończące zdanie/fragment zamieniamy na separator " | ", żeby frazy
 # nie „przeskakiwały" między zdaniami, a okno zaprzeczeń kończyło się na granicy.
@@ -24,7 +36,7 @@ def normalize(text: str | None) -> str:
     """Małe litery, bez polskich znaków, interpunkcja zamieniona na separator ``|``."""
     if not text:
         return ""
-    s = text.translate(_PL_MAP).lower()
+    s = fold_accents(text.translate(_PL_MAP)).lower()
     s = s.replace("-", " ").replace("_", " ")
     s = _SENTENCE_BREAK.sub(" | ", s)
     s = _OTHER.sub(" ", s)

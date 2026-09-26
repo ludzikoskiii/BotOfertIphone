@@ -22,6 +22,10 @@ def mock_portals(request: httpx.Request) -> httpx.Response:
         name = "allegro_lokalnie_search_p2.html" if request.url.params.get("page") == "2" \
             else "allegro_lokalnie_search_p1.html"
         return httpx.Response(200, text=(FIX / name).read_text(encoding="utf-8"))
+    if host == "www.vinted.pl" and request.url.path.startswith("/api/v2/users/"):  # profil sprzedawcy: kraj
+        user_id = request.url.path.rsplit("/", 1)[-1]
+        return httpx.Response(200, json={"user": {"id": int(user_id), "login": "sprzedawca", "country_code": "PL",
+                                                  "business": False}})
     if host == "www.vinted.pl":  # sesja: strona wydaje token w ciasteczku
         return httpx.Response(200, text="", headers={"set-cookie": "access_token_web=tok; Path=/; Domain=.vinted.pl"})
     if host == "api.vinted.pl":  # nowy katalog (od września 2026)

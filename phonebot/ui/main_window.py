@@ -34,6 +34,7 @@ from ..core.view_filter import ViewFilter, matches
 from ..net.http import HostRateLimiter, ResponseCache
 from ..paths import thumbnails_dir
 from ..services.evaluator import Evaluator
+from ..services.offer_guard import OfferGuard
 from ..services.scanner import ScanReport
 from ..sources import SOURCE_NAMES
 from ..storage.repositories import (
@@ -138,6 +139,7 @@ class MainWindow(QMainWindow):
         self.refresh_timer.timeout.connect(self._auto_refresh)
         self._configure_timer()
         self.refresh_source_status()
+        self._apply_filter_rules()
         self.reload()
         # sprzątanie starych miniatur po starcie, żeby nie opóźniać otwarcia okna
         QTimer.singleShot(5000, lambda: (self.thumbs.prune_disk(), self.photos.prune_disk()))
@@ -348,10 +350,14 @@ class MainWindow(QMainWindow):
         self._ui_save_timer.start()
 
     def _save_ui_state(self) -> None:
+        self._ui_save_timer.stop()
         sizes = self.splitter.sizes()
         if all(x > 0 for x in sizes):  # ukryty panel ma rozmiar 0 — zapamiętaj ostatni widoczny układ
             self.settings.splitter_sizes = sizes
-        self.settings_repo.save(self.settings)
+        try:
+            self.settings_repo.save(self.settings)
+        except sqlite3.ProgrammingError:  # baza już zamknięta (zamykanie programu)
+            log.debug("Układ okna nie zapisany — baza zamknięta")
 
     def _current_changed(self, index: QModelIndex, _prev: QModelIndex | None = None) -> None:
         if self.details.isHidden():  # panel wyłączony — nie buduj raportu na darmo
@@ -557,6 +563,17 @@ class MainWindow(QMainWindow):
         self.settings_repo.save(self.settings)
         self._update_count()
 
+    def _apply_filter_rules(self) -> int:
+        """Nowe reguły filtra (aktualizacja programu lub zmiana ustawień) → sprawdź też zapisane oferty."""
+        try:
+            moved = OfferGuard(self.conn, self.settings).refilter_stored()
+        except Exception:  # noqa: BLE001 — porządki nie mogą zablokować otwarcia okna
+            log.exception("Ponowne sprawdzenie zapisanych ofert nie powiodło się")
+            return 0
+        if moved:
+            self._status.setText(f"Nowe reguły filtra: {moved} zapisanych ofert przeniesiono do „Odrzucone”.")
+        return moved
+
     def apply_settings(self, settings) -> None:
         old = self.settings
         # stan układu zmieniany w oknie głównym (nie w ustawieniach) zostaje bez zmian
@@ -575,6 +592,7 @@ class MainWindow(QMainWindow):
         self.mode_combo.blockSignals(True)
         self.mode_combo.setCurrentIndex(self.mode_combo.findData(settings.mode))
         self.mode_combo.blockSignals(False)
+        self._apply_filter_rules()
         self.reload()
 
     def apply_appearance(self) -> None:

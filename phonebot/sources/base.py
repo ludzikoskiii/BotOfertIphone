@@ -101,9 +101,37 @@ class SourceAdapter(abc.ABC):
     #: nazwa wyświetlana w GUI
     display_name: ClassVar[str]
 
+    #: portal pokazuje oferty z innych krajów (filtr kraju/języka ma sens tylko tu)
+    international: ClassVar[bool] = False
+
     @abc.abstractmethod
     async def search(self, query: SearchQuery) -> list[RawOffer]:
         """Zwraca oferty pasujące do zapytania. Rzuca ``SourceError`` przy awarii."""
+
+    def price_floor(self, query: SearchQuery) -> float | None:
+        """Minimalna cena pobierania: ogólna z zapytania albo wyższa, ustawiona dla tego portalu."""
+        settings = getattr(self, "settings", None)
+        floors = getattr(settings, "source_min_price", None) or {}
+        value = max(float(query.price_min or 0), float(floors.get(self.key, 0) or 0))
+        return value or None
+
+    def category(self) -> dict[str, str]:
+        """Kategoria telefonów tego portalu z ustawień: {"id": …, "path": …} (puste = bez kategorii)."""
+        settings = getattr(self, "settings", None)
+        cats = getattr(settings, "source_categories", None) or {}
+        cat = cats.get(self.key) or {}
+        return {"id": str(cat.get("id") or "").strip(), "path": str(cat.get("path") or "").strip().strip("/")}
+
+    async def seller_countries(self, seller_ids: list[str], *, deadline: float) -> dict[str, SellerProfile]:
+        """Kraj sprzedawców (tylko portale międzynarodowe). Domyślnie: brak danych."""
+        return {}
+
+
+@dataclass
+class SellerProfile:
+    country_code: str | None
+    login: str | None = None
+    business: bool | None = None
 
 
 REGISTRY: dict[str, type[SourceAdapter]] = {}

@@ -179,8 +179,10 @@ def default_probes() -> list[Probe]:
         Probe("Vinted nowy API z cenami", "https://api.vinted.pl/svc-catalogue/items?search_text=iphone%2013"
                                           "&per_page=3&order=newest_first&price_from=500&price_to=3000",
               headers={"Accept": "application/json", "Accept-Language": "pl-PL,pl;q=0.9"}),
-        Probe("Allegro Lokalnie", "https://allegrolokalnie.pl/oferty/q/iphone%2013"),
-        Probe("Sprzedajemy.pl", "https://sprzedajemy.pl/wszystkie-ogloszenia?inp_text=iphone+13"),
+        Probe("Allegro Lokalnie (kategoria 4)",
+              "https://allegrolokalnie.pl/oferty/elektronika/telefony-i-akcesoria-4/q/iphone%2013"),
+        Probe("Sprzedajemy.pl (kategoria 1390)", "https://sprzedajemy.pl/elektronika/telefony-i-akcesoria/"
+                                                 "telefony-komorkowe/apple-iphone?inp_text=iphone+13"),
     ]
 
 

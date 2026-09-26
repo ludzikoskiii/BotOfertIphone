@@ -203,3 +203,46 @@ def test_sorting_keeps_selected_offer(window):
     # nowe dane zachowują wybrane sortowanie
     window.reload()
     assert [window._row_at(window.proxy.index(r, 0))[0].price for r in range(window.proxy.rowCount())] == prices
+
+
+def test_safety_settings_tab(window):
+    from PySide6.QtWidgets import QComboBox, QDoubleSpinBox
+
+    dialog = window.open_settings()
+    price = dialog.findChild(QDoubleSpinBox, "sanity.price_min_ratio_working")
+    assert price.value() == 30  # ułamek 0.30 pokazany jako 30 %
+    price.setValue(25)
+    cap = dialog.findChild(QComboBox, "sanity.soft_flag_cap")
+    cap.setCurrentIndex(cap.findData("DO WERYFIKACJI"))
+    country = dialog.findChild(QComboBox, "vinted_country_mode")
+    country.setCurrentIndex(country.findData("ship"))
+    cid, path = dialog.category_edits["sprzedajemy"]
+    assert cid.text() == "1390" and path.text().endswith("apple-iphone")
+    dialog.min_price_edits["vinted"].setValue(200)
+    result = dialog.result_settings()
+    assert result.sanity.price_min_ratio_working == 0.25
+    assert result.sanity.soft_flag_cap == "DO WERYFIKACJI"
+    assert result.vinted_country_mode == "ship"
+    assert result.source_min_price["vinted"] == 200
+    assert result.source_categories["sprzedajemy"]["id"] == "1390"
+    dialog.reject()
+
+
+def test_verify_verdict_shown_as_grey_label(window):
+    from phonebot.core.models import MarketEstimate, Mode, Verdict
+    from phonebot.core.parts import PartsCatalog, default_parts
+    from phonebot.core.valuation import evaluate
+    from phonebot.ui.table_model import VERDICT_ROLE
+    from phonebot.ui.theme import current
+
+    from .conftest import make_offer
+
+    offer = make_offer("iPhone 13", price=83)  # „iPhone 13 ?” za 83 zł ze zrzutu ekranu
+    offer.id = 999_999
+    val = evaluate(offer, MarketEstimate(1500, 12, "t", "wysoka", 1500), PartsCatalog(default_parts()),
+                   window.settings, Mode.REPAIR)
+    window.model.set_rows([(offer, val)])
+    index = window.proxy.index(0, Col.VERDICT)
+    assert index.data() == "DO WERYFIKACJI" and index.data(VERDICT_ROLE) == Verdict.VERIFY
+    assert current().verdict_bg[Verdict.VERIFY] in ("#e9ecef", "#34363c")  # szara etykieta
+    window.table.viewport().repaint()  # delegat rysuje nowy werdykt bez błędów

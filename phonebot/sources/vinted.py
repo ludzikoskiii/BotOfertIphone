@@ -10,10 +10,19 @@ Odporność na zmiany: adapter próbuje kolejno znanych endpointów, szuka listy
 ofert w dowolnym miejscu odpowiedzi i czyta pola na kilka sposobów (stary i
 nowy format). Oferty w innej walucie niż PLN są pomijane (waluta zależy od
 kraju, z którego łączy się komputer).
+
+Kategorie: API katalogu ignoruje filtr kategorii (sprawdzone we wrześniu 2026:
+``catalog_ids``, ``catalog[]``, ``catalogIds`` nie zmieniają wyników), dlatego
+akcesoria odcina minimalna cena (``price_from`` działa) i filtr tekstu.
+
+Kraj sprzedawcy: wyniki wyszukiwania go nie zawierają; podaje go profil
+sprzedawcy ``/api/v2/users/{id}`` (``country_code``). Profil jest sprawdzany
+tylko dla ofert, które przeszły filtr tekstu, z limitem na skan i pamięcią w bazie.
 """
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime
 from typing import Any
 from urllib.parse import urljoin
@@ -23,6 +32,7 @@ from ..core.settings import Settings
 from ..net.http import HttpClient, HttpError
 from .base import (
     SearchQuery,
+    SellerProfile,
     SourceAdapter,
     SourceBlocked,
     SourceFormatChanged,
@@ -96,6 +106,13 @@ def parse_item(item: dict[str, Any]) -> RawOffer | None:
         fee = total - price if total and total > price else None
     if fee:
         params["buyer_fee"] = f"{fee:.2f}"
+    user = item.get("user") if isinstance(item.get("user"), dict) else {}
+    if user.get("id") is not None:
+        params["seller_id"] = str(user["id"])
+    if user.get("login"):
+        params["seller"] = str(user["login"])
+    if isinstance(user.get("business"), bool):
+        params["seller_business"] = "1" if user["business"] else "0"
     created = None
     photo = item.get("photo") if isinstance(item.get("photo"), dict) else {}
     ts = (photo.get("high_resolution") or {}).get("timestamp")
@@ -133,6 +150,7 @@ def find_items(data: Any) -> list[dict[str, Any]]:
 class VintedAdapter(SourceAdapter):
     key = "vinted"
     display_name = "Vinted"
+    international = True
 
     def __init__(self, http: HttpClient, settings: Settings):
         self.http = http
@@ -169,6 +187,39 @@ class VintedAdapter(SourceAdapter):
         await self._open_session()
         return await search_all_phrases(query.phrases, lambda p, out: self._search_phrase(p, query, out))
 
+    async def seller_countries(self, seller_ids: list[str], *, deadline: float) -> dict[str, SellerProfile]:
+        """Kraj sprzedawców z ich profili. Przerywa po czasie ``deadline`` albo przy blokadzie (bez błędu skanu)."""
+        out: dict[str, SellerProfile] = {}
+        if not seller_ids:
+            return out
+        await self._open_session()
+        for seller_id in seller_ids:
+            if time.monotonic() >= deadline:
+                log.info("Vinted: limit czasu sprawdzania sprzedawców — reszta przy następnym skanie")
+                break
+            url = f"{BASE_URL}/api/v2/users/{seller_id}"
+            try:
+                try:
+                    data = await self.http.get_json(url, headers=self._headers(), use_cache=False)
+                except HttpError as e:
+                    if e.status != 401:
+                        raise
+                    await self._open_session(force=True)
+                    data = await self.http.get_json(url, headers=self._headers(), use_cache=False)
+            except HttpError as e:
+                if e.status in (403, 429) or e.blocked:
+                    log.warning("Vinted: profil sprzedawcy niedostępny (HTTP %s) — przerywam sprawdzanie", e.status)
+                    break
+                log.info("Vinted: profil sprzedawcy %s: %s", seller_id, e)
+                continue
+            user = data.get("user") if isinstance(data, dict) else None
+            if not isinstance(user, dict):
+                continue
+            country = user.get("country_code") or user.get("country_iso_code")
+            out[seller_id] = SellerProfile(str(country).upper() if country else None, user.get("login"),
+                                           user.get("business") if isinstance(user.get("business"), bool) else None)
+        return out
+
     async def _fetch(self, params: dict[str, Any]) -> Any:
         """Pobiera stronę katalogu, próbując kolejnych endpointów i odświeżając token przy 401."""
         endpoints = [self._endpoint] if self._endpoint else list(ENDPOINTS)
@@ -196,8 +247,9 @@ class VintedAdapter(SourceAdapter):
                 "search_text": phrase, "page": page, "per_page": PER_PAGE, "order": "newest_first",
             }
             # puste filtry trzeba pominąć — nowy endpoint odpowiada na nie błędem 400
-            if query.price_min:
-                params["price_from"] = int(query.price_min)
+            price_min = self.price_floor(query)  # tanie akcesoria odpadają już w API (kategorii API nie filtruje)
+            if price_min:
+                params["price_from"] = int(price_min)
             if query.price_max:
                 params["price_to"] = int(query.price_max)
             data = await self._fetch(params)

@@ -3,22 +3,25 @@
 Etapy (w kolejności):
 1. **kategoria portalu** — gdy portal ją podaje: akcesoria/części → odrzuć, telefony → przepuść dalej;
 2. **ogłoszenie kupna/zamiany** — „kupię”, „szukam”, „zamienię” (ale nie „sprzedam lub zamienię”);
-3. **akcesorium lub część** — ocena KONTEKSTU, nie samego słowa:
+3. **kilka generacji w tytule** — „13 14 15”, „12/13/14” to prawie zawsze akcesorium (etui, szkło);
+4. **akcesorium lub część** — ocena KONTEKSTU, nie samego słowa:
    „Etui do iPhone 13” → akcesorium, „iPhone 13 128GB + etui gratis” → telefon,
    „Sam wyświetlacz iPhone 11” → część, „iPhone 11 zbity wyświetlacz” → telefon;
-4. **wymagany model** — tytuł musi zawierać rozpoznawalny model iPhone'a;
-5. **test ceny** (``check_price``) — cena poniżej np. 15% mediany rynkowej: ogłoszenie jest
+5. **wymagany model** — tytuł musi zawierać rozpoznawalny model iPhone'a;
+6. **test ceny** (``check_price``) — cena poniżej np. 15% mediany rynkowej: ogłoszenie jest
    sprawdzane dokładniej (opis); jeśli opis wskazuje na akcesorium — odrzucenie,
    w przeciwnym razie oferta zostaje, ale z flagą „cena nierealnie niska — sprawdź”.
 
 Listy słów kluczowych są w ustawieniach (``ListingFilterConfig``) i można je edytować.
+Słowa-akcesoria obejmują też języki sąsiednie (Vinted pokazuje ogłoszenia z innych krajów).
 """
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
 
-from .text import normalize
+from .text import _PL_MAP as _PL_LOWER
+from .text import fold_accents, normalize
 
 # --------------------------------------------------------------- konfiguracja ---
 
@@ -27,7 +30,32 @@ def _accessories() -> list[str]:
     return ["etui", "case", "pokrowiec", "futerał", "szkło", "szkiełko", "szkło hartowane", "folia", "ładowarka",
             "ładowarki", "zasilacz", "kabel", "kable", "przewód", "pudełko", "pudełka", "atrapa", "obudowa",
             "pasek", "uchwyt", "powerbank", "magsafe", "słuchawki", "airpods", "rysik", "adapter", "stacja dokująca",
-            "pierścień", "popsocket", "naklejka", "skin"]
+            "pierścień", "popsocket", "naklejka", "skin", *FOREIGN_ACCESSORIES]
+
+
+# akcesoria w językach sąsiednich (Vinted pokazuje też ogłoszenia z zagranicy);
+# celowo bez słów, które kolidują z polskimi („stand” ↔ „stan”, „box”)
+FOREIGN_ACCESSORIES = [
+    # czeski / słowacki
+    "obal", "obaly", "kryt", "kryty", "pouzdro", "pouzdra", "puzdro", "puzdra", "sklo", "ochranné sklo",
+    "tvrzené sklo", "tvrdené sklo", "fólie", "nabíječka", "nabíjačka", "držák", "držiak", "sluchátka", "krabička",
+    # niemiecki
+    "Hülle", "Handyhülle", "Schutzhülle", "Silikonhülle", "Panzerglas", "Schutzglas", "Displayschutz",
+    "Ladegerät", "Ladekabel", "Netzteil", "Tasche", "Handytasche", "Halterung",
+    # litewski
+    "dėklas", "dėkliukas", "dėklai", "apsauginis stiklas", "stiklas", "įkroviklis", "laidas", "ausinės",
+    # angielski
+    "cover", "covers", "bumper", "screen protector", "protector", "tempered glass", "glass", "charger",
+    "cable", "wallet", "holder", "lanyard",
+    # francuski / włoski / hiszpański
+    "coque", "housse", "verre trempé", "chargeur", "custodia", "pellicola", "funda", "carcasa", "cargador",
+]
+# spójniki „z / razem z” w innych językach: „iPhone 13 with case”, „iPhone 13 mit Hülle”
+FOREIGN_ADDON_MARKERS = ["with", "mit", "and", "und", "incl", "inkl", "včetně", "vrátane", "su"]
+
+# wersja domyślnych list — przy wzroście dopisujemy nowe słowa do list zapisanych wcześniej
+DEFAULTS_VERSION = 2
+_ADDED_IN = {2: {"accessory_words": FOREIGN_ACCESSORIES, "addon_markers": FOREIGN_ADDON_MARKERS}}
 
 
 def _parts() -> list[str]:
@@ -48,7 +76,8 @@ class ListingFilterConfig:
     # słowa, po których akcesorium w tytule jest DODATKIEM do telefonu
     addon_markers: list[str] = field(default_factory=lambda: ["+", "z", "ze", "i", "oraz", "wraz", "plus",
                                                               "dodatkowo", "komplet", "zestaw", "gratis",
-                                                              "w zestawie", "w komplecie", "razem"])
+                                                              "w zestawie", "w komplecie", "razem",
+                                                              *FOREIGN_ADDON_MARKERS])
     # słowa, po których część to JEDYNY przedmiot sprzedaży
     single_part_markers: list[str] = field(default_factory=lambda: ["sam", "sama", "samo", "same", "tylko",
                                                                     "wyłącznie"])
@@ -56,6 +85,27 @@ class ListingFilterConfig:
     accessory_category_words: list[str] = field(default_factory=lambda: [
         "akcesori", "etui", "pokrowc", "ładowark", "słuchawk", "części", "obudow", "folie", "szkła", "kable"])
     suspicious_price_ratio: float = 0.15  # poniżej tej części mediany → sprawdź dokładniej
+    multi_model_reject: bool = True  # „13 14 15”, „12/13/14” w tytule → akcesorium
+    defaults_version: int = DEFAULTS_VERSION
+
+    def upgrade_defaults(self, from_version: int) -> list[str]:
+        """Dopisuje słowa dodane w nowszych wersjach programu do list zapisanych wcześniej.
+
+        Słowa usunięte przez użytkownika po aktualizacji nie wracają (dopisujemy tylko raz).
+        Zwraca dopisane słowa.
+        """
+        added: list[str] = []
+        for version in range(from_version + 1, DEFAULTS_VERSION + 1):
+            for attr, words in _ADDED_IN.get(version, {}).items():
+                current = getattr(self, attr)
+                have = {normalize(w) for w in current}
+                for w in words:
+                    if normalize(w) not in have:
+                        current.append(w)
+                        have.add(normalize(w))
+                        added.append(w)
+        self.defaults_version = DEFAULTS_VERSION
+        return added
 
 
 # ------------------------------------------------------------------ wynik ---
@@ -77,10 +127,13 @@ class FilterDecision:
 STAGE_LABELS = {
     "category": "kategoria portalu",
     "wanted": "ogłoszenie kupna/zamiany",
+    "multi_model": "kilka modeli w tytule",
     "accessory": "akcesorium",
     "part": "część zamienna",
     "model": "brak modelu iPhone'a",
     "price": "cena nierealnie niska",
+    "country": "kraj / język ogłoszenia",
+    "seller": "sprzedawca seryjny",
     "manual": "odrzucona ręcznie",
 }
 
@@ -148,6 +201,65 @@ def _tokens(title: str) -> list[str]:
     return normalize(title).replace("|", " ").split()
 
 
+# --------------------------------------------------- kilka generacji w tytule ---
+
+_GEN_NUMBERS = {"6", "7", "8", *(str(n) for n in range(11, 20))}
+_GEN_WORDS = {"x": "x", "xs": "xs", "xr": "xr", "xsmax": "xs", "se": "se", "air": "air"}
+_GEN_TOKEN = re.compile(r"^(\d{1,2})(?:e|s|c|pro|max|mini|plus|promax)?$")
+_RUN_SEPARATORS = {"/", ",", "&", "+", "-", "|", "i", "oraz", "lub", "albo", "and", "und", "or", "a"}
+_RUN_FILLERS = {"iphone", "iphon", "ip", "apple", "pro", "max", "mini", "plus", "promax", "e", "s", "c"}
+# liczby, które NIE są generacją: pojemność, bateria, gwarancja, ilość, cena, ocena „8/10”
+_NOT_GENERATION = re.compile(
+    r"\b\d+(?:\.\d+)+\b|\bios\s*\d+|\b\d{1,2}\s*/\s*10\b|\b\d+(?:[.,]\d+)?\s*(?:gb|g|tb|mb|%|mies\w*|msc|mc|m-cy|lat\w*|rok\w*|dni|dzien|"
+    r"szt\w*|kom\w*|cykl\w*|zl|pln|eur|euro|kc|czk|mah|mpx?|cal\w*|h|godz\w*|min|x)\b")
+
+
+def _generation(token: str) -> str | None:
+    if token in _GEN_WORDS:
+        return _GEN_WORDS[token]
+    m = _GEN_TOKEN.match(token)
+    if m and m.group(1) in _GEN_NUMBERS:
+        return m.group(1)
+    return None
+
+
+def generation_runs(title: str) -> list[list[str]]:
+    """Ciągi generacji iPhone'a w tytule, np. „13 14 15” → [["13", "14", "15"]], „12/13/14” → [["12", "13", "14"]].
+
+    Do ciągu należą generacje oddzielone tylko separatorami („/”, „,”, „i”, „+”…) albo słowami
+    wariantu („Pro”, „Max”, „iPhone”). Pojemność („128 GB”), bateria („85%”) i okresy („11 miesięcy”)
+    nie są generacjami.
+    """
+    text = fold_accents(title.translate(_PL_LOWER)).lower()
+    text = _NOT_GENERATION.sub(" ~ ", text)
+    tokens = re.findall(r"[a-z0-9]+|[/,&+|~-]", text)
+    runs: list[list[str]] = []
+    current: list[str] = []
+    for t in tokens:
+        gen = _generation(t)
+        if gen is not None:
+            if not current or current[-1] != gen:
+                current.append(gen)
+            continue
+        if t in _RUN_SEPARATORS or t in _RUN_FILLERS:
+            continue
+        if current:
+            runs.append(current)
+        current = []
+    if current:
+        runs.append(current)
+    return runs
+
+
+def multi_generation(title: str) -> list[str] | None:
+    """Generacje, jeśli tytuł wymienia co najmniej dwie różne w jednym ciągu (typowe dla akcesoriów)."""
+    for run in generation_runs(title):
+        distinct = list(dict.fromkeys(run))
+        if len(distinct) >= 2:
+            return distinct
+    return None
+
+
 def _first_model_index(tokens: list[str]) -> int | None:
     for i, t in enumerate(tokens):
         if t in ("iphone", "iphon", "ajfon"):
@@ -208,6 +320,17 @@ class ListingFilter:
             return FilterDecision(False, "wanted", f"ogłoszenie kupna lub zamiany („{hit}”)", hit)
         return None
 
+    def check_multi_model(self, title: str) -> FilterDecision | None:
+        """Etap 3: kilka generacji w tytule („13 14 15”, „12/13/14”) → akcesorium pasujące do wielu modeli."""
+        if not self.config.multi_model_reject:
+            return None
+        gens = multi_generation(title)
+        if not gens:
+            return None
+        listed = ", ".join(gens)
+        return FilterDecision(False, "multi_model", f"tytuł wymienia kilka generacji ({listed}) — "
+                                                    "zwykle akcesorium pasujące do wielu modeli", listed)
+
     def _classify_hit(self, tokens: list[str], start: int, end: int, word: str, kind: str,
                       model_idx: int | None, phone_score: int) -> _Hit:
         before = tokens[max(0, start - 3):start]
@@ -262,7 +385,8 @@ class ListingFilter:
         if source and source_id and (source, source_id) in self.whitelist:
             return FilterDecision.ok()
         tokens = _tokens(title)
-        for decision in (self.check_category(category), self.check_wanted(tokens), self.check_accessory(title)):
+        for decision in (self.check_category(category), self.check_wanted(tokens), self.check_multi_model(title),
+                         self.check_accessory(title)):
             if decision is not None:
                 return decision
         if not model:

@@ -170,7 +170,7 @@ def test_telegram_batch_cap():
 
     items = []
     for i in range(8):
-        o = make_offer("iPhone 13 128GB", 900 + i)
+        o = make_offer("iPhone 13 128GB", 1100 + i)  # bez flagi „podejrzanie tanio” (<50% rynku)
         v = evaluate(o, MarketEstimate(2000, 10, "m", "wysoka", 2000), PartsCatalog(default_parts()), Settings(),
                      Mode.RESELL)
         items.append((o, v, "nowa"))

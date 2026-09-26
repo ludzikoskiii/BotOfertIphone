@@ -19,6 +19,21 @@ def remove_outliers(prices: list[float]) -> list[float]:
     return [p for p in prices if low <= p <= high]
 
 
+def trim_low(prices: list[float], ratio: float) -> list[float]:
+    """Odrzuca ceny dużo niższe od mediany (akcesoria, części, oszustwa, które przeszły filtry).
+
+    IQR nie wystarcza, gdy tanich „śmieci” jest dużo — ten próg działa, dopóki stanowią mniejszość.
+    """
+    if ratio <= 0 or len(prices) < 4:
+        return list(prices)
+    floor = statistics.median(prices) * ratio
+    return [p for p in prices if p >= floor]
+
+
+def _clean(prices: list[float], settings: Settings) -> list[float]:
+    return remove_outliers(trim_low(prices, settings.market_floor_ratio))
+
+
 def _confidence(n: int, settings: Settings) -> str:
     if n >= 2 * settings.market_min_samples:
         return "wysoka"
@@ -49,6 +64,9 @@ def estimate_market_value(
     4. mediana innych pojemności przeliczona o ``storage_step_pct`` na każde podwojenie,
     5. dla klasy „new": wartość używanego × ``new_condition_multiplier``.
     Wynik (poza wartością ręczną) jest mnożony przez korektę cen wywoławczych.
+
+    Oferty bez rozpoznanej pojemności nie są używane jako dane rynkowe (to najczęściej akcesoria).
+    Dla takiej oferty wartość to mediana wszystkich pojemności modelu — z niską pewnością.
     """
     if not model:
         return MarketEstimate(None, 0, "nierozpoznany model", "brak")
@@ -65,7 +83,17 @@ def estimate_market_value(
         and (exclude_offer_id is None or o.offer_id != exclude_offer_id)
     ]
 
-    same = remove_outliers([o.price for o in obs if o.storage_gb == storage_gb])
+    obs = [o for o in obs if o.storage_gb]  # bez pojemności = niepewne dane (często akcesoria)
+    if not storage_gb:
+        prices = _clean([o.price for o in obs], settings)
+        if len(prices) >= settings.market_min_samples_fallback:
+            median = statistics.median(prices)
+            return MarketEstimate(round(median * corr, 2), len(prices),
+                                  f"mediana {len(prices)} ofert wszystkich pojemności (pamięć nieznana)", "niska",
+                                  median)
+        return MarketEstimate(None, len(prices), "za mało danych rynkowych", "brak")
+
+    same = _clean([o.price for o in obs if o.storage_gb == storage_gb], settings)
     if len(same) >= settings.market_min_samples_fallback:
         median = statistics.median(same)
         n = len(same)
@@ -81,7 +109,7 @@ def estimate_market_value(
             for o in obs
             if o.storage_gb and o.storage_gb != storage_gb
         ]
-        adjusted = remove_outliers(adjusted)
+        adjusted = _clean(adjusted, settings)
         if len(adjusted) >= settings.market_min_samples_fallback:
             median = statistics.median(adjusted)
             return MarketEstimate(
