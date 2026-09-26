@@ -10,6 +10,7 @@ from ..core.parts import PartsCatalog
 from ..core.places import find_place
 from ..core.settings import Settings
 from ..core.valuation import evaluate, target_market_class
+from ..ml.desc_model import apply_to_offer
 from ..storage.repositories import OfferRepository, PartsRepository
 
 
@@ -39,6 +40,8 @@ class Evaluator:
     def evaluate(self, offer: Offer, mode: Mode | None = None) -> Valuation:
         mode = mode or self.settings.mode_enum
         s = self.settings
+        # wynik lokalnego modelu językowego z opisu (pamięć, bateria, usterki) przed wyceną
+        apply_to_offer(offer, enabled=s.ml.llm_enabled, battery_threshold=s.battery_health_threshold)
         lat, lon = offer.raw.lat, offer.raw.lon
         if lat is None or lon is None:
             place = find_place(offer.raw.city)  # np. Allegro Lokalnie podaje tylko miasto

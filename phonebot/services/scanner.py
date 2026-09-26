@@ -221,6 +221,11 @@ class Scanner:
         rejected = guard.rejected
         source = raw_offers[0].source
         saved: list[tuple[str, str, str]] = []
+        # opis pobrany wcześniej ze strony oferty (wyniki wyszukiwania go nie mają) zostaje przy ofercie
+        pages = repo.page_descriptions(source, [r.source_id for r in raw_offers if not r.description])
+        for raw in raw_offers:
+            if not raw.description and raw.source_id in pages:
+                raw.description = pages[raw.source_id]
         self.conn.execute("BEGIN")
         try:
             items = [guard.prepare(raw) for raw in raw_offers]

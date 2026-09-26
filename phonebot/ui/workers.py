@@ -37,12 +37,10 @@ class ScanWorker(QObject):
             scanner = Scanner(conn, self.settings, self.limiter, self.cache)
             report = asyncio.run(scanner.run(self.progress.emit, force=self.force))
             try:
-                if self.settings.llm_enabled:
-                    self.progress.emit("Analiza opisów przez AI…")
                 report.post = run_post_scan(conn, self.settings, report)
-            except Exception as e:  # powiadomienia/AI nie mogą zepsuć wyników skanu
+            except Exception as e:  # powiadomienia nie mogą zepsuć wyników skanu
                 log.exception("Błąd po skanowaniu")
-                report.post = PostScanResult(ai_error=str(e))
+                report.post = PostScanResult(error=str(e) or e.__class__.__name__)
             self.finished.emit(report)
         except Exception as e:  # nie pozwól, by wyjątek zabił wątek bez informacji
             log.exception("Skanowanie nie powiodło się")
@@ -67,6 +65,42 @@ class FuncWorker(QObject):
             self.finished.emit(self.func(*self.args))
         except Exception as e:
             log.warning("Zadanie w tle nie powiodło się: %s", e)
+            self.failed.emit(str(e) or e.__class__.__name__)
+
+
+class OllamaPullWorker(QObject):
+    """Pobiera model do Ollamy (kilka GB) z postępem; przerywany przy zamknięciu okna ustawień."""
+
+    progress = Signal(str)
+    finished = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, url: str, model: str):
+        super().__init__()
+        self.url, self.model = url, model
+        self._stop = False
+
+    def stop(self) -> None:
+        self._stop = True
+
+    @Slot()
+    def run(self) -> None:
+        from ..ml.ollama import OllamaClient, OllamaError
+
+        def report(status: str, done: int, total: int) -> None:
+            if total:
+                self.progress.emit(f"⏳ {self.model}: {done / total:.0%} z {total / 1e9:.1f} GB")
+            elif status:
+                self.progress.emit(f"⏳ {self.model}: {status}")
+
+        try:
+            with OllamaClient(self.url) as client:
+                client.pull(self.model, report, stop=lambda: self._stop)
+            self.finished.emit(self.model)
+        except OllamaError as e:
+            self.failed.emit(str(e))
+        except Exception as e:  # noqa: BLE001
+            log.exception("Pobieranie modelu Ollamy nie powiodło się")
             self.failed.emit(str(e) or e.__class__.__name__)
 
 

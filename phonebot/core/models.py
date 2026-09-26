@@ -113,6 +113,7 @@ class RedFlag(StrEnum):
     AI_TEXT_CONFLICT = "ai_text_conflict"
     AI_PHOTO_CONFLICT = "ai_photo_conflict"
     AI_LOW_CONFIDENCE = "ai_low_confidence"
+    AI_DESC_CONFLICT = "ai_desc_conflict"
 
     @property
     def label(self) -> str:
@@ -144,6 +145,7 @@ _FLAG_INFO = {
     RedFlag.AI_TEXT_CONFLICT: ("AI: tytuł nie wygląda na telefon", Severity.HARD),
     RedFlag.AI_PHOTO_CONFLICT: ("AI: zdjęcie nie pokazuje telefonu", Severity.HARD),
     RedFlag.AI_LOW_CONFIDENCE: ("AI: niska pewność, że to telefon", Severity.SOFT),
+    RedFlag.AI_DESC_CONFLICT: ("AI: opis mówi, że to nie telefon", Severity.HARD),
 }
 
 
@@ -221,6 +223,12 @@ class AiLayers:
     photo_probs: dict[str, float] = field(default_factory=dict)
     photo_at: datetime | None = None
     photo_error: str | None = None
+    # opis przeczytany lokalnym modelem językowym (Ollama): sprawdzony wynik (``DescFindings.to_json``)
+    desc: dict | None = None
+    desc_model: str | None = None
+    desc_at: datetime | None = None
+    desc_error: str | None = None
+    desc_hash: str | None = None
 
     @property
     def has_photo(self) -> bool:
@@ -237,10 +245,13 @@ class Offer:
     last_seen: datetime | None = None
     distance_km: float | None = None
     dedup_key: str | None = None
-    ai_defects: list[Defect] = field(default_factory=list)  # znalezione tylko przez AI
+    ai_defects: list[Defect] = field(default_factory=list)  # znalezione tylko przez AI (opis)
     ai_flags: list[RedFlag] = field(default_factory=list)
     ai_note: str | None = None
-    layers: AiLayers | None = None  # lokalne AI (tekst + zdjęcie)
+    ai_filled: list[str] = field(default_factory=list)  # uzupełnione z opisu przez AI: storage / battery / for_parts
+    layers: AiLayers | None = None  # lokalne AI (tytuł, zdjęcie, opis)
+    desc_applied: bool = False  # wynik z opisu już dołożony do ``parsed``
+    desc_from_page: bool = False  # opis pobrany ze strony oferty (wyniki wyszukiwania go nie miały)
 
     @property
     def price(self) -> float:

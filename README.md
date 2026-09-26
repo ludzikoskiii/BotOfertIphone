@@ -3,9 +3,10 @@
 Aplikacja desktopowa (Windows) do wyszukiwania ofert używanych iPhone'ów na
 Allegro Lokalnie, Vinted i Sprzedajemy.pl, wyceny ich opłacalności i podpowiadania, czy i za ile kupić.
 
-> **Status: wersja 1.3.0.** Trzy portale, wycena, werdykty i negocjacje, filtry, zabezpieczenia werdyktu,
-> **darmowe lokalne AI** (klasyfikator tytułów i analiza zdjęć na Twoim komputerze), automatyczne
-> odświeżanie, powiadomienia Windows i Telegram oraz gotowy plik `PhoneBot.exe`.
+> **Status: wersja 1.4.0.** Trzy portale, wycena, werdykty i negocjacje, filtry, zabezpieczenia werdyktu,
+> **darmowe lokalne AI** (klasyfikator tytułów, analiza zdjęć, opcjonalnie model językowy w Ollamie),
+> szablony wiadomości do sprzedającego, automatyczne odświeżanie, powiadomienia Windows i Telegram
+> oraz gotowy plik `PhoneBot.exe`. Program nie korzysta z żadnych płatnych usług.
 
 ![Okno główne](docs/screenshots/okno.png)
 ![Szczegóły oferty](docs/screenshots/szczegoly.png)
@@ -70,34 +71,20 @@ dist\PhoneBot.exe --self-test             # moduły, lokalne AI (bez pobierania 
 1. W Telegramie otwórz **@BotFather**, wyślij `/newbot` i nadaj botowi nazwę. Dostaniesz **token**
    (np. `123456789:AAH…`).
 2. Otwórz rozmowę ze swoim nowym botem i wyślij mu `/start`.
-3. W PhoneBot: **⚙ Ustawienia → Powiadomienia i AI**. Wklej token i kliknij **Pobierz chat ID**.
+3. W PhoneBot: **⚙ Ustawienia → Powiadomienia**. Wklej token i kliknij **Pobierz chat ID**.
 4. Kliknij **Wyślij test**. Na Telegramie powinna przyjść wiadomość.
 5. Zaznacz „Wysyłaj powiadomienia na Telegram” i zapisz.
 
-![Ustawienia powiadomień i AI](docs/screenshots/ustawienia_powiadomienia.png)
+![Ustawienia powiadomień](docs/screenshots/ustawienia_powiadomienia.png)
 
 Każda wiadomość zawiera model, cenę, szacowany zysk, max cenę, sugestię negocjacji, lokalizację,
 czerwone flagi i link do ogłoszenia. Na jedno odświeżenie wysyłanych jest maksymalnie 5 osobnych
 wiadomości (do ustawienia), a resztę dostajesz w jednym podsumowaniu.
 
-### Analiza opisów przez AI (opcjonalna)
+Token Telegrama jest przechowywany w lokalnej bazie aplikacji bez szyfrowania.
 
-Reguły tekstowe rozpoznają typowe sformułowania, ale nie każde. Po włączeniu analizy
-opisy **nowych** ofert trafiają do modelu Claude (API Anthropic). Model zwraca usterki i czerwone flagi
-w ściśle określonym formacie. Wynik jest **dokładany** do wyniku reguł, nigdy go nie usuwa;
-w oknie szczegółów usterki znalezione przez AI mają dopisek „(AI)”, a model dodaje krótką uwagę.
-
-1. Załóż konto na <https://console.anthropic.com>, doładuj środki i utwórz **klucz API** (`sk-ant-…`).
-2. **⚙ Ustawienia → Powiadomienia i AI**: wklej klucz, zaznacz „Analizuj opisy nowych ofert”.
-3. Model domyślny to `claude-opus-5` (najdokładniejszy). Tańsze opcje to `claude-sonnet-5`
-   i `claude-haiku-4-5`, z nieco mniejszą dokładnością. Koszt ogranicza limit ofert na odświeżenie
-   (domyślnie 20). Każda oferta jest analizowana tylko raz; ponownie dopiero po zmianie opisu.
-   Aktualne ceny API: <https://www.anthropic.com/pricing>.
-
-Błąd AI (np. zły klucz, brak środków) nie przerywa pobierania. Pasek stanu pokaże „AI: BŁĄD”,
-a szczegóły są w podpowiedzi i w logu.
-
-Token Telegrama i klucz API są przechowywane w lokalnej bazie aplikacji bez szyfrowania.
+(Płatna analiza opisów przez Claude z wersji 1.0–1.3 została usunięta; zapisany klucz API znika z bazy
+przy pierwszym uruchomieniu wersji 1.4. Zastępuje ją darmowa analiza lokalnym modelem — niżej.)
 
 ### Status źródeł i diagnostyka
 
@@ -274,6 +261,68 @@ starcie), analiza używa połowy rdzeni procesora, żeby okno działało płynni
 i ok. 3 s treningu. Karta graficzna nie jest potrzebna. Plik `PhoneBot.exe` ma teraz ok. 123 MB
 (wcześniej ok. 60 MB) — doszły scikit-learn i onnxruntime.
 
+### Analiza opisów lokalnym modelem językowym (Ollama, opcjonalna)
+
+Oferty **DO WERYFIKACJI** (coś się nie zgadza) może przeczytać model językowy działający na Twojej
+karcie graficznej. Wyciąga z opisu: **pamięć, kondycję baterii, usterki, blokady (iCloud, simlock, MDM),
+„na części”** i czy to w ogóle telefon. Działa za darmo, bez internetu (poza pobraniem modelu) i bez
+wysyłania danych. Bez Ollamy program działa normalnie — domyślnie ta funkcja jest wyłączona.
+
+**Wymagania** (Twój komputer: 16 GB RAM, RTX 3060 Ti 8 GB — spełnia z zapasem):
+
+| | Minimum | Polecane |
+|---|---|---|
+| Karta graficzna | NVIDIA z 6 GB pamięci | 8 GB (np. RTX 3060 Ti) |
+| Pamięć RAM | 16 GB | 16 GB |
+| Dysk | ok. 6 GB na model | SSD |
+| Czas na jeden opis | — | ok. 2–6 s (bez karty graficznej: kilkadziesiąt sekund) |
+
+**Model:** `qwen3:8b` (ok. 5,2 GB, domyślny) — najlepszy w tej wielkości do wyciągania danych
+w ustalonym formacie, dobrze rozumie polski; działa bez „trybu myślenia” (szybciej). Lżejsza alternatywa:
+`qwen2.5:7b` (4,7 GB). Modele 12–14B i większe nie mieszczą się w 8 GB pamięci karty i działają kilka
+razy wolniej. Ollama zwalnia kartę graficzną po 5 minutach bezczynności.
+
+**Uruchomienie:**
+
+1. Zainstaluj darmową Ollamę: <https://ollama.com/download> (Windows). Działa w tle, pod adresem
+   `http://127.0.0.1:11434`.
+2. **⚙ Ustawienia → AI lokalne → „Analiza opisów”**: kliknij **Sprawdź połączenie**, a potem
+   **⬇ Pobierz model** (raz, ok. 5 GB; można też w terminalu: `ollama pull qwen3:8b`).
+3. Zaznacz „Czytaj opisy ofert „DO WERYFIKACJI” lokalnym modelem” i zapisz.
+
+**Jak to działa:**
+
+- Czytane są tylko oferty DO WERYFIKACJI (najlepsze najpierw), każdy opis **raz** — ponownie dopiero,
+  gdy sprzedawca go zmieni. Postęp widać na pasku stanu („AI: czytanie opisów 3/12 (Ollama)…”).
+- Program **sprawdza każdą odpowiedź modelu**: pamięć i kondycję baterii przyjmuje tylko wtedy, gdy ta
+  liczba naprawdę występuje w ogłoszeniu (a pamięć pasuje do modelu iPhone'a), „na części” — tylko gdy
+  ogłoszenie tak mówi. Usterki i flagi AI może dodać, nigdy nie usuwa wyniku reguł.
+- Wynik wpływa na wycenę: np. pamięć znaleziona w opisie usuwa flagę „Nieznana pamięć” i werdykt może
+  wrócić do KUPUJ/NEGOCJUJ; blokada iCloud z opisu obniża werdykt; „to nie telefon” → DO WERYFIKACJI.
+  W panelu szczegółów: warstwa **„Opis (Ollama)”** w „Ocenie warstw” i dopiski **„(AI z opisu)”**.
+- **Opis ze strony oferty:** Vinted i Sprzedajemy.pl (a często też Allegro Lokalnie) nie podają opisu
+  w wynikach wyszukiwania. Program pobiera wtedy stronę oferty — tylko ofert DO WERYFIKACJI, każdą raz,
+  w tym samym limicie zapytań co wyszukiwanie (1 zapytanie na 4 s na portal). Z Vinted czyta tylko początek
+  strony (ok. 160 kB z 2 MB), bo tam jest opis. Sprawdzone we wrześniu 2026: wszystkie trzy portale
+  udostępniają opis na stronie oferty; API przedmiotu Vinted jest chronione przed automatami (403), więc
+  nie jest używane. Jeśli portal zablokuje pobieranie strony, program **przestaje pobierać** opisy z tego
+  portalu do końca działania (bez prób obchodzenia zabezpieczeń). Można to wyłączyć w ustawieniach.
+
+### Wiadomości do sprzedającego
+
+Przycisk **„📋 Skopiuj wiadomość”** w panelu szczegółów kopiuje do schowka gotową wiadomość z danymi oferty
+— wklejasz ją w portalu i wysyłasz sam. Szablon wybierany jest według werdyktu, strzałka przy przycisku
+pozwala wybrać inny:
+
+- **Kupuję (KUPUJ)** — pytanie o dostępność i prośba o wysyłkę,
+- **Negocjacja ceny (NEGOCJUJ)** — Twoja cena otwierająca (zaokrąglona do 10 zł) i rzeczowe argumenty:
+  usterki z kosztem naprawy z tabeli części, słaba bateria, niższe ceny podobnych ofert (tylko gdy są niższe),
+- **Pytania przed zakupem (DO WERYFIKACJI)** — pytania dopasowane do oferty: pamięć, bateria, blokada iCloud,
+  działanie funkcji, naprawy, oryginalność przy podejrzanie niskiej cenie, wysyłka z zagranicy.
+
+Szablony edytujesz w **⚙ Ustawienia → Wiadomości** (pola: `{telefon}`, `{model}`, `{pamiec}`, `{cena}`,
+`{propozycja}`, `{argumenty}`, `{pytania}`, `{wysylka}`); „Przywróć domyślne szablony” cofa zmiany.
+
 ### Okno główne
 
 Układ: **filtry po lewej, tabela ofert w środku, szczegóły zaznaczonej oferty po prawej**,
@@ -427,11 +476,13 @@ phonebot/
   core/language.py  rozpoznawanie języka tytułu (oferty z zagranicy na Vinted)
   services/offer_guard.py  reguły odrzucania w jednym miejscu (kraj, sprzedawcy seryjni, ponowne filtrowanie)
   ml/            lokalne AI: seed_data.py (zbiór startowy), text_model.py (klasyfikator tytułów),
-                 photo_model.py (CLIP w onnxruntime), combine.py (łączenie warstw), selftest.py
+                 photo_model.py (CLIP w onnxruntime), ollama.py (klient Ollamy), desc_model.py (czytanie
+                 opisów + sprawdzanie odpowiedzi), combine.py (łączenie warstw), selftest.py
+  core/messages.py  szablony wiadomości do sprzedającego;  sources/pages.py  opis ze strony oferty
   services/ai_service.py  dane do nauki z bazy, douczanie, analiza zdjęć;  ui/ai_worker.py  wątek AI
   net/http.py    klient HTTP: limit zapytań na host, ponawianie (tenacity), cache odpowiedzi
   services/      evaluator.py (baza + wycena), scanner.py (równoległe pobieranie z izolacją błędów),
-                 post_scan.py (AI + powiadomienia po skanie), ai_analysis.py (Claude),
+                 post_scan.py (powiadomienia po skanie),
                  notifications.py (Telegram)
   core/view_filter.py  filtry widoku;  core/places.py  wbudowana lista miejscowości
   net/geocode.py wyszukiwanie miejscowości (OpenStreetMap Nominatim)
@@ -458,8 +509,9 @@ Awaria jednego adaptera jest izolowana i nie zatrzymuje pozostałych.
 2. ✅ Pierwszy adapter i podstawowa tabela ofert w GUI (adapter OLX później usunięty, patrz niżej).
 3. ✅ Kolorowanie, werdykty i rekomendacje negocjacji w GUI (okno szczegółów).
 4. ✅ Allegro Lokalnie i Vinted, filtry, tryby, okno ustawień, wybór miejscowości i edytor tabeli części.
-5. ✅ Automatyczne odświeżanie, zasobnik systemowy, powiadomienia Windows i Telegram, opcjonalna
-   analiza opisów przez AI (Claude) oraz gotowy plik `PhoneBot.exe` budowany automatycznie przez GitHub Actions.
+5. ✅ Automatyczne odświeżanie, zasobnik systemowy, powiadomienia Windows i Telegram oraz gotowy plik
+   `PhoneBot.exe` budowany automatycznie przez GitHub Actions (płatna analiza opisów przez Claude — usunięta
+   w wersji 1.4, zastąpiona lokalnym modelem).
 6. ✅ Wieloetapowy filtr akcesoriów z widokiem „Odrzucone”, nowy układ okna (filtry | tabela | szczegóły),
    motyw jasny/ciemny i optymalizacja wydajności.
 7. ✅ Zabezpieczenia regułowe: werdykt DO WERYFIKACJI, testy sensowności ceny i zysku, limity werdyktu
@@ -467,8 +519,9 @@ Awaria jednego adaptera jest izolowana i nie zatrzymuje pozostałych.
    seryjni, kategorie portali po ID, czysta wycena rynkowa.
 8. ✅ Darmowe lokalne AI: klasyfikator tytułów (scikit-learn) z douczaniem na Twoich oznaczeniach,
    analiza zdjęć (CLIP), łączenie warstw z werdyktem, przycisk „To nie jest telefon”.
-9. ⏳ Planowane: opcjonalny lokalny model językowy (Ollama) do opisów ofert „DO WERYFIKACJI”
-   oraz szablony wiadomości do negocjacji z przyciskiem „Skopiuj wiadomość”.
+9. ✅ Opcjonalny lokalny model językowy (Ollama, qwen3:8b) czyta opisy ofert „DO WERYFIKACJI”
+   (z opisem ze strony oferty, gdy wyniki go nie mają) oraz szablony wiadomości z przyciskiem
+   „Skopiuj wiadomość”.
 
 ### Wydajność
 
@@ -527,6 +580,9 @@ Adaptery będą korzystać z danych, które strony same ładują w przeglądarce
 Analiza zdjęć przez lokalne AI pobiera **jedno** (główne) zdjęcie oferty, tylko dla ofert z werdyktem innym
 niż ODPUŚĆ, każde tylko raz i nie częściej niż co 1 s z jednego serwera — to te same zdjęcia, które program
 pokazuje jako miniatury.
+
+Strony pojedynczych ofert (opis dla lokalnego modelu językowego) pobierane są tylko przy włączonej analizie
+opisów, tylko dla ofert DO WERYFIKACJI, każda raz i w tym samym limicie zapytań co wyszukiwanie.
 
 Automatyczne pobieranie może naruszać regulaminy portali. Używaj aplikacji
 na własną odpowiedzialność, wyłącznie do użytku osobistego i z umiarkowaną

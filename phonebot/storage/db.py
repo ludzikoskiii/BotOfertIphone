@@ -173,6 +173,19 @@ MIGRATIONS: list[str] = [
         PRIMARY KEY (source, source_id)
     );
     """,
+    # v7 — etap 3: opis ze strony oferty i wynik lokalnego modelu językowego (Ollama); wyniki usuniętej
+    # płatnej analizy Claude są czyszczone (klucz API usuwa z ustawień SettingsRepository.load)
+    """
+    UPDATE offers SET ai_defects = NULL, ai_flags = NULL, ai_note = NULL, ai_checked_at = NULL;
+    ALTER TABLE offers ADD COLUMN page_description TEXT;
+    ALTER TABLE offers ADD COLUMN page_checked_at TEXT;
+    ALTER TABLE offers ADD COLUMN page_error TEXT;
+    ALTER TABLE ai_results ADD COLUMN desc_hash TEXT;
+    ALTER TABLE ai_results ADD COLUMN desc_json TEXT;
+    ALTER TABLE ai_results ADD COLUMN desc_model TEXT;
+    ALTER TABLE ai_results ADD COLUMN desc_at TEXT;
+    ALTER TABLE ai_results ADD COLUMN desc_error TEXT;
+    """,
 ]
 
 

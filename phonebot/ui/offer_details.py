@@ -6,7 +6,7 @@ i w osobnym oknie ``OfferDetailsDialog`` (układ poziomy, większe zdjęcie).
 from __future__ import annotations
 
 from PySide6.QtCore import QSize, Qt, QUrl, Signal
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtGui import QDesktopServices, QGuiApplication
 from PySide6.QtWidgets import (
     QDialog,
     QHBoxLayout,
@@ -15,10 +15,12 @@ from PySide6.QtWidgets import (
     QPushButton,
     QStackedWidget,
     QTextBrowser,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
+from ..core.messages import DEFAULT_TEMPLATES, TEMPLATE_KEYS, TEMPLATE_NAMES, render, template_for
 from ..core.models import Offer, OfferStatus, Valuation
 from ..core.settings import Settings
 from ..storage.repositories import OfferRepository
@@ -41,6 +43,7 @@ class OfferDetailsView(QWidget):
     status_changed = Signal(int, str)  # offer_id, OfferStatus.value
     full_view_requested = Signal()
     not_phone = Signal(int, str)  # offer_id, klasa (accessory | part | wanted)
+    message_copied = Signal(str)  # komunikat do paska stanu
 
     def __init__(self, settings: Settings, repo: OfferRepository, photos: ThumbnailCache, parent=None, *,
                  compact: bool = True):
@@ -91,11 +94,23 @@ class OfferDetailsView(QWidget):
         for label, text in NOT_PHONE_CHOICES:
             menu.addAction(text, lambda label=label: self._mark_not_phone(label))
         self.not_phone_btn.setMenu(menu)
+        # wiadomość do sprzedającego: klik = szablon pasujący do werdyktu, strzałka = wybór szablonu
+        self.copy_btn = QToolButton()
+        self.copy_btn.setText("📋 Wiadomość" if compact else "📋 Skopiuj wiadomość")
+        self.copy_btn.setToolTip("Kopiuje do schowka wiadomość do sprzedającego z danymi tej oferty "
+                                 "(szablony: Ustawienia → Wiadomości). Strzałka — wybór szablonu.")
+        self.copy_btn.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
+        self.copy_btn.clicked.connect(lambda: self.copy_message())
+        copy_menu = QMenu(self.copy_btn)
+        for key in TEMPLATE_KEYS:
+            copy_menu.addAction(TEMPLATE_NAMES[key], lambda key=key: self.copy_message(key))
+        self.copy_btn.setMenu(copy_menu)
         buttons = QHBoxLayout()
         buttons.setSpacing(SPACING)
         buttons.addWidget(self.open_btn)
         buttons.addWidget(self.watch_btn)
         if not compact:
+            buttons.addWidget(self.copy_btn)
             buttons.addWidget(self.hide_btn)
             buttons.addWidget(self.not_phone_btn)
         buttons.addStretch(1)
@@ -106,6 +121,7 @@ class OfferDetailsView(QWidget):
             full.setToolTip("Pełne okno szczegółów (Enter / podwójne kliknięcie)")
             full.clicked.connect(self.full_view_requested.emit)
             buttons.addWidget(full)
+            second.addWidget(self.copy_btn)
             second.addWidget(self.hide_btn)
             second.addWidget(self.not_phone_btn)
             second.addStretch(1)
@@ -166,6 +182,17 @@ class OfferDetailsView(QWidget):
         scroll = self.browser.verticalScrollBar().value()
         self.browser.setHtml(build_details_html(self.offer, self.val, self.settings, history))
         self.browser.verticalScrollBar().setValue(scroll)
+
+    def copy_message(self, key: str | None = None) -> str:
+        """Wiadomość do sprzedającego z danymi oferty → schowek. Zwraca tekst."""
+        if self.offer is None or self.val is None:
+            return ""
+        key = key or template_for(self.val.verdict, self.val)
+        template = self.settings.message_templates.get(key) or DEFAULT_TEMPLATES[key]
+        text = render(template, self.offer, self.val)
+        QGuiApplication.clipboard().setText(text)
+        self.message_copied.emit(f"Skopiowano wiadomość „{TEMPLATE_NAMES[key]}” — wklej ją w portalu.")
+        return text
 
     def _open_offer(self) -> None:
         if self.offer is not None:
@@ -231,6 +258,7 @@ class OfferDetailsDialog(QDialog):
 
     status_changed = Signal(int, str)
     not_phone = Signal(int, str)
+    message_copied = Signal(str)
 
     def __init__(self, offer: Offer, val: Valuation, settings: Settings, repo: OfferRepository,
                  photos: ThumbnailCache, parent=None):
@@ -241,6 +269,7 @@ class OfferDetailsDialog(QDialog):
         self.view.set_offer(offer, val)
         self.view.status_changed.connect(self.status_changed.emit)
         self.view.not_phone.connect(self.not_phone.emit)
+        self.view.message_copied.connect(self.message_copied.emit)
         self.view.not_phone.connect(lambda *_: self.accept())  # oferta znika z tabeli — okno też
         self.view.open_btn.setDefault(True)
         self.browser, self.watch_btn, self.hide_btn = self.view.browser, self.view.watch_btn, self.view.hide_btn

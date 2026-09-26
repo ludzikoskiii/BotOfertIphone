@@ -17,7 +17,7 @@ from .models import RedFlag, Severity, Verdict
 # flagi testów sensowności — zawsze najwyżej DO WERYFIKACJI (tego wymaga ich sens)
 SANITY_FLAGS = frozenset({RedFlag.PRICE_UNREALISTIC, RedFlag.PROFIT_UNREALISTIC, RedFlag.STORAGE_UNKNOWN,
                           RedFlag.SERIAL_SELLER, RedFlag.AI_TEXT_CONFLICT, RedFlag.AI_PHOTO_CONFLICT,
-                          RedFlag.AI_LOW_CONFIDENCE})
+                          RedFlag.AI_LOW_CONFIDENCE, RedFlag.AI_DESC_CONFLICT})
 
 VERDICT_CHOICES = {
     Verdict.BUY.value: "bez limitu (może być KUPUJ)",

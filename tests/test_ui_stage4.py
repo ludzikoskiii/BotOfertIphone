@@ -180,14 +180,10 @@ def test_settings_notify_tab(window):
     dialog = window.open_settings()
     dialog.tg_token.setText(" 123:ABC ")
     dialog.tg_chat.setText("42")
-    dialog.ai_key.setText("sk-ant-test")
-    dialog.ai_model.setCurrentText("claude-sonnet-5")
     dialog.findChild(QtWidgets.QCheckBox, "telegram_enabled").setChecked(True)
-    dialog.findChild(QtWidgets.QCheckBox, "llm_enabled").setChecked(True)
     dialog.accept()
     s = SettingsRepository(window.conn).load()
     assert (s.telegram_bot_token, s.telegram_chat_id, s.telegram_enabled) == ("123:ABC", "42", True)
-    assert (s.anthropic_api_key, s.llm_model, s.llm_enabled) == ("sk-ant-test", "claude-sonnet-5", True)
 
 
 def test_rejected_view_and_this_is_a_phone(window):

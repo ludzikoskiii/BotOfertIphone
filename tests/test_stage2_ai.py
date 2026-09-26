@@ -264,7 +264,7 @@ MIXED = {"smartphone": 0.4, "case": 0.3, "screen_protector": 0.2, "box": 0.1}
 def test_combine_truth_table(ai, state, flags):
     result = combine.combine(ai, MlConfig())
     assert (result.state, result.flags) == (state, flags)
-    assert [layer.name for layer in result.layers] == ["Tytuł (klasyfikator)", "Zdjęcie (CLIP)"]
+    assert [layer.name for layer in result.layers] == ["Tytuł (klasyfikator)", "Zdjęcie (CLIP)", "Opis (Ollama)"]
 
 
 def test_combine_layers_describe_confidence_and_switches():

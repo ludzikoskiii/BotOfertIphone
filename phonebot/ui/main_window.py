@@ -42,12 +42,13 @@ from PySide6.QtWidgets import (
 
 from ..core.models import Mode, Offer, OfferStatus, RowColor, Valuation, Verdict
 from ..core.view_filter import ViewFilter, matches
+from ..ml.desc_model import text_hash
 from ..ml.photo_model import model_ready
 from ..ml.seed_data import LABEL_NAMES
 from ..ml.text_model import current_classifier
 from ..net.http import HostRateLimiter, ResponseCache
 from ..paths import models_dir, thumbnails_dir
-from ..services.ai_service import PhotoJob, labels_count
+from ..services.ai_service import DescJob, PhotoJob, labels_count
 from ..services.evaluator import Evaluator
 from ..services.offer_guard import OfferGuard
 from ..services.scanner import ScanReport
@@ -115,6 +116,7 @@ class MainWindow(QMainWindow):
     # żądania do wątku lokalnego AI (połączenia kolejkowane: sloty wykonują się w wątku AI)
     ai_start_requested = Signal()
     ai_photos_requested = Signal(list)
+    ai_desc_requested = Signal(list)
     ai_retrain_requested = Signal()
     ai_auto_retrain_requested = Signal()
 
@@ -131,6 +133,7 @@ class MainWindow(QMainWindow):
         self.ai_worker: AiWorker | None = None  # lokalne AI (start_ai) — w osobnym wątku
         self._ai_thread: QThread | None = None
         self._photo_queued: set[tuple[str, str]] = set()
+        self._desc_queued: set[tuple[str, str, str]] = set()  # (portal, id, skrót treści)
         self._settings_dialog: SettingsDialog | None = None
 
         self.palette_ = apply_theme(self.settings.ui_theme, self.settings.ui_font_pt)
@@ -345,6 +348,7 @@ class MainWindow(QMainWindow):
         self.details.status_changed.connect(self._status_changed)
         self.details.full_view_requested.connect(self._details_for_current)
         self.details.not_phone.connect(self.mark_not_phone)
+        self.details.message_copied.connect(self._show_status)
         self.table.selectionModel().currentRowChanged.connect(self._current_changed)
 
     def _build_layout(self) -> None:
@@ -477,6 +481,9 @@ class MainWindow(QMainWindow):
         thread = start_in_thread(worker, self)
         thread.finished.connect(lambda: setattr(self, "_diag_worker", None))
 
+    def _show_status(self, text: str) -> None:
+        self._status.setText(text)
+
     def _diagnosis_failed(self, message: str) -> None:
         self._status.setText(f"Diagnostyka nie powiodła się: {message}")
 
@@ -573,6 +580,7 @@ class MainWindow(QMainWindow):
         self._update_count()
         self._update_rejected_count()
         self._queue_photo_analysis()
+        self._queue_desc_analysis()
 
     # ------------------------------------------------------- lokalne AI ---
 
@@ -580,17 +588,20 @@ class MainWindow(QMainWindow):
         """Uruchamia wątek lokalnego AI: modele ładowane raz, potem analiza w tle (wołane z app.py)."""
         if self.ai_worker is not None:
             return
-        worker = AiWorker(self.db_path, self.settings)
+        worker = AiWorker(self.db_path, self.settings, limiter=self.limiter)
         thread = QThread(self)
         worker.moveToThread(thread)
         self.ai_start_requested.connect(worker.start)
         self.ai_photos_requested.connect(worker.analyze)
+        self.ai_desc_requested.connect(worker.analyze_desc)
         self.ai_retrain_requested.connect(worker.retrain)
         self.ai_auto_retrain_requested.connect(worker.retrain_if_needed)
         worker.status.connect(self.ai_label.setText)
         # metody okna (nie lambdy): Qt wywoła je w wątku okna — lambda wykonałaby się w wątku AI
         worker.photos_done.connect(self._ai_results_ready)
         worker.text_updated.connect(self._ai_results_ready)
+        worker.desc_done.connect(self._ai_results_ready)
+        worker.llm_state.connect(self._llm_state)
         worker.photo_model_ready.connect(self._photo_model_state)
         worker.retrained.connect(self._model_retrained)
         thread.finished.connect(worker.close)  # sygnał z wątku AI — połączenie z bazą zamyka ten sam wątek
@@ -629,6 +640,34 @@ class MainWindow(QMainWindow):
         jobs = [PhotoJob(o.raw.source, o.raw.source_id, o.raw.photos[0], o.id) for _, _, o in candidates]
         if jobs:
             self.ai_photos_requested.emit(jobs)
+
+    def _queue_desc_analysis(self) -> None:
+        """Opisy czyta lokalny model językowy (Ollama) — tylko oferty DO WERYFIKACJI, każdą treść raz."""
+        if self.ai_worker is None or not self.settings.ml.llm_enabled:
+            return
+        candidates = []
+        for offer, val in self.model.rows():
+            if val.verdict is not Verdict.VERIFY or offer.id is None:
+                continue
+            key = text_hash(offer.raw.title, offer.raw.description)
+            if offer.layers is not None and offer.layers.desc_hash == key:
+                continue  # ten opis był już czytany (także z błędem)
+            if (offer.raw.source, offer.raw.source_id, key) in self._desc_queued:
+                continue
+            self._desc_queued.add((offer.raw.source, offer.raw.source_id, key))
+            candidates.append((val.score, offer))
+        candidates.sort(key=lambda c: c[0], reverse=True)
+        jobs = [DescJob(o.raw.source, o.raw.source_id, o.id, o.raw.title, o.raw.description, o.raw.url,
+                        o.parsed.model) for _, o in candidates]
+        if jobs:
+            self.ai_desc_requested.emit(jobs)
+
+    @Slot(bool, str)
+    def _llm_state(self, ready: bool, message: str) -> None:
+        self.ai_label.setToolTip(f"Lokalne AI. Analiza opisów: {message}")
+        if not ready:  # Ollama nie działa / brak modelu — te oferty wrócą do kolejki przy kolejnym odświeżeniu
+            self._desc_queued.clear()
+            self._status.setText(f"Analiza opisów czeka: {message}")
 
     def _photo_model_state(self, ready: bool) -> None:
         if ready:
@@ -708,6 +747,11 @@ class MainWindow(QMainWindow):
             self.ai_worker.settings = settings  # działa od razu, także w trakcie analizy zdjęć
         if settings.ml.photo_enabled and not old.ml.photo_enabled:
             self._photo_queued.clear()
+        if (settings.ml.llm_enabled, settings.ml.llm_url, settings.ml.llm_model) != (
+                old.ml.llm_enabled, old.ml.llm_url, old.ml.llm_model):
+            self._desc_queued.clear()
+            if self.ai_worker is not None:
+                self.ai_worker.reset_llm_check()  # nowy adres/model Ollamy — sprawdź od razu
         if (settings.ui_theme, settings.ui_font_pt) != (old.ui_theme, old.ui_font_pt):
             self.apply_appearance()
         self.settings_repo.save(settings)
@@ -821,11 +865,8 @@ class MainWindow(QMainWindow):
             self.source_status.set_status(s.key, s.name, s.kind, found=s.saved, error=s.error, when=now)
         post = getattr(report, "post", None)
         if post is not None:
-            if post.ai_analyzed:
-                summary += f"; AI: {post.ai_analyzed} opisów"
-            if post.ai_error:
-                errors.append(f"Analiza AI: {post.ai_error}")
-                summary += "; AI: BŁĄD"
+            if post.error:
+                errors.append(f"Po pobraniu: {post.error}")
             if post.telegram_error:
                 errors.append(post.telegram_error)
                 summary += "; Telegram: BŁĄD"
@@ -884,6 +925,7 @@ class MainWindow(QMainWindow):
         dialog = OfferDetailsDialog(offer, val, self.settings, OfferRepository(self.conn), self.photos, self)
         dialog.status_changed.connect(self._status_changed)
         dialog.not_phone.connect(self.mark_not_phone)
+        dialog.message_copied.connect(self._show_status)
         dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         dialog.show()
         return dialog

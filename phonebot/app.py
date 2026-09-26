@@ -42,7 +42,6 @@ def _self_test() -> str:
     from pathlib import Path
 
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    import anthropic  # noqa: F401  (ładowane leniwie w analizie AI)
 
     from .ml import selftest
     from .sources import REGISTRY

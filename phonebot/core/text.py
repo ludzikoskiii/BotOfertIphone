@@ -106,3 +106,13 @@ def any_match(phrases: list[Phrase] | tuple[Phrase, ...], text: str) -> bool:
     if combined is not None and combined.search(text) is None:
         return False  # żadna fraza nie występuje — typowy przypadek, bez sprawdzania zaprzeczeń
     return any(p.search(text) for p in phrases)
+
+
+def plural(n: int, one: str, few: str, many: str) -> str:
+    """Polska odmiana po liczebniku: 1 opis, 2 opisy, 5 opisów, 22 opisy, 12 opisów."""
+    if n == 1:
+        return f"{n} {one}"
+    if n % 10 in (2, 3, 4) and n % 100 not in (12, 13, 14):
+        return f"{n} {few}"
+    return f"{n} {many}"
+

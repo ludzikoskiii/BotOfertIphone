@@ -16,7 +16,6 @@ from ..core.models import (
     ParsedInfo,
     RawOffer,
     RedFlag,
-    merge_ai_findings,
 )
 from ..core.parts import PartPrice, default_parts
 from ..core.settings import Settings
@@ -92,10 +91,6 @@ class OfferRepository:
             f"UPDATE offers SET {assignments}, last_seen = ?, is_active = 1 WHERE id = ?",
             [*fields.values(), seen, offer_id],
         )
-        if existing["description"] != raw.description:  # opis zmieniony → analiza AI od nowa
-            self.conn.execute(
-                "UPDATE offers SET ai_defects = NULL, ai_flags = NULL, ai_note = NULL, ai_checked_at = NULL "
-                "WHERE id = ?", (offer_id,))
         changed = abs(old_price - raw.price) >= 0.01
         if changed:
             self._add_price(offer_id, raw.price, seen)
@@ -158,23 +153,31 @@ class OfferRepository:
         )
         return [(_dt(r["seen_at"]), float(r["price"])) for r in rows]  # type: ignore[misc]
 
-    def pending_ai(self, offer_ids: list[int], limit: int, min_description: int = 30) -> list[sqlite3.Row]:
-        """Oferty z listy, które nie były jeszcze analizowane przez AI (z opisem, rozpoznanym modelem)."""
-        if not offer_ids or limit <= 0:
-            return []
-        marks = ",".join("?" * len(offer_ids))
-        return list(self.conn.execute(
-            f"SELECT id, title, description FROM offers WHERE id IN ({marks}) AND ai_checked_at IS NULL "
-            f"AND model IS NOT NULL AND length(description) >= ? ORDER BY id DESC LIMIT ?",
-            [*offer_ids, min_description, limit],
-        ))
+    def page_descriptions(self, source: str, source_ids: list[str]) -> dict[str, str]:
+        """Opisy pobrane wcześniej ze stron ofert (wyniki wyszukiwania ich nie mają)."""
+        out: dict[str, str] = {}
+        ids = [i for i in source_ids if i]
+        for start in range(0, len(ids), 500):
+            chunk = ids[start:start + 500]
+            marks = ",".join("?" * len(chunk))
+            for r in self.conn.execute(
+                    f"SELECT source_id, page_description FROM offers WHERE source = ? AND source_id IN ({marks}) "
+                    "AND page_description IS NOT NULL AND page_description != ''", [source, *chunk]):
+                out[r["source_id"]] = r["page_description"]
+        return out
 
-    def save_ai(self, offer_id: int, defects: list[Defect], flags: list[RedFlag], note: str) -> None:
-        self.conn.execute(
-            "UPDATE offers SET ai_defects = ?, ai_flags = ?, ai_note = ?, ai_checked_at = ? WHERE id = ?",
-            (json.dumps([d.value for d in defects]), json.dumps([f.value for f in flags]), note,
-             _iso(utcnow()), offer_id),
-        )
+    def save_page_description(self, offer_id: int, description: str, parsed: ParsedInfo | None,
+                              error: str | None = None) -> None:
+        """Zapisuje opis ze strony oferty i (gdy jest) wynik reguł policzony z nowym opisem."""
+        self.conn.execute("UPDATE offers SET page_description = ?, page_checked_at = ?, page_error = ? WHERE id = ?",
+                          (description or None, _iso(utcnow()), error, offer_id))
+        if description and parsed is not None:
+            self.conn.execute(
+                "UPDATE offers SET description = ?, model = ?, storage_gb = ?, condition = ?, defects = ?, flags = ?, "
+                "battery_health = ?, negotiable = ? WHERE id = ?",
+                (description, parsed.model, parsed.storage_gb, parsed.condition.value,
+                 json.dumps([d.value for d in parsed.defects]), json.dumps([f.value for f in parsed.flags]),
+                 parsed.battery_health, None if parsed.negotiable is None else int(parsed.negotiable), offer_id))
 
     def market_observations(self, model: str, window_days: int, now: datetime | None = None) -> list[MarketObservation]:
         """Ceny ofert danego modelu z okna czasowego; ta sama sztuka z kilku portali liczona raz."""
@@ -198,14 +201,17 @@ class OfferRepository:
 _OFFER_SELECT = """
     SELECT o.*, a.text_label AS ai_text_label, a.text_conf AS ai_text_conf, a.text_probs AS ai_text_probs,
            a.photo_label AS ai_photo_label, a.photo_conf AS ai_photo_conf, a.photo_probs AS ai_photo_probs,
-           a.photo_at AS ai_photo_at, a.photo_error AS ai_photo_error
+           a.photo_at AS ai_photo_at, a.photo_error AS ai_photo_error,
+           a.desc_json AS ai_desc_json, a.desc_model AS ai_desc_model, a.desc_at AS ai_desc_at,
+           a.desc_error AS ai_desc_error, a.desc_hash AS ai_desc_hash
     FROM offers o LEFT JOIN ai_results a ON a.source = o.source AND a.source_id = o.source_id"""
 
 
 def _row_to_layers(row: sqlite3.Row) -> AiLayers | None:
     if "ai_text_label" not in row.keys():
         return None
-    if row["ai_text_label"] is None and row["ai_photo_label"] is None and row["ai_photo_error"] is None:
+    if (row["ai_text_label"] is None and row["ai_photo_label"] is None and row["ai_photo_error"] is None
+            and row["ai_desc_hash"] is None):
         return None
     return AiLayers(
         text_label=row["ai_text_label"], text_conf=row["ai_text_conf"],
@@ -213,6 +219,8 @@ def _row_to_layers(row: sqlite3.Row) -> AiLayers | None:
         photo_label=row["ai_photo_label"], photo_conf=row["ai_photo_conf"],
         photo_probs=json.loads(row["ai_photo_probs"] or "{}"), photo_at=_dt(row["ai_photo_at"]),
         photo_error=row["ai_photo_error"],
+        desc=json.loads(row["ai_desc_json"]) if row["ai_desc_json"] else None, desc_model=row["ai_desc_model"],
+        desc_at=_dt(row["ai_desc_at"]), desc_error=row["ai_desc_error"], desc_hash=row["ai_desc_hash"],
     )
 
 
@@ -236,11 +244,9 @@ def _row_to_offer(row: sqlite3.Row) -> Offer:
         first_seen=_dt(row["first_seen"]), last_seen=_dt(row["last_seen"]), dedup_key=row["dedup_key"],
         layers=_row_to_layers(row),
     )
-    if row["ai_checked_at"]:
-        ai_defects = [Defect(d) for d in json.loads(row["ai_defects"] or "[]") if d in Defect._value2member_map_]
-        ai_flags = [RedFlag(f) for f in json.loads(row["ai_flags"] or "[]") if f in RedFlag._value2member_map_]
-        offer.ai_defects, offer.ai_flags = merge_ai_findings(parsed, ai_defects, ai_flags)
-        offer.ai_note = row["ai_note"] or ""
+    keys = row.keys()
+    if "page_description" in keys and row["page_description"]:
+        offer.desc_from_page = row["page_description"] == row["description"]
     return offer
 
 
@@ -278,13 +284,25 @@ class PartsRepository:
 
 class SettingsRepository:
     KEY = "app"
+    # ustawienia usuniętych funkcji — przy pierwszym wczytaniu znikają z bazy (np. klucz API płatnej analizy Claude)
+    OBSOLETE_KEYS = ("anthropic_api_key", "llm_enabled", "llm_model", "llm_max_per_scan")
 
     def __init__(self, conn: sqlite3.Connection):
         self.conn = conn
 
     def load(self) -> Settings:
         row = self.conn.execute("SELECT value FROM settings WHERE key = ?", (self.KEY,)).fetchone()
-        return Settings.from_json(row["value"] if row else None)
+        settings = Settings.from_json(row["value"] if row else None)
+        if row and self._has_obsolete(row["value"]):
+            self.save(settings)
+        return settings
+
+    def _has_obsolete(self, value: str | None) -> bool:
+        try:
+            data = json.loads(value or "{}")
+        except json.JSONDecodeError:
+            return False
+        return isinstance(data, dict) and any(k in data for k in self.OBSOLETE_KEYS)
 
     def save(self, settings: Settings) -> None:
         self.set_value(self.KEY, settings.to_json())
@@ -569,6 +587,19 @@ class AiRepository:
                 photo_error = excluded.photo_error
             """, (source, source_id, url, label, probs.get(label) if label else None,
                   json.dumps({k: round(v, 4) for k, v in (probs or {}).items()}), model, _iso(utcnow()), error))
+
+    def save_desc(self, source: str, source_id: str, text_hash: str, findings: dict | None, model: str,
+                  error: str | None = None) -> None:
+        """Wynik lokalnego modelu językowego dla opisu (albo błąd). Ten sam opis nie jest czytany drugi raz."""
+        self.conn.execute(
+            """
+            INSERT INTO ai_results (source, source_id, desc_hash, desc_json, desc_model, desc_at, desc_error)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (source, source_id) DO UPDATE SET
+                desc_hash = excluded.desc_hash, desc_json = excluded.desc_json, desc_model = excluded.desc_model,
+                desc_at = excluded.desc_at, desc_error = excluded.desc_error
+            """, (source, source_id, text_hash, json.dumps(findings, ensure_ascii=False) if findings else None, model,
+                  _iso(utcnow()), error))
 
     def text_model_of(self, source: str, source_id: str) -> str | None:
         row = self.conn.execute("SELECT text_model FROM ai_results WHERE source = ? AND source_id = ?",

@@ -50,7 +50,7 @@ def _fmt_dt(dt: datetime | None) -> str:
     return dt.astimezone().strftime("%d.%m.%Y %H:%M") if dt else "—"
 
 
-_AI_FLAGS = {RedFlag.AI_TEXT_CONFLICT, RedFlag.AI_PHOTO_CONFLICT, RedFlag.AI_LOW_CONFIDENCE}
+_AI_FLAGS = {RedFlag.AI_TEXT_CONFLICT, RedFlag.AI_PHOTO_CONFLICT, RedFlag.AI_LOW_CONFIDENCE, RedFlag.AI_DESC_CONFLICT}
 
 
 def _layers_html(offer: Offer, val: Valuation, settings: Settings, pal: Palette) -> str:
@@ -161,20 +161,22 @@ def build_details_html(
 
     # --- rozpoznane dane ---
     parts.append("<h3>Rozpoznane z ogłoszenia</h3><table class='calc'>")
+    ai_mark = " (AI z opisu)"
     parts.append(_row("Model", escape(p.model or "nierozpoznany")))
-    parts.append(_row("Pamięć", format_storage(p.storage_gb)))
-    parts.append(_row("Stan", escape(p.condition.label)))
+    parts.append(_row("Pamięć", format_storage(p.storage_gb) + (ai_mark if "storage" in offer.ai_filled else "")))
+    parts.append(_row("Stan", escape(p.condition.label) + (ai_mark if "for_parts" in offer.ai_filled else "")))
     defects = ", ".join(d.label + (" (AI)" if d in offer.ai_defects else "") for d in p.defects)
     parts.append(_row("Usterki", escape(defects or "brak wykrytych")))
-    parts.append(_row("Kondycja baterii", f"{p.battery_health}%" if p.battery_health else "—"))
+    battery = f"{p.battery_health}%" if p.battery_health else "—"
+    parts.append(_row("Kondycja baterii", battery + (ai_mark if "battery" in offer.ai_filled else "")))
     neg_txt = {True: "tak", False: "nie (cena ostateczna)", None: "brak informacji"}[p.negotiable]
     parts.append(_row("Do negocjacji", neg_txt))
-    if offer.ai_note is not None:
+    parts.append("</table>")
+    if offer.ai_note is not None:  # długi tekst — pod tabelą (komórki z liczbami się nie zawijają)
         ai_txt = offer.ai_note or "brak uwag"
         if offer.ai_flags:
             ai_txt += " · flagi: " + ", ".join(f.label for f in offer.ai_flags)
-        parts.append(_row("Analiza AI", escape(ai_txt)))
-    parts.append("</table>")
+        parts.append(f"<p><b>Opis wg AI (Ollama):</b> {escape(ai_txt)}</p>")
 
     if price_history and len(price_history) > 1:
         parts.append("<h3>Historia ceny</h3><table class='calc'>")
@@ -182,7 +184,8 @@ def build_details_html(
             parts.append(_row(_fmt_dt(dt), zl(price)))
         parts.append("</table>")
 
-    parts.append("<h3>Opis ogłoszenia</h3>")
+    parts.append("<h3>Opis ogłoszenia" + (' <span class="muted">(pobrany ze strony oferty)</span>'
+                                           if offer.desc_from_page else "") + "</h3>")
     parts.append(f'<div class="desc">{escape(raw.description or "(brak opisu)")}</div>')
     parts.append("</body></html>")
     return "".join(parts)

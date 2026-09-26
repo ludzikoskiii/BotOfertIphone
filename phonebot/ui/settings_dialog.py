@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from functools import reduce
 from typing import Any
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, Slot
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -186,6 +186,13 @@ AI_TEXT = [
           tip="Słaba wskazówka. Ukryte oferty, które model uważa za telefony (ukryte np. przez cenę), są "
               "pomijane. Pewną informację daje przycisk „To nie jest telefon”."),
 ]
+AI_LLM = [
+    Field("ml.llm_enabled", "Czytaj opisy ofert „DO WERYFIKACJI” lokalnym modelem (Ollama)", "bool",
+          tip="Wyciąga z opisu pamięć, kondycję baterii, usterki, blokady i „na części”. Każdy opis raz."),
+    Field("ml.llm_fetch_pages", "Pobieraj opis ze strony oferty, gdy wyniki wyszukiwania go nie mają", "bool",
+          tip="Vinted i Sprzedajemy.pl nie podają opisu w wynikach. Jedno zapytanie na ofertę DO WERYFIKACJI, "
+              "w tym samym limicie zapytań co wyszukiwanie; blokada portalu wstrzymuje pobieranie."),
+]
 AI_PHOTO = [
     Field("ml.photo_enabled", "Analiza głównego zdjęcia (CLIP, na procesorze)", "bool"),
     Field("ml.photo_phone_conf", "Zdjęcie potwierdza telefon od pewności", "pct", 30, 99, 5),
@@ -219,7 +226,8 @@ class SettingsDialog(QDialog):
         tabs.addTab(self._filter_tab(), "Filtr ogłoszeń")
         tabs.addTab(self._safety_tab(), "Zabezpieczenia")
         tabs.addTab(self._ai_tab(), "AI lokalne")
-        tabs.addTab(self._notify_tab(), "Powiadomienia i AI")
+        tabs.addTab(self._messages_tab(), "Wiadomości")
+        tabs.addTab(self._notify_tab(), "Powiadomienia")
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
         buttons.button(QDialogButtonBox.StandardButton.Save).setText("Zapisz")
@@ -492,8 +500,8 @@ class SettingsDialog(QDialog):
 
     def _ai_tab(self) -> QWidget:
         intro = QLabel("Darmowe AI działające na Twoim komputerze — bez płatnych usług i bez wysyłania danych. "
-                       "Reguły decydują, co trafia do tabeli; AI może to potwierdzić albo podważyć. Gdy tytuł "
-                       "lub zdjęcie przeczy regułom albo pewność jest niska, werdykt to <b>DO WERYFIKACJI</b>.")
+                       "Reguły decydują, co trafia do tabeli; AI może to potwierdzić albo podważyć. Gdy tytuł, "
+                       "zdjęcie lub opis przeczy regułom albo pewność jest niska, werdykt to <b>DO WERYFIKACJI</b>.")
         intro.setWordWrap(True)
         text = QGroupBox("Klasyfikator tytułów (scikit-learn)")
         tl = QVBoxLayout(text)
@@ -526,7 +534,114 @@ class SettingsDialog(QDialog):
         pl.addWidget(pinfo)
         pl.addLayout(self._form(AI_PHOTO))
         self.set_model_info(self.model_info)
-        return self._page(intro, text, photo)
+        return self._page(intro, text, photo, self._llm_group())
+
+    def _llm_group(self) -> QGroupBox:
+        from ..ml.ollama import DOWNLOAD_URL, SUGGESTED_MODELS
+
+        s = self.settings.ml
+        box = QGroupBox("Analiza opisów — lokalny model językowy (Ollama, opcjonalnie)")
+        lay = QVBoxLayout(box)
+        info = QLabel(
+            f"Darmowy program <a href='{DOWNLOAD_URL}'>Ollama</a> uruchamia model językowy na Twojej karcie "
+            "graficznej — nic nie wychodzi poza komputer. Polecany model: <b>qwen3:8b</b> (ok. 5,2 GB, ok. 6 GB "
+            "pamięci karty; na RTX 3060 Ti ok. 2–6 s na opis). Czytane są tylko oferty DO WERYFIKACJI, każda raz. "
+            "Bez Ollamy program działa normalnie.")
+        info.setWordWrap(True)
+        info.setOpenExternalLinks(True)
+        info.setTextFormat(Qt.TextFormat.RichText)
+        lay.addWidget(info)
+        lay.addLayout(self._form(AI_LLM))
+        form = QFormLayout()
+        self.llm_url = QLineEdit(s.llm_url)
+        self.llm_url.setPlaceholderText("http://127.0.0.1:11434")
+        self.llm_model = QComboBox()
+        self.llm_model.setEditable(True)
+        self.llm_model.addItems(list(SUGGESTED_MODELS))
+        self.llm_model.setCurrentText(s.llm_model)
+        self.llm_model.setToolTip("qwen3:8b — polecany; qwen2.5:7b — lżejszy. Możesz wpisać dowolny model z Ollamy.")
+        form.addRow("Adres Ollamy:", self.llm_url)
+        form.addRow("Model:", self.llm_model)
+        lay.addLayout(form)
+        row = QHBoxLayout()
+        self.llm_check_btn = QPushButton("Sprawdź połączenie")
+        self.llm_check_btn.clicked.connect(self._llm_check)
+        self.llm_pull_btn = QPushButton("⬇ Pobierz model")
+        self.llm_pull_btn.setToolTip("Pobiera wybrany model do Ollamy (raz; kilka GB). Można też w terminalu: "
+                                     "ollama pull qwen3:8b")
+        self.llm_pull_btn.clicked.connect(self._llm_pull)
+        row.addWidget(self.llm_check_btn)
+        row.addWidget(self.llm_pull_btn)
+        row.addStretch(1)
+        lay.addLayout(row)
+        self.llm_status = QLabel("")
+        self.llm_status.setWordWrap(True)
+        self.llm_status.setObjectName("muted")
+        lay.addWidget(self.llm_status)
+        self._readers.append(lambda st: (
+            setattr(st.ml, "llm_url", self.llm_url.text().strip() or "http://127.0.0.1:11434"),
+            setattr(st.ml, "llm_model", self.llm_model.currentText().strip() or "qwen3:8b")))
+        return box
+
+    def _llm_check(self) -> None:
+        from ..ml.ollama import OllamaClient
+
+        url, model = self.llm_url.text().strip(), self.llm_model.currentText().strip()
+        self.llm_status.setText("Sprawdzam Ollamę…")
+
+        def check():
+            with OllamaClient(url or "http://127.0.0.1:11434") as client:
+                return client.status()
+
+        def show(status) -> None:
+            if not status.running:
+                self.llm_status.setText(f"❌ {status.error}. Pobierz program: ollama.com/download")
+            elif status.has_model(model):
+                self.llm_status.setText(f"✅ Ollama {status.version} działa, model {model} jest zainstalowany.")
+            else:
+                have = ", ".join(status.models) or "brak"
+                self.llm_status.setText(f"⚠ Ollama {status.version} działa, ale nie ma modelu {model} "
+                                        f"(zainstalowane: {have}) — kliknij „Pobierz model”.")
+
+        self._run_bg(check, show, status=self.llm_status)
+
+    def _llm_pull(self) -> None:
+        from .workers import OllamaPullWorker, start_in_thread
+
+        if getattr(self, "_pull_worker", None) is not None:
+            return
+        url = self.llm_url.text().strip() or "http://127.0.0.1:11434"
+        model = self.llm_model.currentText().strip() or "qwen3:8b"
+        worker = OllamaPullWorker(url, model)
+        worker.progress.connect(self.llm_status.setText)
+        worker.finished.connect(self._llm_pulled)
+        worker.failed.connect(self._llm_pull_failed)
+        self._pull_worker = worker
+        self.llm_pull_btn.setEnabled(False)
+        self.llm_status.setText(f"⏳ Pobieranie {model}…")
+        self._pull_thread = start_in_thread(worker, self.parentWidget() or self)
+        self.finished.connect(self._stop_pull)
+
+    @Slot(object)
+    def _llm_pulled(self, model) -> None:
+        self._pull_worker = None
+        self.llm_pull_btn.setEnabled(True)
+        self.llm_status.setText(f"✅ Model {model} pobrany — analiza opisów może działać.")
+
+    @Slot(str)
+    def _llm_pull_failed(self, message: str) -> None:
+        self._pull_worker = None
+        self.llm_pull_btn.setEnabled(True)
+        self.llm_status.setText(f"❌ {message}")
+
+    def _stop_pull(self, *_args) -> None:
+        """Zamknięcie okna przerywa pobieranie (Ollama wznowi je przy kolejnym „Pobierz model”)."""
+        worker, thread = getattr(self, "_pull_worker", None), getattr(self, "_pull_thread", None)
+        if worker is not None:
+            worker.stop()
+        if thread is not None:
+            thread.quit()
+            thread.wait(5000)
 
     def set_model_info(self, info) -> None:
         """Skuteczność modelu na danych testowych (też po douczeniu w tle, gdy okno jest otwarte)."""
@@ -608,6 +723,33 @@ class SettingsDialog(QDialog):
             words = [w.strip() for w in edit.toPlainText().splitlines() if w.strip()]
             setattr(s.listing_filter, attr, list(dict.fromkeys(words)))
 
+    def _messages_tab(self) -> QWidget:
+        from ..core.messages import DEFAULT_TEMPLATES, PLACEHOLDERS, TEMPLATE_KEYS, TEMPLATE_NAMES
+
+        legend = "<br>".join(f"<b>{{{k}}}</b> — {v}" for k, v in PLACEHOLDERS.items())
+        info = QLabel("Szablony wiadomości do sprzedającego (bez AI). Przycisk <b>„📋 Skopiuj wiadomość”</b> "
+                      "w panelu szczegółów wstawia dane oferty i kopiuje tekst do schowka — wklejasz go "
+                      "w portalu. Domyślnie wybierany jest szablon pasujący do werdyktu; strzałka przy przycisku "
+                      f"pozwala wybrać inny.<br><br>Pola do wstawienia:<br>{legend}")
+        info.setWordWrap(True)
+        info.setTextFormat(Qt.TextFormat.RichText)
+        self.template_edits: dict[str, QPlainTextEdit] = {}
+        boxes = []
+        for key in TEMPLATE_KEYS:
+            box = QGroupBox(TEMPLATE_NAMES[key])
+            lay = QVBoxLayout(box)
+            edit = QPlainTextEdit(self.settings.message_templates.get(key) or DEFAULT_TEMPLATES[key])
+            edit.setObjectName(f"template_{key}")
+            edit.setMinimumHeight(110)
+            lay.addWidget(edit)
+            self.template_edits[key] = edit
+            boxes.append(box)
+        reset = QPushButton("Przywróć domyślne szablony")
+        reset.clicked.connect(lambda: [e.setPlainText(DEFAULT_TEMPLATES[k]) for k, e in self.template_edits.items()])
+        self._readers.append(lambda st: setattr(st, "message_templates", {
+            k: (e.toPlainText().strip() or DEFAULT_TEMPLATES[k]) for k, e in self.template_edits.items()}))
+        return self._page(info, *boxes, reset)
+
     def _notify_tab(self) -> QWidget:
         s = self.settings
         general = QGroupBox("Działanie w tle i powiadomienia")
@@ -642,41 +784,32 @@ class SettingsDialog(QDialog):
         self._readers.append(lambda st: (setattr(st, "telegram_bot_token", self.tg_token.text().strip()),
                                          setattr(st, "telegram_chat_id", self.tg_chat.text().strip())))
 
-        ai = QGroupBox("Analiza opisów przez AI (Claude, płatne API Anthropic)")
-        ai_form = self._form([
-            Field("llm_enabled", "Analizuj opisy nowych ofert", "bool",
-                  tip="Uzupełnia wykrywanie usterek i czerwonych flag. Każda oferta analizowana raz."),
-            Field("llm_max_per_scan", "Maks. ofert na odświeżenie", "int", 1, 200,
-                  tip="Ogranicza koszty — pozostałe oferty zostaną przeanalizowane przy kolejnych odświeżeniach"),
-        ])
-        self.ai_key = QLineEdit(s.anthropic_api_key)
-        self.ai_key.setEchoMode(QLineEdit.EchoMode.Password)
-        self.ai_key.setPlaceholderText("sk-ant-… (puste = zmienna środowiskowa ANTHROPIC_API_KEY)")
-        self.ai_model = QComboBox()
-        self.ai_model.setEditable(True)
-        self.ai_model.addItems(["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"])
-        self.ai_model.setCurrentText(s.llm_model)
-        self.ai_model.setToolTip("claude-opus-5 — najdokładniejszy; claude-sonnet-5 / claude-haiku-4-5 — tańsze")
-        ai_form.addRow("Klucz API:", self.ai_key)
-        ai_form.addRow("Model:", self.ai_model)
-        ai.setLayout(ai_form)
-        self._readers.append(lambda st: (setattr(st, "anthropic_api_key", self.ai_key.text().strip()),
-                                         setattr(st, "llm_model", self.ai_model.currentText().strip()
-                                                 or "claude-opus-5")))
-        note = QLabel("Uwaga: token Telegrama i klucz API są zapisywane w lokalnej bazie aplikacji "
+        note = QLabel("Uwaga: token Telegrama jest zapisywany w lokalnej bazie aplikacji "
                       "(%LOCALAPPDATA%\\PhoneBot) bez szyfrowania — nie udostępniaj tego pliku.")
         note.setWordWrap(True)
         note.setStyleSheet("color: #868e96;")
-        return self._page(general, tg, ai, note)
+        return self._page(general, tg, note)
 
-    def _run_bg(self, func, on_ok) -> None:
+    def _run_bg(self, func, on_ok, status: QLabel | None = None) -> None:
+        """Zadanie w tle; wynik trafia do ``on_ok`` w wątku okna (metody okna, nie lambdy — patrz niżej)."""
         from .workers import FuncWorker, start_in_thread
 
         worker = FuncWorker(func)
-        worker.finished.connect(on_ok)
-        worker.failed.connect(lambda msg: self.tg_status.setText(f"❌ {msg}"))
+        self._bg_ok, self._bg_status = on_ok, status or self.tg_status
+        # sygnały z wątku roboczego do metod tego okna: Qt wywoła je w wątku okna (lambda — w wątku roboczym)
+        worker.finished.connect(self._bg_finished)
+        worker.failed.connect(self._bg_failed)
         self._bg_worker = worker  # referencja chroni przed GC
-        start_in_thread(worker, self)
+        # wątek należy do okna głównego: zamknięcie ustawień w trakcie zadania nie niszczy działającego wątku
+        start_in_thread(worker, self.parentWidget() or self)
+
+    @Slot(object)
+    def _bg_finished(self, result) -> None:
+        self._bg_ok(result)
+
+    @Slot(str)
+    def _bg_failed(self, message: str) -> None:
+        self._bg_status.setText(f"❌ {message}")
 
     def _telegram_find_chat(self) -> None:
         from ..services.notifications import TelegramClient

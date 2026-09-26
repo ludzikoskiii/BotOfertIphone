@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .listing_filter import ListingFilterConfig
+from .messages import DEFAULT_TEMPLATES
 from .models import Mode, RedFlag
 from .sanity import SanityConfig
 from .view_filter import ViewFilter
@@ -76,6 +77,7 @@ def _default_penalties() -> dict[str, int]:
         RedFlag.AI_TEXT_CONFLICT.value: 20,
         RedFlag.AI_PHOTO_CONFLICT.value: 20,
         RedFlag.AI_LOW_CONFIDENCE.value: 10,
+        RedFlag.AI_DESC_CONFLICT.value: 20,
     }
 
 
@@ -103,7 +105,7 @@ DEFAULT_HIDDEN_COLUMNS = ("photo", "condition", "battery", "market", "score", "f
 
 @dataclass
 class MlConfig:
-    """Lokalne AI (darmowe, na Twoim komputerze): klasyfikator tytułów i analiza zdjęć."""
+    """Lokalne AI (darmowe, na Twoim komputerze): klasyfikator tytułów, analiza zdjęć i opisów (Ollama)."""
 
     text_enabled: bool = True
     photo_enabled: bool = True
@@ -115,6 +117,11 @@ class MlConfig:
     photo_conflict_conf: float = 0.80  # test na 80 zdjęciach: przy 80% zero telefonów uznanych za etui
     retrain_after_labels: int = 50  # automatyczne douczanie po tylu nowych oznaczeniach
     learn_from_hidden: bool = True  # ukryte oferty = słaba wskazówka „to nie telefon”
+    # opcjonalny lokalny model językowy (Ollama) czyta opisy ofert „DO WERYFIKACJI”
+    llm_enabled: bool = False
+    llm_url: str = "http://127.0.0.1:11434"
+    llm_model: str = "qwen3:8b"
+    llm_fetch_pages: bool = True  # opis ze strony oferty, gdy wyniki wyszukiwania go nie mają
 
 
 @dataclass
@@ -222,11 +229,8 @@ class Settings:
     filters_visible: bool = True
     details_visible: bool = True
 
-    # --- analiza opisów przez AI (opcjonalna) ---
-    llm_enabled: bool = False
-    anthropic_api_key: str = ""  # puste = zmienna środowiskowa ANTHROPIC_API_KEY
-    llm_model: str = "claude-opus-5"
-    llm_max_per_scan: int = 20
+    # --- wiadomości do sprzedającego (szablony, bez AI) ---
+    message_templates: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_TEMPLATES))
 
     # ---------------------------------------------------------------- API ---
 

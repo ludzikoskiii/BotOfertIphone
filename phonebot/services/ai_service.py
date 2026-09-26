@@ -1,7 +1,8 @@
 """Lokalne AI bez GUI: dane do nauki z bazy, douczanie klasyfikatora, wyniki warstw w bazie.
 
-Wszystko działa na Twoim komputerze i nic nie kosztuje: scikit-learn (tytuły) i CLIP w onnxruntime
-(zdjęcia). Warstwa GUI (``ui/ai_worker.py``) uruchamia to w osobnym wątku.
+Wszystko działa na Twoim komputerze i nic nie kosztuje: scikit-learn (tytuły), CLIP w onnxruntime
+(zdjęcia) i opcjonalnie lokalny model językowy w Ollamie (opisy ofert „DO WERYFIKACJI”).
+Warstwa GUI (``ui/ai_worker.py``) uruchamia to w osobnym wątku.
 """
 from __future__ import annotations
 
@@ -9,7 +10,7 @@ import logging
 import sqlite3
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -23,7 +24,7 @@ from ..ml.text_model import (
     seed_training_set,
     set_classifier,
 )
-from ..storage.repositories import AiRepository, LabelRepository, RejectedRepository
+from ..storage.repositories import AiRepository, LabelRepository, OfferRepository, RejectedRepository
 
 log = logging.getLogger(__name__)
 
@@ -42,6 +43,19 @@ class PhotoJob:
     source_id: str
     url: str
     offer_id: int | None = None
+
+
+@dataclass
+class DescJob:
+    """Oferta do przeczytania lokalnym modelem językowym (Ollama)."""
+
+    source: str
+    source_id: str
+    offer_id: int
+    title: str
+    description: str
+    url: str
+    phone_model: str | None = None
 
 
 @dataclass
@@ -213,3 +227,68 @@ class AiService:
             if own:
                 client.close()
         return done
+
+    # ------------------------------------------------------------ opisy ---
+
+    def analyze_descriptions(self, jobs: list[DescJob], *, client=None, fetcher=None,
+                             stop: Callable[[], bool] | None = None,
+                             progress: Callable[[int, int], None] | None = None) -> int:
+        """Czyta opisy lokalnym modelem językowym. Każdy opis raz (wynik albo błąd zostaje w bazie).
+
+        Brak opisu w wynikach wyszukiwania → opis ze strony oferty (``fetcher``), gdy włączone w ustawieniach;
+        opis zapisywany jest przy ofercie i od razu przelicza wynik reguł. ``OllamaNotRunning`` /
+        ``OllamaModelMissing`` przerywają partię (nic nie jest zapisywane — oferty wrócą później).
+        """
+        from ..core.normalizer import parse_offer
+        from ..ml.desc_model import analyze, text_hash
+        from ..ml.ollama import OllamaClient, OllamaError, OllamaModelMissing, OllamaNotRunning
+        from ..sources.pages import page_supported
+
+        cfg = self.settings.ml
+        if not jobs:
+            return 0
+        own = client is None
+        client = client or OllamaClient(cfg.llm_url)
+        results, offers = AiRepository(self.conn), OfferRepository(self.conn)
+        done = 0
+        try:
+            for i, job in enumerate(jobs):
+                if stop and stop():
+                    break
+                description = job.description or ""
+                if not description.strip() and cfg.llm_fetch_pages and fetcher is not None \
+                        and page_supported(job.source):
+                    page = fetcher.fetch(job.source, job.url, job.title)
+                    if stop and stop() and not page.description:
+                        break
+                    if page.blocked:
+                        continue  # portal blokuje automaty — bez zapisu, oferta wróci przy następnym uruchomieniu
+                    parsed = None
+                    if page.description:
+                        description = page.description
+                        offer = offers.get(job.offer_id)
+                        if offer is not None:
+                            parsed = parse_offer(replace(offer.raw, description=description),
+                                                 battery_threshold=self.settings.battery_health_threshold)
+                    offers.save_page_description(job.offer_id, page.description, parsed, page.error)
+                key = text_hash(job.title, description)
+                if not description.strip():
+                    results.save_desc(job.source, job.source_id, key, None, cfg.llm_model, "brak opisu w ogłoszeniu")
+                else:
+                    try:
+                        findings = analyze(client, cfg.llm_model, title=job.title, description=description,
+                                           phone_model=job.phone_model)
+                    except (OllamaNotRunning, OllamaModelMissing):
+                        raise
+                    except OllamaError as e:
+                        results.save_desc(job.source, job.source_id, key, None, cfg.llm_model, str(e))
+                    else:
+                        results.save_desc(job.source, job.source_id, key, findings.to_json(), cfg.llm_model)
+                done += 1
+                if progress:
+                    progress(i + 1, len(jobs))
+        finally:
+            if own:
+                client.close()
+        return done
+
