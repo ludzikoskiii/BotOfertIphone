@@ -1,0 +1,26 @@
+name: probe-descriptions
+
+# Rozpoznanie: czy strona oferty daje opis, gdy wyniki wyszukiwania go nie mają (etap 3, lokalny
+# model językowy). Kilkanaście zapytań z przerwami 4 s. Wynik w logu i w Artifacts.
+on:
+  push:
+    paths:
+      - "scripts/probe_descriptions.py"
+      - ".github/workflows/probe-descriptions.yml"
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install httpx tenacity selectolax
+      - run: PYTHONPATH=. python scripts/probe_descriptions.py probe_descriptions.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: probe-descriptions
+          path: probe_descriptions.txt
