@@ -1,7 +1,8 @@
 """Analiza głównego zdjęcia oferty modelem CLIP (zero-shot), lokalnie na CPU.
 
 * Model: openai/clip-vit-base-patch32, koder obrazu w formacie ONNX (eksport Xenova, fp16, ~176 MB),
-  pobierany raz z Hugging Face przy pierwszym użyciu i sprawdzany sumą SHA-256.
+  pobierany raz z Hugging Face przy pierwszym użyciu i sprawdzany sumą SHA-256. Adres wskazuje
+  przypiętą wersję repozytorium, więc zmiany po stronie Hugging Face nie zepsują pobierania.
 * Uruchamiany przez ``onnxruntime`` (kilkanaście MB) — bez torcha (~500 MB), więc program zostaje lekki.
 * Opisy klas (smartfon / etui / szkło ochronne / pudełko) zostały zamienione na wektory raz, oryginalnym
   modelem (skrypt ``scripts/clip_prepare.py`` w GitHub Actions) — w programie są gotowe liczby.
@@ -19,7 +20,9 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-MODEL_URL = "https://huggingface.co/Xenova/clip-vit-base-patch32/resolve/main/onnx/vision_model_fp16.onnx"
+MODEL_REPO = "Xenova/clip-vit-base-patch32"
+MODEL_REVISION = "d15189d7028b43f1d3e65039190477f6af591c2a"  # wersja sprawdzona w GitHub Actions (clip-check)
+MODEL_URL = f"https://huggingface.co/{MODEL_REPO}/resolve/{MODEL_REVISION}/onnx/vision_model_fp16.onnx"
 MODEL_SHA256 = "35c4e0fb0aeee527dcde1693520b214a34424a786babd530f35366bad5844efd"
 MODEL_FILE = "clip-vit-b32-vision-fp16.onnx"
 MODEL_SIZE_MB = 176
