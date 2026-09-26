@@ -37,15 +37,40 @@ DEFAULT_HEADERS = {
 }
 
 
+# Ślady ochrony antybotowej w odpowiedzi (nagłówki / treść).
+_BLOCK_MARKERS = ("captcha-delivery.com", "datadome", "cf-chl", "challenge-platform", "attention required",
+                  "px-captcha", "are you a robot", "jestes robotem", "jesteś robotem")
+
+
+def looks_blocked(response: httpx.Response) -> bool:
+    if response.status_code in (401, 403, 429):
+        return True
+    headers = " ".join(f"{k}:{v}" for k, v in response.headers.items()).lower()
+    if "datadome" in headers and response.status_code >= 400:
+        return True
+    ctype = response.headers.get("content-type", "")
+    if "html" in ctype and response.status_code >= 400:
+        body = response.text[:5000].lower()
+        return any(m in body for m in _BLOCK_MARKERS)
+    return False
+
+
 class HttpError(Exception):
-    def __init__(self, message: str, status: int | None = None, retry_after: float | None = None):
+    def __init__(self, message: str, status: int | None = None, retry_after: float | None = None,
+                 *, blocked: bool = False, network: bool = False):
         super().__init__(message)
         self.status = status
         self.retry_after = retry_after
+        self.blocked = blocked
+        self.network = network
 
     @property
     def retryable(self) -> bool:
-        return self.status is None or self.status == 429 or self.status >= 500
+        if self.status == 429:
+            return True
+        if self.blocked:
+            return False
+        return self.network or (self.status is not None and self.status >= 500)
 
 
 class HostRateLimiter:
@@ -131,6 +156,41 @@ class HttpClient:
         self._client = httpx.AsyncClient(
             headers=DEFAULT_HEADERS, timeout=timeout_s, follow_redirects=True, transport=transport
         )
+        #: gdy lista — każde zapytanie jest do niej dopisywane (tryb diagnostyki)
+        self.trace: list[dict[str, Any]] | None = None
+
+    @property
+    def cookies(self) -> httpx.Cookies:
+        return self._client.cookies
+
+    async def request(self, method: str, url: str, **kw: Any) -> httpx.Response:
+        """Pojedyncze zapytanie (z limitem tempa, bez ponawiania i cache) — zwraca pełną odpowiedź."""
+        request = self._client.build_request(method, url, **kw)
+        await self.limiter.wait(request.url.host)
+        started = time.monotonic()
+        try:
+            response = await self._client.send(request)
+        except httpx.TransportError as e:
+            self._record(request, None, started, error=e.__class__.__name__)
+            raise HttpError(f"Błąd sieci ({request.url.host}): {e.__class__.__name__}", network=True) from e
+        self._record(request, response, started)
+        return response
+
+    def _record(self, request: httpx.Request, response: httpx.Response | None, started: float,
+                error: str | None = None) -> None:
+        if self.trace is None:
+            return
+        entry: dict[str, Any] = {"method": request.method, "url": str(request.url),
+                                 "ms": round((time.monotonic() - started) * 1000)}
+        if error:
+            entry["error"] = error
+        if response is not None:
+            entry.update(status=response.status_code, content_type=response.headers.get("content-type", ""),
+                         bytes=len(response.content), server=response.headers.get("server", ""),
+                         blocked=looks_blocked(response),
+                         set_cookies=sorted({c.split("=", 1)[0] for c in response.headers.get_list("set-cookie")}),
+                         snippet=response.text[:300].replace("\n", " "))
+        self.trace.append(entry)
 
     async def __aenter__(self) -> HttpClient:
         return self
@@ -171,14 +231,19 @@ class HttpClient:
     async def _send(self, request: httpx.Request) -> str:
         host = request.url.host
         await self.limiter.wait(host)
+        started = time.monotonic()
         try:
             response = await self._client.send(request)
         except httpx.TransportError as e:
+            self._record(request, None, started, error=e.__class__.__name__)
             log.warning("Błąd sieci %s: %s", host, e)
-            raise HttpError(f"Błąd sieci ({host}): {e.__class__.__name__}") from e
+            raise HttpError(f"Błąd sieci ({host}): {e.__class__.__name__}", network=True) from e
+        self._record(request, response, started)
         if response.status_code >= 400:
-            log.warning("HTTP %d z %s", response.status_code, request.url)
+            blocked = looks_blocked(response)
+            log.warning("HTTP %d z %s%s", response.status_code, request.url, " (blokada)" if blocked else "")
             raise HttpError(
-                f"HTTP {response.status_code} z {host}", response.status_code, _retry_after(response)
+                f"HTTP {response.status_code} z {host}", response.status_code, _retry_after(response),
+                blocked=blocked,
             )
         return response.text

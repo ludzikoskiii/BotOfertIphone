@@ -1,0 +1,236 @@
+"""Diagnostyka źródeł: każdy adapter osobno + surowe próby adresów portali.
+
+Uruchom:  python -m phonebot.diagnose [--out plik.txt] [--json plik.json]
+albo:     PhoneBot.exe --diagnose   (raport w %LOCALAPPDATA%\\PhoneBot\\diagnostyka.txt)
+
+Dla każdego portalu raport pokazuje, na którym etapie jest problem:
+pobieranie (sieć / status HTTP), blokada (403, captcha, DataDome),
+parsowanie (ile ofert odczytano) i filtrowanie (ile przeszło do bazy).
+"""
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import sys
+import time
+import traceback
+from dataclasses import asdict, dataclass, field
+from datetime import datetime
+from typing import Any
+
+from . import __version__
+from .core.filters import listing_rejection_reason
+from .core.models import Mode
+from .core.normalizer import parse_offer
+from .core.settings import Settings
+from .net.http import HostRateLimiter, HttpClient, HttpError
+from .sources import REGISTRY, SearchQuery
+
+PHRASE = "iphone 13"
+
+
+@dataclass
+class AdapterResult:
+    key: str
+    ok: bool = False
+    stage: str = ""  # na którym etapie problem
+    error: str | None = None
+    error_type: str | None = None
+    raw_offers: int = 0
+    accepted: int = 0
+    samples: list[str] = field(default_factory=list)
+    seconds: float = 0.0
+    trace: list[dict[str, Any]] = field(default_factory=list)
+
+
+@dataclass
+class Probe:
+    name: str
+    url: str
+    method: str = "GET"
+    headers: dict[str, str] = field(default_factory=dict)
+    status: int | None = None
+    content_type: str = ""
+    bytes: int = 0
+    blocked: bool = False
+    set_cookies: list[str] = field(default_factory=list)
+    json_summary: str = ""
+    markers: list[str] = field(default_factory=list)
+    snippet: str = ""
+    error: str | None = None
+
+
+def _json_summary(text: str) -> str:
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return ""
+    if isinstance(data, dict):
+        parts = [f"klucze: {sorted(data)[:25]}"]
+        for key, value in data.items():
+            if isinstance(value, list) and value and isinstance(value[0], dict):
+                parts.append(f"{key}[{len(value)}] pierwszy element: "
+                             + json.dumps(value[0], ensure_ascii=False)[:1500])
+                break
+        return " | ".join(parts)
+    return f"typ: {type(data).__name__}"
+
+
+async def run_adapter(key: str, settings: Settings, timeout: float = 90.0) -> AdapterResult:
+    res = AdapterResult(key)
+    start = time.monotonic()
+    limiter = HostRateLimiter(2.0)
+    async with HttpClient(limiter, attempts=2, wait=lambda s: 3) as http:
+        http.trace = res.trace
+        adapter = REGISTRY[key](http, settings)  # type: ignore[call-arg]
+        query = SearchQuery(Mode.RESELL, phrases=[PHRASE], max_pages=1)
+        try:
+            offers = await asyncio.wait_for(adapter.search(query), timeout)
+        except Exception as e:
+            res.error = str(e) or e.__class__.__name__
+            res.error_type = e.__class__.__name__
+            res.stage = _stage_from_trace(res.trace, e)
+            res.seconds = round(time.monotonic() - start, 1)
+            return res
+    res.raw_offers = len(offers)
+    for o in offers:
+        if listing_rejection_reason(o.title) or not parse_offer(o).model:
+            continue
+        res.accepted += 1
+        if len(res.samples) < 5:
+            res.samples.append(f"{o.price:.0f} zł | {o.title[:60]} | {o.city or '-'}")
+    res.ok = res.accepted > 0
+    res.stage = "OK" if res.ok else ("parsowanie: 0 ofert w odpowiedzi" if not offers
+                                     else "filtrowanie: żadna oferta nie przeszła (model nierozpoznany?)")
+    res.seconds = round(time.monotonic() - start, 1)
+    return res
+
+
+def _stage_from_trace(trace: list[dict[str, Any]], exc: Exception) -> str:
+    if isinstance(exc, TimeoutError):
+        return "pobieranie: przekroczony czas"
+    last = trace[-1] if trace else {}
+    if last.get("error"):
+        return f"pobieranie: błąd sieci ({last['error']})"
+    if last.get("blocked"):
+        return f"blokada portalu (HTTP {last.get('status')})"
+    status = last.get("status")
+    if status and status >= 400:
+        return f"pobieranie: HTTP {status}"
+    if isinstance(exc, HttpError) and "JSON" in str(exc):
+        return "parsowanie: odpowiedź nie jest JSON-em"
+    return f"parsowanie / logika adaptera ({exc.__class__.__name__})"
+
+
+def default_probes() -> list[Probe]:
+    return [
+        Probe("OLX API", "https://www.olx.pl/api/v1/offers/?offset=0&limit=5&query=iphone%2013"
+                         "&sort_by=created_at%3Adesc", headers={"Accept": "application/json"}),
+        Probe("OLX strona wyników", "https://www.olx.pl/oferty/q-iphone-13/"),
+        Probe("Vinted strona (sesja)", "https://www.vinted.pl/catalog?search_text=iphone", method="HEAD"),
+        Probe("Vinted stary API", "https://www.vinted.pl/api/v2/catalog/items?search_text=iphone&per_page=5",
+              headers={"Accept": "application/json"}),
+        Probe("Vinted nowy API", "https://api.vinted.pl/svc-catalogue/items?search_text=iphone&per_page=5"
+                                 "&order=newest_first", headers={"Accept": "application/json"}),
+        Probe("Allegro Lokalnie", "https://allegrolokalnie.pl/oferty/q/iphone%2013"),
+        Probe("Sprzedajemy.pl", "https://sprzedajemy.pl/wszystkie-ogloszenia?inp_text=iphone+13"),
+    ]
+
+
+async def run_probes(probes: list[Probe]) -> list[Probe]:
+    async with HttpClient(HostRateLimiter(2.0), attempts=1) as http:
+        for p in probes:
+            headers = dict(p.headers)
+            token = http.cookies.get("access_token_web")
+            if "api.vinted" in p.url and token:
+                headers["Authorization"] = f"Bearer {token}"
+            try:
+                r = await http.request(p.method, p.url, headers=headers)
+            except HttpError as e:
+                p.error = str(e)
+                continue
+            p.status = r.status_code
+            p.content_type = r.headers.get("content-type", "")
+            p.bytes = len(r.content)
+            from .net.http import looks_blocked
+
+            p.blocked = looks_blocked(r)
+            p.set_cookies = sorted({c.split("=", 1)[0] for c in r.headers.get_list("set-cookie")})
+            text = r.text
+            p.json_summary = _json_summary(text)
+            low = text.lower()
+            p.markers = [m for m in ("__PRERENDERED_STATE__", "__NEXT_DATA__", "application/ld+json",
+                                     "datadome", "captcha", "cf-chl") if m.lower() in low]
+            p.snippet = text[:400].replace("\n", " ")
+    return probes
+
+
+async def diagnose(settings: Settings | None = None) -> dict[str, Any]:
+    settings = settings or Settings()
+    adapters = []
+    for key in REGISTRY:
+        try:
+            adapters.append(await run_adapter(key, settings))
+        except Exception as e:  # diagnostyka nigdy nie może się wysypać
+            adapters.append(AdapterResult(key, error=f"{e}\n{traceback.format_exc()}", stage="wyjątek"))
+    probes = await run_probes(default_probes())
+    return {
+        "version": __version__,
+        "time": datetime.now().isoformat(timespec="seconds"),
+        "adapters": [asdict(a) for a in adapters],
+        "probes": [asdict(p) for p in probes],
+    }
+
+
+def format_report(data: dict[str, Any]) -> str:
+    lines = [f"PhoneBot {data['version']} — diagnostyka źródeł, {data['time']}", "=" * 70, ""]
+    for a in data["adapters"]:
+        status = "DZIAŁA" if a["ok"] else "NIE DZIAŁA"
+        lines.append(f"[{a['key']}] {status} — {a['stage']} ({a['seconds']} s)")
+        lines.append(f"    ofert w odpowiedzi: {a['raw_offers']}, po filtrach: {a['accepted']}")
+        if a["error"]:
+            lines.append(f"    błąd ({a['error_type']}): {a['error']}")
+        for s in a["samples"]:
+            lines.append(f"    • {s}")
+        for t in a["trace"]:
+            lines.append(f"    → {t.get('method')} {t.get('url')[:150]}")
+            lines.append(f"      status={t.get('status')} typ={t.get('content_type')} bajtów={t.get('bytes')} "
+                         f"blokada={t.get('blocked')} błąd={t.get('error')} serwer={t.get('server')}")
+            if t.get("status", 200) >= 400 or t.get("blocked"):
+                lines.append(f"      treść: {t.get('snippet')}")
+        lines.append("")
+    lines += ["Surowe próby adresów", "-" * 70]
+    for p in data["probes"]:
+        lines.append(f"{p['name']}: {p['method']} {p['url'][:150]}")
+        lines.append(f"    status={p['status']} typ={p['content_type']} bajtów={p['bytes']} blokada={p['blocked']} "
+                     f"cookies={p['set_cookies']} znaczniki={p['markers']} błąd={p['error']}")
+        if p["json_summary"]:
+            lines.append(f"    JSON: {p['json_summary'][:1800]}")
+        elif p["status"] and (p["status"] >= 400 or not p["markers"]):
+            lines.append(f"    treść: {p['snippet']}")
+    return "\n".join(lines)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Diagnostyka źródeł PhoneBot")
+    parser.add_argument("--out", help="zapisz raport tekstowy do pliku")
+    parser.add_argument("--json", help="zapisz pełny wynik JSON do pliku")
+    args = parser.parse_args(argv)
+    data = asyncio.run(diagnose())
+    report = format_report(data)
+    if args.out:
+        with open(args.out, "w", encoding="utf-8") as f:
+            f.write(report)
+    if args.json:
+        with open(args.json, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=1)
+    if sys.stdout is not None:
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        print(report)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

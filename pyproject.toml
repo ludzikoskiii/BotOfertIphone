@@ -19,6 +19,8 @@ include = ["phonebot*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "-m 'not live'"
+markers = ["live: testy na żywo z prawdziwymi portalami (wymagają internetu)"]
 
 [tool.ruff]
 line-length = 130
