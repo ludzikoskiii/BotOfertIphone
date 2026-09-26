@@ -105,6 +105,10 @@ def build_details_html(
         f'<p class="muted">{portal} · {location} · {shipping[raw.shipping_available]} · '
         f"dodano {_fmt_dt(raw.created_at or offer.first_seen)}</p>"
     )
+    if offer.also_on:
+        links = ", ".join(f'<a href="{escape(url, quote=True)}">{escape(SOURCE_NAMES.get(src, src))}</a> ({zl(price)})'
+                          for src, url, price in offer.also_on)
+        parts.append(f'<p class="muted">Ta sama oferta także na: {links}</p>')
     # werdykt w osobnej linii — „DO WERYFIKACJI” nie łamie się w wąskim panelu
     parts.append(
         f'<table width="100%" cellpadding="10" style="background:{pal.verdict_bg[val.verdict]}; '
@@ -137,6 +141,12 @@ def build_details_html(
     parts.append('<table class="calc">')
     parts.append(_row("Wartość rynkowa (sprzedaż)", f"<b>{zl(m.value)}</b>"))
     parts.append(f'<tr><td colspan="2" class="muted">&nbsp;&nbsp;{source_txt}</td></tr>')
+    if m.reference_note:
+        parts.append(f'<tr><td colspan="2" class="muted">&nbsp;&nbsp;cena referencyjna: {escape(m.reference_note)}</td></tr>')
+    if raw.params.get("original_currency") and raw.params.get("original_currency") != "PLN":
+        parts.append(f'<tr><td colspan="2" class="muted">&nbsp;&nbsp;cena w ogłoszeniu: '
+                     f'{escape(raw.params.get("original_price", ""))} {escape(raw.params["original_currency"])} '
+                     f'(kurs NBP {escape(raw.params.get("fx_date", ""))})</td></tr>')
     parts.append(_row("Cena zakupu", zl(-raw.price)))
     for item in val.repair_items:
         parts.append(_row(f"Naprawa: {item.label}", zl(-item.amount)))

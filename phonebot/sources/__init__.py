@@ -1,9 +1,9 @@
 """Adaptery portali. Import modułu rejestruje adapter w ``REGISTRY``."""
-from . import allegro_lokalnie, sprzedajemy, vinted  # noqa: F401
+from . import allegro_api, allegro_lokalnie, ebay, lento, sprzedajemy, vinted  # noqa: F401
 from .base import REGISTRY, SearchQuery, SourceAdapter, SourceError, register, search_phrases
 
 # Kolejność wyświetlania portali w GUI (nieznane na końcu, alfabetycznie).
-_ORDER = ("allegro_lokalnie", "vinted", "sprzedajemy")
+_ORDER = ("allegro_lokalnie", "allegro", "vinted", "sprzedajemy", "lento", "ebay")
 
 
 def source_names() -> dict[str, str]:

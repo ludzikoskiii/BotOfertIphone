@@ -39,6 +39,8 @@ def build_sample_db(db_path: Path, settings: Settings | None = None):
     conn = open_database(db_path)
     PartsRepository(conn).seed_defaults_if_empty()
     settings = settings or Settings(max_pages_per_query=2)
+    # dane przykładowe: trzy portale z zapisanych stron (Lento ma osobny test adaptera)
+    settings.enabled_sources["lento"] = False
     SettingsRepository(conn).save(settings)
     limiter = HostRateLimiter(0)
     transport = httpx.MockTransport(mock_portals)

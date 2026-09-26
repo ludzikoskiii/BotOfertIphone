@@ -19,7 +19,16 @@ from phonebot.sources import REGISTRY
 @pytest.mark.live
 @pytest.mark.parametrize("key", sorted(REGISTRY))
 def test_source_returns_offers(key):
-    res = asyncio.run(run_adapter(key, Settings()))
+    import os
+
+    settings = Settings()
+    if REGISTRY[key].requires_keys:  # Allegro / eBay — tylko gdy w CI są klucze (sekrety repozytorium)
+        prefix = key.upper()
+        setattr(settings, f"{key}_client_id", os.environ.get(f"{prefix}_CLIENT_ID", ""))
+        setattr(settings, f"{key}_client_secret", os.environ.get(f"{prefix}_CLIENT_SECRET", ""))
+        if not REGISTRY[key].configured(settings):
+            pytest.skip(f"{key}: wymaga kluczy API ({prefix}_CLIENT_ID / {prefix}_CLIENT_SECRET)")
+    res = asyncio.run(run_adapter(key, settings))
     last = res.trace[-1] if res.trace else {}
     details = (f"{key}: {res.stage}; błąd: {res.error}; ofert: {res.raw_offers}/{res.accepted}; "
                f"ostatnie zapytanie: {last.get('status')} {last.get('url')}")

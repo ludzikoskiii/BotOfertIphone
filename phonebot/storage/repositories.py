@@ -323,7 +323,8 @@ class SettingsRepository:
     KEY = "app"
     # ustawienia usuniętych funkcji — przy pierwszym wczytaniu znikają z bazy (np. klucz API płatnej analizy Claude)
     OBSOLETE_KEYS = ("anthropic_api_key", "llm_enabled", "llm_model", "llm_max_per_scan")
-    SECRET_FIELDS = ("telegram_bot_token", "telegram_chat_id", "web_pin_hash")
+    SECRET_FIELDS = ("telegram_bot_token", "telegram_chat_id", "web_pin_hash", "allegro_client_id",
+                     "allegro_client_secret", "ebay_client_id", "ebay_client_secret")
     SECRET_PREFIX = "secret:"
 
     def __init__(self, conn: sqlite3.Connection):

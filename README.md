@@ -3,7 +3,7 @@
 Aplikacja desktopowa (Windows) do wyszukiwania ofert używanych iPhone'ów na
 Allegro Lokalnie, Vinted i Sprzedajemy.pl, wyceny ich opłacalności i podpowiadania, czy i za ile kupić.
 
-> **Status: wersja 1.9.0.** Trzy portale, wycena, werdykty i negocjacje, filtry, zabezpieczenia werdyktu,
+> **Status: wersja 1.10.0.** Trzy portale, wycena, werdykty i negocjacje, filtry, zabezpieczenia werdyktu,
 > **darmowe lokalne AI** (klasyfikator tytułów, analiza zdjęć, opcjonalnie model językowy w Ollamie),
 > szablony wiadomości do sprzedającego, automatyczne odświeżanie, powiadomienia Windows i Telegram
 > oraz gotowy plik `PhoneBot.exe`. Program nie korzysta z żadnych płatnych usług.
@@ -227,6 +227,50 @@ W szczegółach oferty widać, który powód obniżył werdykt („Werdykt obni�
 **Czysta wycena rynkowa.** Oferty bez rozpoznanej pamięci nie są już danymi rynkowymi (to najczęściej
 akcesoria), ceny poniżej 30% mediany są pomijane, a oferty z flagą „cena nierealnie niska” nie wchodzą
 do mediany. Wcześniej tanie etui zapisane jako „iPhone 13” obniżały wycenę prawdziwych telefonów.
+
+### Portale i ceny referencyjne
+
+| Portal | Jak pobierane | Stan (sprawdzone 26.09.2026 z GitHub Actions) |
+|---|---|---|
+| Allegro Lokalnie | strona wyników (JSON-LD) | działa |
+| Sprzedajemy.pl | strona wyników (JSON-LD) | działa |
+| Vinted | API katalogu (anonimowa sesja) | działa („best effort”) |
+| **Lento.pl** | strony kategorii *Telefony komórkowe → Apple* (wyszukiwarka jest wyłączona w robots.txt) | działa |
+| **Allegro** | **oficjalne REST API** (klucze aplikacji) | serwis osiągalny; działanie zależy od dostępu Twojej aplikacji |
+| **eBay** | **oficjalne Browse API** (klucze aplikacji) | serwis osiągalny z kluczem |
+
+Każdy portal to osobny adapter: błąd albo blokada jednego nie przerywa pozostałych. Wszystkie oferty
+przechodzą ten sam filtr, wycenę, listę „Wybrane” i powiadomienia, a portal widać w filtrze i na pasku
+stanu. Codzienny test „live-sources” (GitHub Actions) sprawdza każdy adapter i robi się czerwony, gdy
+portal przestanie zwracać oferty (Allegro/eBay — gdy w repozytorium są sekrety z kluczami).
+
+**Allegro (oficjalne API):** na <https://apps.developer.allegro.pl> „Dodaj aplikację” (dostęp tylko do
+danych publicznych, bez logowania użytkownika), skopiuj **Client ID** i **Client Secret** do
+**⚙ Ustawienia → Portale** i włącz Allegro w „Ogólne i pobieranie”. Program szuka w kategorii
+„Smartfony i telefony komórkowe” ze stanem używany/uszkodzony (identyfikatory odczytuje z API kategorii).
+Program nie loguje się na Twoje konto Allegro — nie grozi mu blokada. Jeśli Allegro nie udostępni Twojej
+aplikacji wyszukiwania ofert, status pokaże „ZABLOKOWANE” z wyjaśnieniem (program tego nie obchodzi).
+
+**eBay (oficjalne API):** na <https://developer.ebay.com> załóż konto, utwórz klucze **Production** i wpisz
+**App ID** oraz **Cert ID** w Ustawienia → Portale; wybierz rynki (np. Niemcy, Wielka Brytania, USA).
+Tylko oferty z **wysyłką do Polski**; cena przeliczona kursem **NBP** (darmowe API; bez połączenia —
+ostatni kurs), zawsze z kosztem wysyłki, a spoza UE z szacunkiem **VAT 23%, cła (telefony: 0%) i opłaty
+za odprawę** (do zmiany). Każda oferta ma flagę **„Zakup na odległość”** z korektą oceny (domyślnie −10 pkt,
+do zmiany), a iPhone 14 i nowsze z USA — **„tylko eSIM”** z niższą wartością odsprzedaży (domyślnie −15%).
+
+**Ta sama oferta na kilku portalach** (model, pamięć, cena, miejscowość) jest pokazywana raz — z dopiskiem
+„+1” w kolumnie Portal i listą portali z linkami w szczegółach.
+
+**Ceny referencyjne** (tylko do wyceny odsprzedaży, nie oferty do kupna):
+
+- **Refurbed** — raz dziennie, dla najczęstszych modeli z bazy, najniższa cena każdej pojemności z danych
+  strukturalnych strony, 10 s między zapytaniami (robots.txt);
+- **Swappie i Back Market blokują automatyczne pobieranie** (odpowiedź 403 od Cloudflare — sprawdzone).
+  Program tego nie obchodzi; ich ceny możesz wpisać ręcznie w Ustawienia → Portale → „Ceny ręczne”;
+- wartość odsprzedaży = cena referencyjna × **80%** (do zmiany), mieszana z medianą ogłoszeń
+  (domyślnie 50/50); stan sklepu → stan w programie w edytowalnym mapowaniu;
+- w szczegółach oferty widać sklep, cenę i **datę pobrania**; gdy sklep nie odpowiada, używana jest ostatnia
+  zapisana cena, a bez ceny referencyjnej wycena działa jak dotąd (sama mediana).
 
 ### Oferty z zagranicy (Vinted)
 

@@ -226,7 +226,10 @@ async def run_probes(probes: list[Probe]) -> list[Probe]:
 async def diagnose(settings: Settings | None = None) -> dict[str, Any]:
     settings = settings or Settings()
     adapters = []
-    for key in REGISTRY:
+    for key, cls in REGISTRY.items():
+        if not cls.configured(settings):  # Allegro / eBay bez kluczy — nie ma czego sprawdzać
+            adapters.append(AdapterResult(key, stage="wymaga kluczy API (Ustawienia → Portale)"))
+            continue
         try:
             adapters.append(await run_adapter(key, settings))
         except Exception as e:  # diagnostyka nigdy nie może się wysypać

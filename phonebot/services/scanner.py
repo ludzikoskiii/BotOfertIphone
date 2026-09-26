@@ -275,7 +275,7 @@ class Scanner:
 def default_adapters(http: HttpClient, settings: Settings) -> list[SourceAdapter]:
     adapters = []
     for key, cls in REGISTRY.items():
-        if settings.enabled_sources.get(key, True):
+        if settings.enabled_sources.get(key, cls.default_enabled) and cls.configured(settings):
             adapters.append(cls(http, settings))  # type: ignore[call-arg]
     return adapters
 

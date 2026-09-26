@@ -79,6 +79,8 @@ def _default_penalties() -> dict[str, int]:
         RedFlag.AI_PHOTO_CONFLICT.value: 20,
         RedFlag.AI_LOW_CONFIDENCE.value: 10,
         RedFlag.AI_DESC_CONFLICT.value: 20,
+        RedFlag.REMOTE_PURCHASE.value: 10,  # korekta oceny „zakup na odległość” (eBay) — do zmiany
+        RedFlag.ESIM_ONLY_US.value: 5,
     }
 
 
@@ -190,7 +192,8 @@ class Settings:
 
     # --- pobieranie ---
     enabled_sources: dict[str, bool] = field(
-        default_factory=lambda: {"allegro_lokalnie": True, "vinted": True, "sprzedajemy": True}
+        default_factory=lambda: {"allegro_lokalnie": True, "vinted": True, "sprzedajemy": True, "lento": True,
+                                 "allegro": False, "ebay": False}  # Allegro i eBay — po wpisaniu kluczy API
     )
     request_delay_s: float = 4.0
     source_timeout_s: float = 180.0  # maks. czas pobierania z jednego portalu
@@ -239,6 +242,28 @@ class Settings:
     telegram_quiet_start: int = 22  # godzina
     telegram_quiet_end: int = 7
     telegram_quiet_mode: str = "batch"  # batch — wyślij rano | skip — pomiń
+    # --- Allegro (oficjalne REST API; klucze z apps.developer.allegro.pl — zaszyfrowane jak token Telegrama) ---
+    allegro_client_id: str = ""
+    allegro_client_secret: str = ""
+    # --- eBay (oficjalne Browse API; klucze z developer.ebay.com) ---
+    ebay_client_id: str = ""
+    ebay_client_secret: str = ""
+    ebay_markets: list[str] = field(default_factory=lambda: ["EBAY_DE"])
+    ebay_vat_pct: float = 23.0  # VAT importowy spoza UE
+    ebay_duty_pct: float = 0.0  # cło na telefony komórkowe w UE: 0% (HS 8517.13)
+    ebay_clearance_fee: float = 30.0  # opłata przewoźnika za odprawę celną (spoza UE)
+    esim_us_value_pct: float = 15.0  # o tyle niższa cena odsprzedaży iPhone'a 14+ z USA (tylko eSIM)
+    # --- ceny referencyjne (Refurbed; Swappie/Back Market — ręcznie) — tylko do wyceny, nie do kupna ---
+    reference_enabled: bool = True
+    reference_factor: float = 0.80  # odsprzedaż ≈ cena sklepu z odnowionymi × 80%
+    reference_weight: float = 0.5  # udział ceny referencyjnej w wartości rynkowej (reszta: mediana ogłoszeń)
+    reference_max_models: int = 12  # ile modeli odświeżać dziennie (najczęstsze w bazie)
+    # stan w sklepie → klasa stanu w programie (edytowalne): „odnowiony” odpowiada używanemu sprawnemu
+    reference_condition_map: dict[str, str] = field(default_factory=lambda: {
+        "refurbed": "used", "swappie": "used", "backmarket": "used"})
+    # ceny wpisane ręcznie (np. ze Swappie): {"iPhone 13|128": 1500}
+    reference_manual: dict[str, float] = field(default_factory=dict)
+
     # --- wersja na telefon (serwer www w tle; tylko ten komputer albo Tailscale, z PIN-em) ---
     web_enabled: bool = False
     web_port: int = 8765

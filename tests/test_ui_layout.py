@@ -157,7 +157,8 @@ def test_fast_with_many_rows(app, tmp_path):
     win.resize(1400, 800)
     win.show()
     app.processEvents()
-    assert win.model.rowCount() == 1000
+    # oferty scalone z innych portali (ta sama sztuka) liczą się przy ofercie głównej
+    assert win.model.rowCount() + sum(len(o.also_on) for o, _ in win.model.rows()) == 1000
 
     t = time.perf_counter()
     win.reload()

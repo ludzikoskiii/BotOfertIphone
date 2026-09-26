@@ -43,6 +43,8 @@ def chip_style(kind: str) -> str:
 def status_text(name: str, kind: str, found: int | None = None) -> str:
     icon, label, *_ = STATUS_STYLE.get(kind, STATUS_STYLE["error"])
     count = f" ({found})" if kind == "ok" and found is not None else ""
+    if kind == "disabled":  # wyłączone portale krótko (szczegóły w podpowiedzi) — 6 portali mieści się w pasku
+        return f"{icon} {name}"
     return f"{icon} {name}: {label}{count}"
 
 

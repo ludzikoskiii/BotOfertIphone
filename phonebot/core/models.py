@@ -114,6 +114,8 @@ class RedFlag(StrEnum):
     AI_PHOTO_CONFLICT = "ai_photo_conflict"
     AI_LOW_CONFIDENCE = "ai_low_confidence"
     AI_DESC_CONFLICT = "ai_desc_conflict"
+    REMOTE_PURCHASE = "remote_purchase"
+    ESIM_ONLY_US = "esim_only_us"
 
     @property
     def label(self) -> str:
@@ -146,6 +148,8 @@ _FLAG_INFO = {
     RedFlag.AI_PHOTO_CONFLICT: ("AI: zdjęcie nie pokazuje telefonu", Severity.HARD),
     RedFlag.AI_LOW_CONFIDENCE: ("AI: niska pewność, że to telefon", Severity.SOFT),
     RedFlag.AI_DESC_CONFLICT: ("AI: opis mówi, że to nie telefon", Severity.HARD),
+    RedFlag.REMOTE_PURCHASE: ("Zakup na odległość (bez obejrzenia, zwrot trudniejszy)", Severity.SOFT),
+    RedFlag.ESIM_ONLY_US: ("Model z USA — tylko eSIM (niższa cena odsprzedaży w PL)", Severity.SOFT),
 }
 
 
@@ -255,6 +259,7 @@ class Offer:
     active: bool = True  # False = niewidziana na portalu od ``offer_stale_days`` (w „Wybrane”: nieaktualna)
     picked_at: datetime | None = None  # kiedy pierwszy raz trafiła do „Wybrane”
     pick_excluded: bool = False  # ręcznie usunięta z „Wybrane”
+    also_on: list[tuple[str, str, float]] = field(default_factory=list)  # ta sama sztuka na innych portalach
 
     @property
     def price(self) -> float:
@@ -287,6 +292,7 @@ class MarketEstimate:
     method: str
     confidence: str  # "wysoka" | "średnia" | "niska" | "brak"
     raw_median: float | None = None
+    reference_note: str | None = None  # cena referencyjna użyta w wycenie (sklep, data)
 
 
 @dataclass

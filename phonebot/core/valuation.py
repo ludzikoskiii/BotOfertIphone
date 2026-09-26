@@ -88,6 +88,12 @@ def repair_costs(offer: Offer, parts: PartsCatalog, settings: Settings) -> tuple
 
 
 def acquisition_cost(offer: Offer, settings: Settings) -> CostItem:
+    exact = offer.raw.params.get("shipping_cost")  # dokładny koszt wysyłki z portalu (Allegro, eBay)
+    if exact and offer.raw.shipping_available is not False:
+        try:
+            return CostItem("Wysyłka do Ciebie (wg ogłoszenia)", round(float(exact), 2))
+        except ValueError:
+            pass
     if offer.raw.shipping_available is False:
         if offer.distance_km is not None:
             cost = 2 * offer.distance_km * settings.pickup_cost_per_km
@@ -117,6 +123,19 @@ def buyer_fee_item(offer: Offer, settings: Settings) -> CostItem | None:
     return CostItem("Opłata kupującego (ochrona kupujących)", amount) if amount > 0 else None
 
 
+def import_items(offer: Offer) -> list[CostItem]:
+    """Zakup spoza UE (eBay): szacunek VAT importowego, cła i opłaty za odprawę."""
+    amount = offer.raw.params.get("import_cost")
+    try:
+        value = round(float(amount), 2) if amount else 0.0
+    except ValueError:
+        value = 0.0
+    if not value:
+        return []
+    detail = offer.raw.params.get("import_detail")
+    return [CostItem("Cło, VAT importowy i odprawa (szac.)" + (f" – {detail}" if detail else ""), value)]
+
+
 def selling_costs(value: float, settings: Settings) -> list[CostItem]:
     ch = settings.sales_channel()
     items = []
@@ -142,7 +161,7 @@ def evaluate(offer: Offer, market: MarketEstimate, parts: PartsCatalog, settings
     repair_total = round(sum(i.amount for i in repair_items), 2)
     acquisition = acquisition_cost(offer, settings)
     fee_item = buyer_fee_item(offer, settings)
-    buy_items = [acquisition, *([fee_item] if fee_item else [])]
+    buy_items = [acquisition, *([fee_item] if fee_item else []), *import_items(offer)]
     buy_total = sum(i.amount for i in buy_items)
     rule = settings.profit_rule(mode)
 
@@ -164,6 +183,10 @@ def evaluate(offer: Offer, market: MarketEstimate, parts: PartsCatalog, settings
         )
 
     value = market.value
+    if RedFlag.ESIM_ONLY_US in flags and settings.esim_us_value_pct:
+        # iPhone z USA (tylko eSIM) sprzedaje się w Polsce taniej
+        value = round(value * (1 - settings.esim_us_value_pct / 100), 2)
+        reasons.append(f"Model z USA (tylko eSIM): wartość odsprzedaży −{settings.esim_us_value_pct:g}%.")
     sell_items = selling_costs(value, settings)
     cost_items = [*buy_items, *sell_items]
     other_costs = sum(i.amount for i in cost_items)

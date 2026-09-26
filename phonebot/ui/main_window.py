@@ -42,6 +42,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..core.dedup import merge_across_portals
 from ..core.models import Mode, Offer, OfferStatus, RowColor, Valuation, Verdict
 from ..core.selection import SelectionCriteria, is_picked
 from ..core.sorting import MAX_LEVELS, level, spec_from_json, spec_to_json
@@ -57,7 +58,7 @@ from ..services.ai_service import DescJob, PhotoJob, labels_count
 from ..services.evaluator import Evaluator
 from ..services.offer_guard import OfferGuard
 from ..services.scanner import ScanReport
-from ..sources import SOURCE_NAMES
+from ..sources import REGISTRY, SOURCE_NAMES
 from ..storage.repositories import (
     FetchRunRepository,
     LabelRepository,
@@ -204,6 +205,12 @@ class MainWindow(QMainWindow):
         self.telegram_timer = QTimer(self, interval=5 * 60_000)
         self.telegram_timer.timeout.connect(self.flush_telegram)
         self.telegram_timer.start()
+        # ceny referencyjne (Refurbed) — raz dziennie w tle; sprawdzane co godzinę, pierwszy raz minutę po starcie
+        self._ref_worker = None
+        self.reference_timer = QTimer(self, interval=60 * 60_000)
+        self.reference_timer.timeout.connect(self.refresh_references)
+        self.reference_timer.start()
+        QTimer.singleShot(60_000, self.refresh_references)
         self._configure_timer()
         self.refresh_source_status()
         # wersja na telefon (serwer www w tle): włączana w Ustawieniach → Telefon
@@ -606,8 +613,13 @@ class MainWindow(QMainWindow):
         finished = [datetime.fromisoformat(r["finished_at"]) for r in runs.values() if r["finished_at"]]
         self.set_last_refresh(max(finished) if finished else None)
         for key, name in SOURCE_NAMES.items():
-            if not self.settings.enabled_sources.get(key, True):
+            cls = REGISTRY[key]
+            if not self.settings.enabled_sources.get(key, cls.default_enabled):
                 self.source_status.set_status(key, name, "disabled")
+                continue
+            if not cls.configured(self.settings):
+                self.source_status.set_status(key, name, "disabled",
+                                              error="brak kluczy API — Ustawienia → Portale")
                 continue
             row = runs.get(key)
             if row is None:
@@ -744,7 +756,7 @@ class MainWindow(QMainWindow):
         repo = OfferRepository(self.conn)
         offers = repo.list(include_hidden=self.show_hidden_action.isChecked())
         offers += repo.list_picked_inactive()  # zniknęły z portalu — w „Wybrane” jako nieaktualne
-        rows = Evaluator(self.conn, self.settings).evaluate_all(offers)
+        rows = merge_across_portals(Evaluator(self.conn, self.settings).evaluate_all(offers))
         self.model.set_rows(rows)
         self._mark_picked()
         if getattr(self, "web", None) is not None:
@@ -1078,6 +1090,24 @@ class MainWindow(QMainWindow):
         if self.web is not None and self.web.app.changes != self._web_changes:
             self._web_changes = self.web.app.changes
             self.reload()
+
+    def refresh_references(self, force: bool = False) -> bool:
+        """Ceny referencyjne w wątku roboczym (raz dziennie; błędy nie przeszkadzają w pracy)."""
+        from ..services.reference_prices import due, refresh_in_background
+
+        if self._ref_worker is not None or not self.settings.reference_enabled or not (force or due(self.conn)):
+            return False
+        worker = FuncWorker(refresh_in_background, self.db_path, copy.deepcopy(self.settings), force)
+        worker.finished.connect(self._references_done)
+        worker.failed.connect(self._references_done)
+        self._ref_worker = worker
+        start_in_thread(worker, self)
+        return True
+
+    def _references_done(self, result) -> None:
+        self._ref_worker = None
+        if isinstance(result, dict) and result:
+            self.reload()  # nowa cena referencyjna → nowa wycena
 
     def flush_telegram(self) -> bool:
         """Wysyła zaległe powiadomienia Telegram w wątku roboczym (nigdy dwa naraz). Zwraca, czy uruchomiono."""

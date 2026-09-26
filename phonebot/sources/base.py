@@ -103,6 +103,15 @@ class SourceAdapter(abc.ABC):
 
     #: portal pokazuje oferty z innych krajów (filtr kraju/języka ma sens tylko tu)
     international: ClassVar[bool] = False
+    #: domyślnie włączony (portale z kluczami API — dopiero po ich wpisaniu)
+    default_enabled: ClassVar[bool] = True
+    #: wymaga kluczy API w ustawieniach
+    requires_keys: ClassVar[bool] = False
+
+    @staticmethod
+    def configured(settings) -> bool:
+        """Czy portal ma wszystko, czego potrzebuje (np. klucze API)."""
+        return True
 
     @abc.abstractmethod
     async def search(self, query: SearchQuery) -> list[RawOffer]:

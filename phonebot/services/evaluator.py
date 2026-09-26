@@ -12,6 +12,7 @@ from ..core.settings import Settings
 from ..core.valuation import evaluate, target_market_class
 from ..ml.desc_model import apply_to_offer
 from ..storage.repositories import OfferRepository, PartsRepository
+from .reference_prices import ReferenceRepository, blend, lookup
 
 
 class Evaluator:
@@ -21,6 +22,7 @@ class Evaluator:
         self.parts = PartsCatalog(PartsRepository(conn).all())
         self._obs_cache: dict[str, list[MarketObservation]] = {}
         self._market_cache: dict[tuple, MarketEstimate] = {}
+        self.references = ReferenceRepository(conn).all() if settings.reference_enabled else {}
 
     def _observations(self, model: str) -> list[MarketObservation]:
         if model not in self._obs_cache:
@@ -32,9 +34,11 @@ class Evaluator:
         key = (offer.parsed.model, offer.parsed.storage_gb, cls)
         if key not in self._market_cache:
             obs = self._observations(offer.parsed.model) if offer.parsed.model else []
-            self._market_cache[key] = estimate_market_value(
-                offer.parsed.model, offer.parsed.storage_gb, cls, obs, self.settings
-            )
+            market = estimate_market_value(offer.parsed.model, offer.parsed.storage_gb, cls, obs, self.settings)
+            if cls in set(self.settings.reference_condition_map.values()):  # sklepy z odnowionymi = „używany”
+                ref = lookup(offer.parsed.model, offer.parsed.storage_gb, self.references, self.settings)
+                market = blend(market, ref, self.settings)
+            self._market_cache[key] = market
         return self._market_cache[key]
 
     def evaluate(self, offer: Offer, mode: Mode | None = None) -> Valuation:

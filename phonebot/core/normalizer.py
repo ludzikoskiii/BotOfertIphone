@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 
 from .catalog import ALL_STORAGES, MAX_KNOWN_GENERATION, MODELS_BY_NAME, storages_for
-from .models import Condition, Defect, ParsedInfo, RawOffer
+from .models import Condition, Defect, ParsedInfo, RawOffer, RedFlag
 from .red_flags import detect_flags
 from .text import Phrase, any_match, normalize, phrase
 
@@ -300,6 +300,10 @@ def parse_offer(raw: RawOffer, *, battery_threshold: int = 80, assume_iphone: bo
     condition = detect_condition(full, defects, raw.params.get("condition"))
     negotiable = raw.negotiable if raw.negotiable is not None else parse_negotiable(full)
     flags = detect_flags(full, raw, condition, defects, desc)
+    if raw.params.get("remote_purchase"):  # np. eBay: bez obejrzenia, zwrot z zagranicy
+        flags.append(RedFlag.REMOTE_PURCHASE)
+    if us_esim_only(model, raw.params.get("item_country"), raw.title):
+        flags.append(RedFlag.ESIM_ONLY_US)
     return ParsedInfo(
         model=model,
         storage_gb=storage,
@@ -309,6 +313,19 @@ def parse_offer(raw: RawOffer, *, battery_threshold: int = 80, assume_iphone: bo
         battery_health=battery,
         negotiable=negotiable,
     )
+
+
+_GEN_RE = re.compile(r"iPhone (\d+)")
+
+
+def us_esim_only(model: str | None, country: str | None, title: str) -> bool:
+    """iPhone 14 i nowsze z rynku USA nie mają gniazda karty SIM (tylko eSIM) — trudniej je sprzedać w Polsce."""
+    m = _GEN_RE.match(model or "")
+    if not m or int(m.group(1)) < 14:
+        return False
+    t = (title or "").lower()
+    return (country or "").upper() == "US" or any(w in t for w in ("us model", "usa model", "esim only", "e-sim only",
+                                                                     "tylko esim", "wersja usa"))
 
 
 def valid_storage(model: str | None, gb: int | None) -> bool:

@@ -32,3 +32,8 @@ jobs:
           path: diagnostyka.*
       - name: Testy kanarkowe (czy portale zwracają oferty)
         run: python -m pytest -m live -v tests/test_live_sources.py
+        env:  # Allegro / eBay są sprawdzane tylko, gdy w repozytorium są sekrety z kluczami API
+          ALLEGRO_CLIENT_ID: ${{ secrets.ALLEGRO_CLIENT_ID }}
+          ALLEGRO_CLIENT_SECRET: ${{ secrets.ALLEGRO_CLIENT_SECRET }}
+          EBAY_CLIENT_ID: ${{ secrets.EBAY_CLIENT_ID }}
+          EBAY_CLIENT_SECRET: ${{ secrets.EBAY_CLIENT_SECRET }}

@@ -26,6 +26,7 @@ from http import cookies
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlencode, urlparse
 
+from ..core.dedup import merge_across_portals
 from ..core.models import Offer, OfferStatus, Valuation
 from ..core.selection import is_picked
 from ..core.settings import Settings
@@ -118,7 +119,7 @@ class WebApp:
         try:
             repo = OfferRepository(conn)
             offers = repo.list() + repo.list_picked_inactive()
-            rows = Evaluator(conn, self.settings).evaluate_all(offers)
+            rows = merge_across_portals(Evaluator(conn, self.settings).evaluate_all(offers))
         finally:
             conn.close()
         with self._lock:

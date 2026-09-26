@@ -214,6 +214,18 @@ MIGRATIONS: list[str] = [
     );
     CREATE INDEX idx_outbox_status ON telegram_outbox (status, next_try);
     """,
+    # v10 — ceny referencyjne sklepów z odnowionymi telefonami (tylko do wyceny, nie do kupna)
+    """
+    CREATE TABLE reference_prices (
+        source      TEXT NOT NULL,
+        model       TEXT NOT NULL,
+        storage_gb  INTEGER NOT NULL,
+        price       REAL NOT NULL,
+        url         TEXT,
+        fetched_at  TEXT NOT NULL,
+        PRIMARY KEY (source, model, storage_gb)
+    );
+    """,
 ]
 
 

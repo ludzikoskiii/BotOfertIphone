@@ -281,6 +281,9 @@ class OffersTableModel(QAbstractTableModel):
             return offer.raw.url
         if col is Col.VERDICT:
             return f"Ocena {val.score}/100\n" + "\n".join(val.reasons)
+        if col is Col.SOURCE and offer.also_on:
+            return "Ta sama oferta także na:\n" + "\n".join(
+                f"{SOURCE_NAMES.get(src, src)} — {money(price)}" for src, _, price in offer.also_on)
         return "\n".join(val.reasons) if val.reasons else None
 
     def _display(self, col: Col, offer: Offer, val: Valuation) -> str:
@@ -315,7 +318,8 @@ class OffersTableModel(QAbstractTableModel):
             case Col.FLAGS:
                 return ", ".join(f.label for f in dict.fromkeys(val.flags)) or "—"
             case Col.SOURCE:
-                return SOURCE_NAMES.get(offer.raw.source, offer.raw.source)
+                name = SOURCE_NAMES.get(offer.raw.source, offer.raw.source)
+                return f"{name} +{len(offer.also_on)}" if offer.also_on else name
             case Col.LOCATION:
                 city = offer.raw.city or "—"
                 if offer.distance_km is not None:

@@ -231,6 +231,7 @@ class SettingsDialog(QDialog):
         tabs.addTab(self._safety_tab(), "Zabezpieczenia")
         tabs.addTab(self._ai_tab(), "AI lokalne")
         tabs.addTab(self._messages_tab(), "Wiadomości")
+        tabs.addTab(self._portals_tab(), "Portale")
         tabs.addTab(self._notify_tab(), "Powiadomienia")
         tabs.addTab(self._phone_tab(), "Telefon")
 
@@ -317,9 +318,13 @@ class SettingsDialog(QDialog):
         sources = QGroupBox("Portale")
         sl = QVBoxLayout(sources)
         self.source_checks = {}
+        from ..sources import REGISTRY
+
+        notes = {"vinted": " (best effort — może być blokowany)", "allegro": " (oficjalne API — klucze: zakładka Portale)",
+                 "ebay": " (oficjalne API — klucze: zakładka Portale)", "lento": " (tylko kategoria telefonów Apple)"}
         for key, name in SOURCE_NAMES.items():
-            cb = QCheckBox(name + (" (best effort — może być blokowany)" if key == "vinted" else ""))
-            cb.setChecked(s.enabled_sources.get(key, True))
+            cb = QCheckBox(name + notes.get(key, ""))
+            cb.setChecked(s.enabled_sources.get(key, REGISTRY[key].default_enabled))
             sl.addWidget(cb)
             self.source_checks[key] = cb
         self._readers.append(lambda st: setattr(st, "enabled_sources",
@@ -886,6 +891,117 @@ class SettingsDialog(QDialog):
         note.setWordWrap(True)
         note.setObjectName("muted")
         return self._page(general, howto, tg, what, quiet, note)
+
+    def _secret_edit(self, attr: str, placeholder: str) -> QLineEdit:
+        edit = QLineEdit(getattr(self.settings, attr))
+        edit.setObjectName(attr)
+        edit.setEchoMode(QLineEdit.EchoMode.Password)
+        edit.setPlaceholderText(placeholder)
+        self._readers.append(lambda st: setattr(st, attr, edit.text().strip()))
+        return edit
+
+    def _portals_tab(self) -> QWidget:
+        from ..sources.ebay import MARKETS
+
+        s = self.settings
+        allegro = QGroupBox("Allegro — oficjalne REST API (bez scrapowania, bez logowania na Twoje konto)")
+        a_form = QFormLayout(allegro)
+        a_info = QLabel(
+            "<ol><li>Wejdź na <b>apps.developer.allegro.pl</b> i zaloguj się kontem Allegro.</li>"
+            "<li>„Dodaj aplikację” → nazwa (np. <i>PhoneBot</i>), typ: <b>aplikacja działa w trybie "
+            "client_credentials / bez dostępu do przeglądarki</b> (dostęp tylko do danych publicznych).</li>"
+            "<li>Skopiuj <b>Client ID</b> i <b>Client Secret</b> poniżej i zapisz; włącz „Allegro” w zakładce "
+            "„Ogólne i pobieranie”.</li></ol>Program szuka w kategorii „Smartfony i telefony komórkowe” ze stanem "
+            "używany/uszkodzony. Allegro może ograniczać wyszukiwanie ofert dla nowych aplikacji — wtedy status "
+            "portalu pokaże „ZABLOKOWANE” z wyjaśnieniem (program tego nie obchodzi).")
+        a_info.setWordWrap(True)
+        a_info.setTextFormat(Qt.TextFormat.RichText)
+        a_form.addRow(a_info)
+        a_form.addRow("Client ID:", self._secret_edit("allegro_client_id", "Client ID aplikacji"))
+        a_form.addRow("Client Secret:", self._secret_edit("allegro_client_secret", "Client Secret aplikacji"))
+
+        ebay = QGroupBox("eBay — oficjalne Browse API (zakup na odległość)")
+        e_form = QFormLayout(ebay)
+        e_info = QLabel(
+            "<ol><li>Załóż darmowe konto na <b>developer.ebay.com</b> („Join”).</li>"
+            "<li>„Application Keys” → utwórz klucze <b>Production</b>.</li>"
+            "<li>Skopiuj <b>App ID (Client ID)</b> i <b>Cert ID (Client Secret)</b> poniżej i włącz „eBay” "
+            "w zakładce „Ogólne i pobieranie”.</li></ol>Tylko oferty z wysyłką do Polski; ceny przeliczane "
+            "kursem NBP, zawsze z kosztem wysyłki, a spoza UE — z szacunkiem VAT, cła i odprawy.")
+        e_info.setWordWrap(True)
+        e_info.setTextFormat(Qt.TextFormat.RichText)
+        e_form.addRow(e_info)
+        e_form.addRow("App ID (Client ID):", self._secret_edit("ebay_client_id", "App ID"))
+        e_form.addRow("Cert ID (Client Secret):", self._secret_edit("ebay_client_secret", "Cert ID"))
+        markets = QHBoxLayout()
+        self.ebay_market_checks: dict[str, QCheckBox] = {}
+        grid = QVBoxLayout()
+        for code, name in MARKETS.items():
+            cb = QCheckBox(name)
+            cb.setObjectName(f"ebay_market_{code}")
+            cb.setChecked(code in s.ebay_markets)
+            grid.addWidget(cb)
+            self.ebay_market_checks[code] = cb
+        markets.addLayout(grid)
+        markets.addStretch(1)
+        e_form.addRow("Rynki:", markets)
+        self._readers.append(lambda st: setattr(st, "ebay_markets", [
+            c for c, cb in self.ebay_market_checks.items() if cb.isChecked()] or ["EBAY_DE"]))
+        self._form([
+            Field("ebay_vat_pct", "VAT importowy (spoza UE)", "float", 0, 50, 1, " %"),
+            Field("ebay_duty_pct", "Cło (spoza UE)", "float", 0, 50, 0.5, " %", decimals=1,
+                  tip="Telefony komórkowe w UE: 0% (kod HS 8517.13)"),
+            Field("ebay_clearance_fee", "Opłata za odprawę celną", "float", 0, 500, 5, " zł"),
+            Field("esim_us_value_pct", "iPhone 14+ z USA (tylko eSIM): niższa cena odsprzedaży o", "float", 0, 60,
+                  1, " %"),
+        ], e_form)
+        penalty = QSpinBox(minimum=0, maximum=60)
+        penalty.setObjectName("remote_purchase_penalty")
+        penalty.setValue(int(s.flag_penalties.get("remote_purchase", 10)))
+        penalty.setSuffix(" pkt oceny")
+        e_form.addRow("Korekta „zakup na odległość”:", penalty)
+        self._readers.append(lambda st: st.flag_penalties.__setitem__("remote_purchase", penalty.value()))
+
+        ref = QGroupBox("Ceny referencyjne (sklepy z odnowionymi iPhone'ami — tylko do wyceny, nie do kupna)")
+        r_form = self._form([
+            Field("reference_enabled", "Uwzględniaj ceny referencyjne w wycenie", "bool"),
+            Field("reference_factor", "Odsprzedaż = cena sklepu ×", "pct", 10, 100, 5),
+            Field("reference_weight", "Udział ceny referencyjnej (reszta: mediana ogłoszeń)", "pct", 0, 100, 5),
+            Field("reference_max_models", "Odświeżaj codziennie modeli (najczęstszych)", "int", 1, 40),
+        ])
+        r_info = QLabel("Refurbed — pobierane raz dziennie (10 s między zapytaniami). Swappie i Back Market blokują "
+                        "automatyczne pobieranie (ochrona Cloudflare, sprawdzone) — ich ceny możesz wpisać ręcznie "
+                        "poniżej. Brak ceny referencyjnej nigdy nie blokuje wyceny (zostaje mediana ogłoszeń).")
+        r_info.setWordWrap(True)
+        r_info.setObjectName("muted")
+        r_form.addRow(r_info)
+        self.reference_map_table = EditableTable(
+            ["Sklep", "Stan w programie (new / used / damaged)"],
+            [[k, v] for k, v in s.reference_condition_map.items()])
+        r_form.addRow("Mapowanie stanu:", self.reference_map_table)
+        self.reference_manual_table = EditableTable(
+            ["Model (np. iPhone 13)", "Pamięć GB", "Cena zł (np. ze Swappie)"],
+            [[k.split("|")[0], k.split("|")[1], f"{v:.0f}"] for k, v in s.reference_manual.items() if "|" in k])
+        r_form.addRow("Ceny ręczne:", self.reference_manual_table)
+        ref.setLayout(r_form)
+
+        def read_refs(st: Settings) -> None:
+            t = self.reference_map_table.table
+            mapping = {}
+            for r in range(t.rowCount()):
+                shop, cls = (t.item(r, c).text().strip() if t.item(r, c) else "" for c in range(2))
+                if shop and cls in ("new", "used", "damaged"):
+                    mapping[shop] = cls
+            st.reference_condition_map = mapping or st.reference_condition_map
+            t = self.reference_manual_table.table
+            manual = {}
+            for r in range(t.rowCount()):
+                model, gb, price = (t.item(r, c).text().strip() if t.item(r, c) else "" for c in range(3))
+                if model and gb.isdigit() and _num(price) > 0:
+                    manual[f"{model}|{int(gb)}"] = _num(price)
+            st.reference_manual = manual
+        self._readers.append(read_refs)
+        return self._page(allegro, ebay, ref)
 
     def _phone_tab(self) -> QWidget:
         from ..web.auth import MIN_PIN_LEN

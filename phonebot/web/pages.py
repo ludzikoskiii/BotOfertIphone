@@ -114,6 +114,8 @@ def card(offer: Offer, val: Valuation) -> str:
     marks = ("⌛ " if not offer.active else "") + ("★ " if offer.status is OfferStatus.WATCHED else "")
     flags = f' · <span class="flag">⚑{len(set(val.flags))}</span>' if val.flags else ""
     portal = SOURCE_NAMES.get(offer.raw.source, offer.raw.source)
+    if offer.also_on:
+        portal += " + " + ", ".join(SOURCE_NAMES.get(src, src) for src, _, _ in offer.also_on)
     return (f'<a class="card{" out" if not offer.active else ""}" href="/oferta/{offer.id}">'
             f'<div class="row"><span class="model">{marks}{escape(_name(offer))}</span>'
             f'<span class="badge {VERDICT_CLASS[val.verdict]}">{escape(val.verdict.value)}</span></div>'
