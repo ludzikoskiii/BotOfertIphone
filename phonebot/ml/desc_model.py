@@ -23,36 +23,53 @@ from ..core.text import normalize
 TEXT_FLAGS = (RedFlag.ICLOUD_LOCK, RedFlag.IMEI_BLOCKED, RedFlag.MDM, RedFlag.REPLICA, RedFlag.SIMLOCK,
               RedFlag.NO_SIGNAL, RedFlag.NON_ORIGINAL_PARTS, RedFlag.UNTESTED)
 MAX_DESCRIPTION_CHARS = 2500
-PROMPT_VERSION = 1
+PROMPT_VERSION = 2  # zmiana promptu = opisy czytane ponownie
 
-SYSTEM_PROMPT = """Czytasz ogłoszenia sprzedaży używanych iPhone'ów (zwykle po polsku, czasem po angielsku, \
-czesku, słowacku lub niemiecku) dla osoby, która kupuje telefony, naprawia je i odsprzedaje. Wypisujesz \
-wyłącznie fakty podane wprost w tytule lub opisie. Niczego nie zgadujesz — jeśli czegoś nie ma w tekście, \
-wpisz null albo pustą listę. Odpowiadasz tylko w formacie JSON.
+SYSTEM_PROMPT = """Czytasz ogłoszenia z portali ogłoszeniowych o używanych iPhone'ach (zwykle po polsku, czasem \
+po angielsku, czesku, słowacku lub niemiecku) dla osoby, która kupuje telefony, naprawia je i odsprzedaje. \
+Odpowiadasz tylko w formacie JSON.
+
+Zasady:
+1. Wpisujesz wyłącznie to, co jest napisane wprost w tytule lub opisie. Niczego nie zgadujesz. Jeśli czegoś \
+nie ma w tekście — null albo pusta lista.
+2. Zaprzeczenie oznacza BRAK usterki lub blokady: „ekran cały”, „bez rys”, „Face ID działa”, „wszystko działa”, \
+„bez blokad”, „bez simlocka”, „nie był naprawiany” — takich rzeczy nie wpisujesz.
+3. Rysy, otarcia i ślady użytkowania to nie usterka. Część już wymieniona na sprawną (np. „bateria wymieniona \
+w serwisie”) to nie usterka.
+4. Przy każdej usterce i każdej fladze podajesz „quote”: dokładny fragment ogłoszenia (kilka słów, słowo \
+w słowo), z którego to wynika.
 
 Pola:
-- is_phone: true, jeśli sprzedawany jest sam telefon (także uszkodzony albo na części). false, jeśli \
-przedmiotem jest tylko akcesorium (etui, szkło, ładowarka, kabel), puste pudełko, część zamienna, \
-albo jest to ogłoszenie kupna lub zamiany.
-- storage_gb: pamięć telefonu w GB podana w ogłoszeniu (np. 64, 128, 256, 512; 1 TB = 1024) albo null.
-- battery_health: kondycja (pojemność) baterii w procentach podana w ogłoszeniu, np. „bateria 87%”, \
-„kondycja 90”, „battery health 85%”. To nie jest poziom naładowania. Jeśli nie podano — null.
-- for_parts: true tylko wtedy, gdy ogłoszenie mówi wprost, że telefon jest na części.
-- defects: usterki, które telefon RZECZYWIŚCIE ma według ogłoszenia. Nie wpisuj usterek, którym sprzedający \
-zaprzecza („ekran cały”, „Face ID działa”, „bez rys”), ani części już wymienionych na sprawne. Kody: \
-screen (wyświetlacz, szyba, dotyk), back_glass (tylna szyba), battery (bateria słaba, poniżej 80%, komunikat \
-serwisowy), charging_port, camera, camera_lens (szkiełko aparatu), face_id, speaker, microphone, buttons, \
-housing (wgniecenia, wygięcia), no_power (nie włącza się, bootloop), water_damage (zalany).
-- red_flags: sygnały ryzyka dla kupującego: icloud_lock (blokada iCloud lub aktywacji, nieznane hasło Apple ID), \
-imei_blocked (zablokowany IMEI, czarna lista, kradziony), mdm (profil firmowy), replica (podróbka), simlock, \
-no_signal (brak zasięgu), non_original_parts (zamienniki, nieoryginalny ekran lub bateria, komunikat \
-o nieznanej części), untested („nie sprawdzałem”, „sprzedaję jak jest”).
-- note: jedno krótkie zdanie po polsku — najważniejsza informacja dla kupującego (np. „Ekran wymieniony \
-na zamiennik, bateria 79%.”) albo pusty tekst."""
+- is_phone: true, jeśli ktoś SPRZEDAJE telefon (także uszkodzony albo na części). false, jeśli to ogłoszenie \
+kupna („kupię”, „skup”), zamiany („zamienię”) albo sprzedawane jest tylko akcesorium (etui, szkło, ładowarka), \
+puste pudełko lub część zamienna.
+- storage_gb: pamięć telefonu w GB, jeśli jest podana (1 TB = 1024), inaczej null.
+- battery_health: kondycja (pojemność) baterii w procentach, jeśli jest podana, np. „bateria 87%”, \
+„kondycja 90”. To nie jest poziom naładowania. Inaczej null.
+- for_parts: true tylko wtedy, gdy ogłoszenie mówi wprost, że telefon jest „na części”.
+- defects: usterki, które telefon ma według ogłoszenia. Kody: screen (zbity lub uszkodzony wyświetlacz, \
+szyba, dotyk), back_glass (pęknięta tylna szyba), battery (bateria słaba, poniżej 80% albo komunikat \
+serwisowy), charging_port (nie ładuje, gniazdo), camera, camera_lens (pęknięte szkiełko aparatu), face_id \
+(Face ID nie działa), speaker, microphone, buttons, housing (wgniecenia, wygięta obudowa), no_power (nie \
+włącza się, bootloop), water_damage (zalany).
+- red_flags: icloud_lock (blokada iCloud lub aktywacji, nieznane hasło Apple ID), imei_blocked (zablokowany \
+IMEI, czarna lista), mdm (profil firmowy MDM), replica (podróbka), simlock (telefon z simlockiem), no_signal \
+(brak zasięgu), non_original_parts (nieoryginalna część albo komunikat o nieznanej części), untested \
+(„nie sprawdzałem”, „sprzedaję jak jest”, stan nieznany).
+- note: jedno krótkie zdanie po polsku: najważniejsza informacja dla kupującego, tylko z faktów z ogłoszenia. \
+Może być pusty tekst."""
 
 
 def _nullable_int() -> dict[str, Any]:
     return {"anyOf": [{"type": "integer"}, {"type": "null"}]}
+
+
+def _evidence(codes: list[str]) -> dict[str, Any]:
+    return {"type": "array", "items": {
+        "type": "object",
+        "properties": {"code": {"type": "string", "enum": codes}, "quote": {"type": "string"}},
+        "required": ["code", "quote"],
+    }}
 
 
 SCHEMA: dict[str, Any] = {
@@ -62,12 +79,20 @@ SCHEMA: dict[str, Any] = {
         "storage_gb": _nullable_int(),
         "battery_health": _nullable_int(),
         "for_parts": {"type": "boolean"},
-        "defects": {"type": "array", "items": {"type": "string", "enum": [d.value for d in Defect]}},
-        "red_flags": {"type": "array", "items": {"type": "string", "enum": [f.value for f in TEXT_FLAGS]}},
+        "defects": _evidence([d.value for d in Defect]),
+        "red_flags": _evidence([f.value for f in TEXT_FLAGS]),
         "note": {"type": "string"},
     },
     "required": ["is_phone", "storage_gb", "battery_health", "for_parts", "defects", "red_flags", "note"],
 }
+
+# Cytat, który mówi, że wszystko jest w porządku, nie może być dowodem usterki ani blokady.
+_HEALTHY = re.compile(r"\b(caly|cala|cale|dziala|dzialaja|sprawn\w*|idealn\w*|bez rys\w*|bez uszkodzen|"
+                      r"bez wad|oryginaln\w*|nie byl\w* naprawian\w*|works|working|perfect|no damage)\b")
+_DAMAGED = re.compile(r"\b(nie dziala\w*|niesprawn\w*|nie laduje|nie wlacza|uszkodz\w*|zbit\w*|pekni\w*|peka\w*|"
+                      r"rozbit\w*|zalan\w*|trzeszcz\w*|nie trzyma|slab\w*|wymiany|do wymiany|zamiennik\w*|"
+                      r"nieoryginaln\w*|broken|cracked|not working|dead)\b")
+_ABSENT = re.compile(r"^(bez|brak|nie ma)\b|\b(bez|brak) (blokad|simlock|icloud|mdm)")
 
 
 @dataclass
@@ -153,11 +178,37 @@ def validate(data: dict[str, Any], *, title: str, description: str, phone_model:
         else:
             out.rejected.append("„na części” bez takiego sformułowania w tekście")
 
-    out.defects = list(dict.fromkeys(Defect(d) for d in data.get("defects", []) if d in Defect._value2member_map_))
-    known = {f.value for f in TEXT_FLAGS}
-    out.flags = list(dict.fromkeys(RedFlag(f) for f in data.get("red_flags", []) if f in known))
+    out.defects = [Defect(c) for c in _supported(data.get("defects"), {d.value for d in Defect}, text, out, flag=False)]
+    out.flags = [RedFlag(c) for c in _supported(data.get("red_flags"), {f.value for f in TEXT_FLAGS}, text, out,
+                                                 flag=True)]
     out.note = " ".join(str(data.get("note") or "").split())[:200]
     return out
+
+
+def _flat(text: str) -> str:
+    return re.sub(r"\s+", " ", normalize(text).replace("|", " ")).strip(" .,;:!")
+
+
+def _supported(items: Any, known: set[str], text: str, out: DescFindings, *, flag: bool) -> list[str]:
+    """Kody usterek/flag, które mają dowód: cytat z ogłoszenia, który nie jest zaprzeczeniem."""
+    codes: list[str] = []
+    for item in items or []:
+        code, quote = (item.get("code"), item.get("quote")) if isinstance(item, dict) else (item, None)
+        if code not in known or code in codes:
+            continue
+        if quote is not None:  # odpowiedź z cytatem (prompt v2) — sprawdź dowód
+            q = _flat(str(quote))
+            if len(q) < 3 or q not in _flat(text):
+                out.rejected.append(f"{code}: cytatu „{quote}” nie ma w ogłoszeniu")
+                continue
+            if flag and _ABSENT.search(q):
+                out.rejected.append(f"{code}: „{quote}” mówi, że blokady nie ma")
+                continue
+            if not flag and _HEALTHY.search(q) and not _DAMAGED.search(q):
+                out.rejected.append(f"{code}: „{quote}” mówi, że wszystko działa")
+                continue
+        codes.append(code)
+    return codes
 
 
 def apply_to_offer(offer: Offer, *, enabled: bool = True, battery_threshold: int = 80) -> None:
@@ -195,7 +246,9 @@ def apply_to_offer(offer: Offer, *, enabled: bool = True, battery_threshold: int
     offer.ai_note = f.note
 
 
-def analyze(client, model: str, *, title: str, description: str, phone_model: str | None) -> DescFindings:
+def analyze(client, model: str, *, title: str, description: str, phone_model: str | None,
+            think: bool = False) -> DescFindings:
     """Jedno zapytanie do Ollamy (``client`` = ``OllamaClient``) i sprawdzenie wyniku."""
-    data = client.chat_json(model, SYSTEM_PROMPT, build_user_prompt(title, description, phone_model), SCHEMA)
+    data = client.chat_json(model, SYSTEM_PROMPT, build_user_prompt(title, description, phone_model), SCHEMA,
+                            think=think)
     return validate(data, title=title, description=description, phone_model=phone_model)

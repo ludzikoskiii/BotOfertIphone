@@ -189,6 +189,9 @@ AI_TEXT = [
 AI_LLM = [
     Field("ml.llm_enabled", "Czytaj opisy ofert „DO WERYFIKACJI” lokalnym modelem (Ollama)", "bool",
           tip="Wyciąga z opisu pamięć, kondycję baterii, usterki, blokady i „na części”. Każdy opis raz."),
+    Field("ml.llm_think", "Tryb „myślenia” modelu (dokładniej, kilka razy wolniej)", "bool",
+          tip="Qwen3 najpierw analizuje ogłoszenie, potem odpowiada. Na RTX 3060 Ti ok. 10–20 s na opis "
+              "zamiast kilku — czytane są tylko oferty DO WERYFIKACJI, więc zwykle to nie przeszkadza."),
     Field("ml.llm_fetch_pages", "Pobieraj opis ze strony oferty, gdy wyniki wyszukiwania go nie mają", "bool",
           tip="Vinted i Sprzedajemy.pl nie podają opisu w wynikach. Jedno zapytanie na ofertę DO WERYFIKACJI, "
               "w tym samym limicie zapytań co wyszukiwanie; blokada portalu wstrzymuje pobieranie."),

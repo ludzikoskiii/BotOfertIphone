@@ -41,40 +41,60 @@ CASES = [
      {"is_phone": True, "storage_gb": 1024, "battery_health": 91, "defects": set()}),
     ("iPhone 15", "Ekran cały, bez rys. Face ID działa. Tylna szyba pęknięta.", "iPhone 15",
      {"is_phone": True, "defects": {Defect.BACK_GLASS}}),
+    # — dodatkowe przypadki (nie służyły do dopracowania promptu) —
+    ("iPhone 12 mini 64GB", "Bateria 84%, wymieniona w serwisie Apple. Drobne rysy na obudowie. Wszystko działa.",
+     "iPhone 12 mini", {"is_phone": True, "battery_health": 84, "defects": set(), "flags": set()}),
+    ("iPhone 11 Pro", "Telefon firmowy z profilem MDM, nie da się usunąć. Poza tym działa bez zarzutu.", "iPhone 11 Pro",
+     {"is_phone": True, "flags": {RedFlag.MDM}, "defects": set()}),
+    ("iPhone 13", "Nie ładuje, gniazdo do wymiany. Głośnik trzeszczy. Ekran i obudowa w dobrym stanie.", "iPhone 13",
+     {"is_phone": True, "defects": {Defect.CHARGING_PORT, Defect.SPEAKER}}),
+    ("iPhone X 256GB", "Face ID działa, True Tone działa. Bateria nieoryginalna, telefon pokazuje komunikat "
+     "o nieznanej części.", "iPhone X", {"is_phone": True, "storage_gb": 256, "flags": {RedFlag.NON_ORIGINAL_PARTS}}),
+    ("Pudełko iPhone 13 Pro", "Samo pudełko po iPhone 13 Pro, bez telefonu. Stan idealny.", "iPhone 13 Pro",
+     {"is_phone": False}),
+    ("iPhone 14 Pro", "Zamienię iPhone 14 Pro na Samsunga S23 Ultra, bez dopłat.", "iPhone 14 Pro",
+     {"is_phone": False}),
 ]
 
 
 def main() -> int:
-    ok_fields = total_fields = 0
-    times = []
-    with OllamaClient(os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434"), timeout_s=600) as client:
+    with OllamaClient(os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434"), timeout_s=900) as client:
         status = client.status()
         print(f"Ollama {status.version}, modele: {status.models}", flush=True)
         if not status.has_model(MODEL):
             print(f"BRAK MODELU {MODEL}")
             return 1
-        for title, desc, phone, expected in CASES:
-            t = time.perf_counter()
-            found = analyze(client, MODEL, title=title, description=desc, phone_model=phone)
-            times.append(time.perf_counter() - t)
-            got = {"is_phone": found.is_phone, "storage_gb": found.storage_gb, "battery_health": found.battery_health,
-                   "for_parts": found.for_parts, "defects": set(found.defects), "flags": set(found.flags)}
-            marks = []
-            for key, want in expected.items():
-                total_fields += 1
-                good = got[key] == want
-                ok_fields += good
-                marks.append(f"{'✔' if good else '✖'} {key}={_fmt(got[key])}" + ("" if good else f" (oczekiwano {_fmt(want)})"))
-            print(f"\n[{times[-1]:5.1f} s] {title}: {desc[:70]}…", flush=True)
-            print("   " + " | ".join(marks))
-            if found.note:
-                print(f"   uwaga: {found.note}")
-            if found.rejected:
-                print(f"   odrzucone przez program: {found.rejected}")
-    print(f"\nZGODNOŚĆ PÓL: {ok_fields}/{total_fields} = {ok_fields / total_fields:.0%}")
-    print(f"CZAS na opis (CPU serwera CI, pierwszy z wczytaniem modelu): {times[0]:.1f} s, potem mediana "
-          f"{sorted(times[1:])[len(times[1:]) // 2]:.1f} s")
+        results = [run(client, think) for think in (False, True)]
+    for think, (ok, total, times) in zip((False, True), results, strict=True):
+        print(f"PODSUMOWANIE {'z myśleniem ' if think else 'bez myślenia'}: zgodność pól {ok}/{total} = "
+              f"{ok / total:.0%}, czas na opis (CPU serwera CI): mediana {sorted(times)[len(times) // 2]:.1f} s")
     return 0
+
+
+def run(client, think: bool) -> tuple[int, int, list[float]]:
+    print(f"\n========== TRYB: {'z myśleniem' if think else 'bez myślenia'} ==========", flush=True)
+    ok_fields = total_fields = 0
+    times = []
+    for title, desc, phone, expected in CASES:
+        t = time.perf_counter()
+        found = analyze(client, MODEL, title=title, description=desc, phone_model=phone, think=think)
+        times.append(time.perf_counter() - t)
+        got = {"is_phone": found.is_phone, "storage_gb": found.storage_gb, "battery_health": found.battery_health,
+               "for_parts": found.for_parts, "defects": set(found.defects), "flags": set(found.flags)}
+        marks = []
+        for key, want in expected.items():
+            total_fields += 1
+            good = got[key] == want
+            ok_fields += good
+            marks.append(f"{'✔' if good else '✖'} {key}={_fmt(got[key])}" + ("" if good else f" (oczekiwano {_fmt(want)})"))
+        print(f"\n[{times[-1]:5.1f} s] {title}: {desc[:70]}…", flush=True)
+        print("   " + " | ".join(marks))
+        if found.note:
+            print(f"   uwaga: {found.note}")
+        if found.rejected:
+            print(f"   odrzucone przez program: {found.rejected}")
+    print(f"\nZGODNOŚĆ PÓL: {ok_fields}/{total_fields} = {ok_fields / total_fields:.0%}", flush=True)
+    return ok_fields, total_fields, times[1:] if not think else times
 
 
 def _fmt(value) -> str:

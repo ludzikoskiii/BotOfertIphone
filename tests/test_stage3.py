@@ -313,7 +313,7 @@ class FakeOllama:
     def __init__(self, answer=None, exc=None):
         self.answer, self.exc, self.calls = answer or {"is_phone": True}, exc, []
 
-    def chat_json(self, model, system, user, schema):
+    def chat_json(self, model, system, user, schema, **kw):
         self.calls.append(user)
         if self.exc:
             raise self.exc
@@ -602,3 +602,20 @@ def test_polish_plural_in_status_messages():
 
     assert [plural(n, "opis", "opisy", "opisów") for n in (1, 2, 5, 12, 22, 104)] == \
         ["1 opis", "2 opisy", "5 opisów", "12 opisów", "22 opisy", "104 opisy"]
+
+
+def test_defects_and_flags_need_a_quote_from_the_listing():
+    title = "iPhone 15"
+    desc = "Ekran cały, bez rys. Face ID działa. Tylna szyba pęknięta. Bez blokad iCloud. Sprzedaję jak jest."
+    answer = {"defects": [{"code": "screen", "quote": "Ekran cały"},
+                          {"code": "back_glass", "quote": "tylna szyba pęknięta."},
+                          {"code": "face_id", "quote": "Face ID działa"},
+                          {"code": "camera", "quote": "aparat nie działa"}],
+              "red_flags": [{"code": "icloud_lock", "quote": "Bez blokad iCloud"},
+                            {"code": "untested", "quote": "Sprzedaję jak jest"}]}
+    found = validate(answer, title=title, description=desc, phone_model="iPhone 15")
+    assert found.defects == [Defect.BACK_GLASS] and found.flags == [RedFlag.UNTESTED]
+    assert len(found.rejected) == 4  # zaprzeczenia i cytat, którego nie ma w ogłoszeniu
+    damaged = validate({"defects": [{"code": "screen", "quote": "Zbity ekran, dotyk działa"}]},
+                       title="iPhone 11", description="Zbity ekran, dotyk działa.", phone_model="iPhone 11")
+    assert damaged.defects == [Defect.SCREEN]  # „działa” obok uszkodzenia nie przeczy usterce

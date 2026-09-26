@@ -122,6 +122,7 @@ class MlConfig:
     llm_url: str = "http://127.0.0.1:11434"
     llm_model: str = "qwen3:8b"
     llm_fetch_pages: bool = True  # opis ze strony oferty, gdy wyniki wyszukiwania go nie mają
+    llm_think: bool = False  # tryb „myślenia” (Qwen3): dokładniej, ale kilka razy wolniej
 
 
 @dataclass

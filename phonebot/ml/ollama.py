@@ -100,19 +100,22 @@ class OllamaClient:
 
     # ------------------------------------------------------------ czat ---
 
-    def chat_json(self, model: str, system: str, user: str, schema: dict[str, Any], *,
+    def chat_json(self, model: str, system: str, user: str, schema: dict[str, Any], *, think: bool = False,
                   options: dict[str, Any] | None = None, keep_alive: str = "5m") -> dict[str, Any]:
-        """Jedna odpowiedź modelu w formacie JSON zgodnym ze schematem (bez „myślenia” — szybciej)."""
+        """Jedna odpowiedź modelu w formacie JSON zgodnym ze schematem.
+
+        ``think`` — tryb „myślenia” (Qwen3): dokładniej, ale kilka razy wolniej."""
         body: dict[str, Any] = {
             "model": model,
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
             "stream": False,
             "format": schema,
-            "options": {"temperature": 0, "num_ctx": 4096, "num_predict": 512, **(options or {})},
+            "options": {"temperature": 0, "num_ctx": 8192 if think else 4096,
+                        "num_predict": 4096 if think else 768, **(options or {})},
             "keep_alive": keep_alive,
         }
         if self._think_supported:
-            body["think"] = False  # Qwen3: bez etapu „myślenia” (kilka razy szybciej, wynik ten sam)
+            body["think"] = think
         r = self._post("/api/chat", body)
         if r.status_code == 400 and "think" in r.text.lower() and "think" in body:
             # starsza Ollama albo model bez trybu myślenia — zapytanie bez tego pola

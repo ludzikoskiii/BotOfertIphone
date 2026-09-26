@@ -277,7 +277,7 @@ class AiService:
                 else:
                     try:
                         findings = analyze(client, cfg.llm_model, title=job.title, description=description,
-                                           phone_model=job.phone_model)
+                                           phone_model=job.phone_model, think=cfg.llm_think)
                     except (OllamaNotRunning, OllamaModelMissing):
                         raise
                     except OllamaError as e:
