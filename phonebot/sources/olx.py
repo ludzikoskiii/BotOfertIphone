@@ -15,8 +15,8 @@ from selectolax.parser import HTMLParser
 
 from ..core.models import RawOffer
 from ..core.settings import Settings
-from ..net.http import HttpClient, HttpError
-from .base import SearchQuery, SourceAdapter, SourceError, register
+from ..net.http import HttpClient
+from .base import SearchQuery, SourceAdapter, SourceFormatChanged, register, search_all_phrases
 
 log = logging.getLogger(__name__)
 
@@ -151,26 +151,17 @@ class OlxAdapter(SourceAdapter):
         return params
 
     async def search(self, query: SearchQuery) -> list[RawOffer]:
-        results: dict[str, RawOffer] = {}
-        errors: list[str] = []
-        for phrase in query.phrases:
-            try:
-                await self._search_phrase(phrase, query, results)
-            except HttpError as e:
-                errors.append(f"„{phrase}”: {e}")
-                if e.status in (None, 403):
-                    break  # host nieosiągalny lub blokada — nie męczymy go kolejnymi frazami
-        if errors and not results:
-            raise SourceError("; ".join(errors))
-        if errors:
-            log.warning("OLX: część fraz nie powiodła się: %s", "; ".join(errors))
-        return list(results.values())
+        # blokada / brak sieci / zmiana formatu przerywa kolejne frazy (nie męczymy serwisu)
+        return await search_all_phrases(query.phrases, lambda p, out: self._search_phrase(p, query, out))
 
     async def _search_phrase(self, phrase: str, query: SearchQuery, out: dict[str, RawOffer]) -> None:
         url: str | None = API_URL
         params: dict[str, Any] | None = self._params(phrase, query)
         for page in range(query.max_pages):
-            payload = await self.http.get_json(url, params=params)  # type: ignore[arg-type]
+            payload = await self.http.get_json(url, params=params,  # type: ignore[arg-type]
+                                               headers={"Accept": "application/json"})
+            if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
+                raise SourceFormatChanged("odpowiedź OLX nie zawiera listy ofert (brak pola „data”) — zmiana API")
             offers, next_href = parse_page(payload)
             for o in offers:
                 out.setdefault(o.source_id, o)

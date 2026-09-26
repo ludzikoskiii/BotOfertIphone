@@ -12,7 +12,7 @@ import sqlite3
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from ..core.filters import listing_rejection_reason
 from ..core.models import RawOffer
@@ -75,7 +75,21 @@ class Scanner:
         self._adapter_factory = adapter_factory or default_adapters
         self._http_factory = http_factory or (lambda: HttpClient(limiter, cache))
 
-    async def run(self, progress: Progress | None = None) -> ScanReport:
+    def _cooldowns(self) -> dict[str, datetime]:
+        """Portale zablokowane niedawno → do kiedy automat ma ich nie odpytywać."""
+        until: dict[str, datetime] = {}
+        minutes = self.settings.blocked_cooldown_minutes
+        if minutes <= 0:
+            return until
+        for key, row in FetchRunRepository(self.conn).latest_by_source().items():
+            if row["status"] == "blocked" and row["finished_at"]:
+                end = datetime.fromisoformat(row["finished_at"]) + timedelta(minutes=minutes)
+                if end > utcnow():
+                    until[key] = end
+        return until
+
+    async def run(self, progress: Progress | None = None, *, force: bool = False) -> ScanReport:
+        """``force=True`` (ręczne „Odśwież”) pomija pauzę po blokadzie."""
         progress = progress or (lambda _msg: None)
         s = self.settings
         query = SearchQuery(
@@ -89,8 +103,15 @@ class Scanner:
         report.first_scan = self.conn.execute("SELECT COUNT(*) FROM offers").fetchone()[0] == 0
         async with self._http_factory() as http:
             adapters = self._adapter_factory(http, s)
+            paused = {} if force else self._cooldowns()
+            for a in [a for a in adapters if a.key in paused]:
+                until = paused[a.key].astimezone()
+                report.sources.append(SourceReport(
+                    a.key, a.display_name, kind="blocked",
+                    error=f"portal zablokował pobieranie — pauza do {until:%H:%M} (ręczne „Odśwież” pomija pauzę)"))
+            adapters = [a for a in adapters if a.key not in paused]
             if not adapters:
-                progress("Brak włączonych portali.")
+                progress("Brak portali do odpytania." if report.sources else "Brak włączonych portali.")
                 return report
             progress("Pobieranie: " + ", ".join(a.display_name for a in adapters))
             results = await asyncio.gather(*(self._run_adapter(a, query, progress) for a in adapters))

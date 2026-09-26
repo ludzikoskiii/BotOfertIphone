@@ -129,6 +129,7 @@ class Settings:
     )
     request_delay_s: float = 4.0
     source_timeout_s: float = 180.0  # maks. czas pobierania z jednego portalu
+    blocked_cooldown_minutes: int = 180  # po blokadzie portalu automat nie odpytuje go przez tyle minut
     offer_stale_days: int = 7  # ukryj oferty niewidziane od tylu dni
     olx_category_id: int = 0  # 0 = bez filtra kategorii
     max_pages_per_query: int = 3

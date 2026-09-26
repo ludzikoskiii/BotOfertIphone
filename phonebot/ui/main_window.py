@@ -12,15 +12,19 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QComboBox,
+    QDialog,
     QDockWidget,
     QHeaderView,
     QLabel,
     QMainWindow,
     QMenu,
+    QPlainTextEdit,
+    QPushButton,
     QStackedWidget,
     QSystemTrayIcon,
     QTableView,
     QToolBar,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -30,7 +34,8 @@ from ..net.http import HostRateLimiter, ResponseCache
 from ..paths import thumbnails_dir
 from ..services.evaluator import Evaluator
 from ..services.scanner import ScanReport
-from ..storage.repositories import OfferRepository, PartsRepository, SettingsRepository
+from ..sources import SOURCE_NAMES
+from ..storage.repositories import FetchRunRepository, OfferRepository, PartsRepository, SettingsRepository
 from .filters_panel import FiltersPanel
 from .icons import app_icon
 from .images import THUMB_SIZE, ThumbnailCache
@@ -38,9 +43,10 @@ from .location_dialog import LocationDialog
 from .offer_details import PHOTO_SIZE, OfferDetailsDialog
 from .parts_editor import PartsEditor
 from .settings_dialog import SettingsDialog
+from .source_status import SourceStatusBar
 from .table_model import SORT_ROLE, Col, OffersTableModel
 from .theme import COLOR_LABEL, ROW_BACKGROUND
-from .workers import ScanWorker, start_in_thread
+from .workers import FuncWorker, ScanWorker, start_in_thread
 
 log = logging.getLogger(__name__)
 
@@ -98,6 +104,7 @@ class MainWindow(QMainWindow):
         self._build_toolbar()
         self._build_table()
         self._build_filters()
+        self._build_source_status()
         self._status = QLabel("Gotowy.")
         self.statusBar().addWidget(self._status, 1)
         self.auto_label = QLabel()
@@ -106,6 +113,7 @@ class MainWindow(QMainWindow):
         self.refresh_timer = QTimer(self)
         self.refresh_timer.timeout.connect(self._auto_refresh)
         self._configure_timer()
+        self.refresh_source_status()
         self.reload()
 
     # ---------------------------------------------------------------- UI ---
@@ -126,7 +134,7 @@ class MainWindow(QMainWindow):
 
         self.refresh_action = QAction("⟳ Odśwież oferty", self)
         self.refresh_action.setShortcut("F5")
-        self.refresh_action.triggered.connect(self.start_scan)
+        self.refresh_action.triggered.connect(lambda: self.start_scan(force=True))
         tb.addAction(self.refresh_action)
         tb.addSeparator()
 
@@ -194,6 +202,76 @@ class MainWindow(QMainWindow):
         self.stack.addWidget(self.empty_label)
         self.setCentralWidget(self.stack)
 
+    def _build_source_status(self) -> None:
+        self.addToolBarBreak()
+        tb = QToolBar("Źródła", self)
+        tb.setMovable(False)
+        self.source_status = SourceStatusBar(SOURCE_NAMES, self)
+        self.source_status.diagnose_requested.connect(self.run_diagnosis)
+        tb.addWidget(self.source_status)
+        self.addToolBar(tb)
+        self.refresh_source_status()
+
+    def refresh_source_status(self) -> None:
+        """Status źródeł z ostatnich przebiegów zapisanych w bazie."""
+        runs = FetchRunRepository(self.conn).latest_by_source()
+        for key, name in SOURCE_NAMES.items():
+            if not self.settings.enabled_sources.get(key, True):
+                self.source_status.set_status(key, name, "disabled")
+                continue
+            row = runs.get(key)
+            if row is None:
+                self.source_status.set_status(key, name, "never")
+                continue
+            when = datetime.fromisoformat(row["finished_at"]) if row["finished_at"] else None
+            self.source_status.set_status(key, name, row["status"], found=row["offers_found"],
+                                          error=row["error"], when=when)
+
+    def run_diagnosis(self) -> None:
+        """Diagnostyka źródeł w tle; raport w oknie i w pliku diagnostyka.txt."""
+        if getattr(self, "_diag_worker", None) is not None:
+            return
+        import asyncio
+
+        from ..diagnose import diagnose, format_report
+        from ..paths import data_dir
+
+        settings = self.settings
+        self._status.setText("Diagnostyka źródeł… (ok. 30–60 s)")
+
+        def job() -> str:
+            report = format_report(asyncio.run(diagnose(settings)))
+            (data_dir() / "diagnostyka.txt").write_text(report, encoding="utf-8")
+            return report
+
+        worker = FuncWorker(job)
+        worker.finished.connect(self._show_diagnosis)
+        worker.failed.connect(lambda msg: self._status.setText(f"Diagnostyka nie powiodła się: {msg}"))
+        self._diag_worker = worker
+        thread = start_in_thread(worker, self)
+        thread.finished.connect(lambda: setattr(self, "_diag_worker", None))
+
+    def _show_diagnosis(self, report: str) -> None:
+        from ..paths import data_dir
+
+        self._status.setText(f"Diagnostyka zapisana: {data_dir() / 'diagnostyka.txt'}")
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Diagnostyka źródeł")
+        dialog.resize(1000, 700)
+        text = QPlainTextEdit(report)
+        text.setReadOnly(True)
+        text.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        close = QPushButton("Zamknij")
+        close.clicked.connect(dialog.accept)
+        lay = QVBoxLayout(dialog)
+        lay.addWidget(QLabel(f"Raport zapisany w: {data_dir() / 'diagnostyka.txt'} — "
+                             "prześlij go, jeśli któreś źródło nie działa."))
+        lay.addWidget(text)
+        lay.addWidget(close)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        dialog.show()
+        self.last_diagnosis = report
+
     def _build_tray(self) -> None:
         self.tray: QSystemTrayIcon | None = None
         if not QSystemTrayIcon.isSystemTrayAvailable():
@@ -202,7 +280,7 @@ class MainWindow(QMainWindow):
         tray.setToolTip("PhoneBot")
         menu = QMenu(self)
         menu.addAction("Pokaż okno", self.show_from_tray)
-        menu.addAction("Odśwież teraz", self.start_scan)
+        menu.addAction("Odśwież teraz", lambda: self.start_scan(force=True))
         menu.addSeparator()
         menu.addAction("Zakończ", self.quit_app)
         tray.setContextMenu(menu)
@@ -246,7 +324,7 @@ class MainWindow(QMainWindow):
     def _auto_refresh(self) -> None:
         self._next_refresh = datetime.now() + timedelta(minutes=self.settings.refresh_minutes)
         self._update_auto_label()
-        self.start_scan()
+        self.start_scan(force=False)  # automat respektuje pauzę po blokadzie portalu
 
     def _build_filters(self) -> None:
         self.filters = FiltersPanel(self.settings.view_filter, self.settings.location_name, self)
@@ -289,6 +367,7 @@ class MainWindow(QMainWindow):
         self.settings_repo.save(settings)
         self.limiter.delay_s = settings.request_delay_s
         self._configure_timer()
+        self.refresh_source_status()
         self.filters.set_location_name(settings.location_name)
         self.mode_combo.blockSignals(True)
         self.mode_combo.setCurrentIndex(self.mode_combo.findData(settings.mode))
@@ -333,12 +412,12 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------- pobieranie ---
 
-    def start_scan(self) -> None:
+    def start_scan(self, force: bool = True) -> None:
         if self._thread is not None:
             return
         self.refresh_action.setEnabled(False)
         self._status.setText("Pobieranie ofert…")
-        worker = ScanWorker(self.db_path, self.settings, self.limiter, self.cache)
+        worker = ScanWorker(self.db_path, self.settings, self.limiter, self.cache, force=force)
         worker.progress.connect(self._status.setText)
         worker.finished.connect(self._scan_finished)
         worker.failed.connect(self._scan_failed)
@@ -348,9 +427,15 @@ class MainWindow(QMainWindow):
 
     def _scan_finished(self, report: ScanReport) -> None:
         errors = [f"{s.name}: {s.error}" for s in report.sources if s.error]
+        labels = {"blocked": "ZABLOKOWANE", "changed": "ZMIANA FORMATU", "network": "BRAK POŁĄCZENIA",
+                  "timeout": "ZA DŁUGO", "empty": "BRAK OFERT"}
         summary = "; ".join(
-            f"{s.name}: {s.saved} ofert ({s.new} nowych)" if s.ok else f"{s.name}: BŁĄD" for s in report.sources
+            f"{s.name}: {s.saved} ofert ({s.new} nowych)" if s.ok and s.kind == "ok"
+            else f"{s.name}: {labels.get(s.kind, 'BŁĄD')}" for s in report.sources
         )
+        now = datetime.now().astimezone()
+        for s in report.sources:
+            self.source_status.set_status(s.key, s.name, s.kind, found=s.saved, error=s.error, when=now)
         post = getattr(report, "post", None)
         if post is not None:
             if post.ai_analyzed:

@@ -11,13 +11,13 @@ from PySide6.QtGui import QBrush, QColor, QFont
 
 from ..core.catalog import format_storage
 from ..core.models import Offer, OfferStatus, Severity, Valuation, Verdict
+from ..sources import SOURCE_NAMES
 from .images import ThumbnailCache
 from .theme import FLAG_MARK, ROW_BACKGROUND, VERDICT_COLOR, WATCHED_MARK
 
 SORT_ROLE = Qt.ItemDataRole.UserRole + 1
 OFFER_ROLE = Qt.ItemDataRole.UserRole + 2
 
-SOURCE_NAMES = {"olx": "OLX", "allegro_lokalnie": "Allegro Lokalnie", "vinted": "Vinted"}
 _VERDICT_ORDER = {Verdict.BUY: 2, Verdict.NEGOTIATE: 1, Verdict.SKIP: 0}
 _NO_VALUE = float("-inf")
 

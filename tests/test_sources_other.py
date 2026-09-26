@@ -9,7 +9,7 @@ from phonebot.core.models import Mode
 from phonebot.core.settings import Settings
 from phonebot.net.http import HostRateLimiter, HttpClient
 from phonebot.sources.allegro_lokalnie import AllegroLokalnieAdapter
-from phonebot.sources.base import SearchQuery, SourceError
+from phonebot.sources.base import SearchQuery, SourceBlocked, SourceError, SourceFormatChanged
 from phonebot.sources.extract import offers_from_html, parse_price
 from phonebot.sources.vinted import VintedAdapter, parse_item
 
@@ -82,40 +82,108 @@ def test_allegro_lokalnie_changed_layout_is_reported():
         run(go())
 
 
-def test_vinted_parse_item():
+VINTED_NEW = json.loads((FIX / "vinted_svc_catalogue.json").read_text(encoding="utf-8"))
+
+
+def test_vinted_parse_item_new_format():
+    raw = parse_item(VINTED_NEW["items"][0])
+    assert raw.source == "vinted" and raw.price == 1450 and raw.currency == "PLN"
+    assert raw.url == "https://www.vinted.pl/items/10090626301-iphone-13-128-gb"  # link względny → pełny
+    assert raw.params == {"condition": "used", "buyer_fee": "75.40"}  # opłata z pola service_fee
+    assert raw.photos == ["https://images1.vinted.net/t/1/310x430.webp"]
+    assert raw.shipping_available is True
+    assert parse_item(VINTED_NEW["items"][2]).currency == "USD"
+
+
+def test_vinted_parse_item_old_format_still_supported():
     raw = parse_item(VINTED["items"][0])
-    assert raw.source == "vinted" and raw.price == 1450 and raw.shipping_available is True
-    assert raw.params == {"condition": "used", "buyer_fee": "75.00"}
-    assert raw.photos == ["https://images1.vinted.net/t/01.jpeg"]
-    old_format = parse_item(VINTED["items"][1])
-    assert old_format.price == 700
-    assert parse_item(VINTED["items"][2]) is None  # EUR
+    assert raw.price == 1450 and raw.params == {"condition": "used", "buyer_fee": "75.00"}
+    assert parse_item(VINTED["items"][1]).price == 700
+    assert parse_item(VINTED["items"][2]).currency == "EUR"
 
 
-def test_vinted_adapter_gets_session_cookie_first():
+def vinted_handler(calls, *, catalogue=None, legacy_status=404, api_status=200, token=True):
+    def handler(request):
+        calls.append(request)
+        if request.url.host == "www.vinted.pl" and not request.url.path.startswith("/api"):
+            headers = {"set-cookie": "access_token_web=tok123; Path=/; Domain=.vinted.pl"} if token else {}
+            return httpx.Response(200, text="", headers=headers)
+        if request.url.host == "api.vinted.pl":
+            if api_status != 200:
+                return httpx.Response(api_status, json={"code": api_status})
+            return httpx.Response(200, json=catalogue if catalogue is not None else VINTED_NEW)
+        return httpx.Response(legacy_status, text="<div>nie znaleziono</div>")
+    return handler
+
+
+def vinted_search(handler, **kw):
+    async def go():
+        async with client(handler) as http:
+            adapter = VintedAdapter(http, Settings())
+            offers = await adapter.search(SearchQuery(Mode.RESELL, phrases=["iphone"], **kw))
+            return offers, adapter
+    return run(go())
+
+
+def test_vinted_adapter_uses_new_catalogue_api_with_bearer_token():
     calls = []
+    offers, adapter = vinted_search(vinted_handler(calls), price_min=300)
+    assert sorted(o.price for o in offers) == [700, 1450]  # oferta w USD pominięta
+    assert adapter.stats == {"items_seen": 3, "foreign_currency": 1}
+    assert calls[0].method == "HEAD" and calls[0].url.path == "/catalog"
+    api = calls[1]
+    assert str(api.url).startswith("https://api.vinted.pl/svc-catalogue/items")
+    assert api.headers["authorization"] == "Bearer tok123"
+    assert api.url.params["order"] == "newest_first" and api.url.params["price_from"] == "300"
+    assert "price_to" not in api.url.params  # puste filtry pomijane (inaczej API odpowiada 400)
+
+
+def test_vinted_falls_back_to_legacy_endpoint():
+    calls = []
+    legacy = {"items": VINTED["items"][:2], "pagination": {"total_pages": 1}}
 
     def handler(request):
         calls.append(request)
-        if request.url.path == "/":
-            return httpx.Response(200, text="<html></html>", headers={"set-cookie": "access_token_web=abc; Path=/"})
-        return httpx.Response(200, json=VINTED)
+        if request.url.path == "/catalog":
+            return httpx.Response(200, headers={"set-cookie": "access_token_web=t; Path=/"})
+        if request.url.host == "api.vinted.pl":
+            return httpx.Response(404)
+        return httpx.Response(200, json=legacy)
 
-    async def go():
-        async with client(handler) as http:
-            return await VintedAdapter(http, Settings()).search(SearchQuery(Mode.RESELL, phrases=["iphone"]))
-
-    offers = run(go())
+    offers, _ = vinted_search(handler)
     assert len(offers) == 2
-    assert calls[0].url.path == "/" and calls[1].url.path == "/api/v2/catalog/items"
-    assert "access_token_web=abc" in calls[1].headers.get("cookie", "")
-    assert calls[1].url.params["order"] == "newest_first"
+
+
+def test_vinted_both_endpoints_gone_means_format_changed():
+    with pytest.raises(SourceFormatChanged, match="zmienił API"):
+        vinted_search(vinted_handler([], api_status=404))
+
+
+def test_vinted_missing_token_means_format_changed():
+    with pytest.raises(SourceFormatChanged, match="access_token_web"):
+        vinted_search(vinted_handler([], token=False))
 
 
 def test_vinted_blocked():
-    async def go():
-        async with client(lambda r: httpx.Response(403)) as http:
-            return await VintedAdapter(http, Settings()).search(SearchQuery(Mode.RESELL))
+    with pytest.raises(SourceBlocked):
+        vinted_search(lambda r: httpx.Response(403, text="<html>datadome captcha</html>",
+                                               headers={"content-type": "text/html"}))
 
-    with pytest.raises(SourceError, match="sesji Vinted"):
-        run(go())
+
+def test_vinted_expired_token_is_refreshed():
+    calls, state = [], {"api": 0}
+
+    def handler(request):
+        calls.append(request)
+        if request.url.host == "www.vinted.pl":
+            return httpx.Response(200, headers={"set-cookie": f"access_token_web=t{len(calls)}; Path=/"})
+        state["api"] += 1
+        return httpx.Response(401) if state["api"] == 1 else httpx.Response(200, json=VINTED_NEW)
+
+    offers, _ = vinted_search(handler)
+    assert len(offers) == 2 and state["api"] == 2
+
+
+def test_vinted_unexpected_json_means_format_changed():
+    with pytest.raises(SourceFormatChanged, match="listy przedmiotów"):
+        vinted_search(vinted_handler([], catalogue={"results": "nowy format"}))

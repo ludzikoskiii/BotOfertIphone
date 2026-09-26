@@ -21,8 +21,10 @@ class ScanWorker(QObject):
     finished = Signal(object)  # ScanReport
     failed = Signal(str)
 
-    def __init__(self, db_path: Path, settings: Settings, limiter: HostRateLimiter, cache: ResponseCache):
+    def __init__(self, db_path: Path, settings: Settings, limiter: HostRateLimiter, cache: ResponseCache,
+                 force: bool = False):
         super().__init__()
+        self.force = force
         self.db_path = db_path
         self.settings = settings
         self.limiter = limiter
@@ -33,7 +35,7 @@ class ScanWorker(QObject):
         conn = connect(self.db_path)
         try:
             scanner = Scanner(conn, self.settings, self.limiter, self.cache)
-            report = asyncio.run(scanner.run(self.progress.emit))
+            report = asyncio.run(scanner.run(self.progress.emit, force=self.force))
             try:
                 if self.settings.llm_enabled:
                     self.progress.emit("Analiza opisów przez AI…")

@@ -9,11 +9,11 @@ import httpx
 from ..core.catalog import format_storage
 from ..core.models import Offer, Valuation
 from ..core.settings import Settings
+from ..sources import SOURCE_NAMES
 
 log = logging.getLogger(__name__)
 
 TELEGRAM_API = "https://api.telegram.org/bot{token}/{method}"
-SOURCE_NAMES = {"olx": "OLX", "allegro_lokalnie": "Allegro Lokalnie", "vinted": "Vinted"}
 
 
 class NotificationError(Exception):

@@ -11,8 +11,8 @@ from urllib.parse import quote
 
 from ..core.models import RawOffer
 from ..core.settings import Settings
-from ..net.http import HttpClient, HttpError
-from .base import SearchQuery, SourceAdapter, SourceError, register
+from ..net.http import HttpClient
+from .base import SearchQuery, SourceAdapter, SourceFormatChanged, register, search_all_phrases
 from .extract import ExtractedOffer, offers_from_html
 
 log = logging.getLogger(__name__)
@@ -25,6 +25,12 @@ _CONDITIONS = {
     "used": "used", "uzywany": "used", "używany": "used", "używane": "used", "usedcondition": "used",
     "damaged": "damaged", "uszkodzony": "damaged", "uszkodzone": "damaged", "damagedcondition": "damaged",
 }
+
+
+def looks_like_no_results(html: str) -> bool:
+    """Strona poprawnie się wczytała, ale fraza nie ma wyników (a nie zmiana formatu)."""
+    low = html.lower()
+    return any(m in low for m in ("brak wyników", "nie znaleźliśmy", "nie znalezlismy", "0 ogłoszeń"))
 
 
 def to_raw(o: ExtractedOffer) -> RawOffer:
@@ -64,18 +70,7 @@ class AllegroLokalnieAdapter(SourceAdapter):
         self.settings = settings
 
     async def search(self, query: SearchQuery) -> list[RawOffer]:
-        results: dict[str, RawOffer] = {}
-        errors: list[str] = []
-        for phrase in query.phrases:
-            try:
-                await self._search_phrase(phrase, query, results)
-            except HttpError as e:
-                errors.append(f"„{phrase}”: {e}")
-                if e.status in (None, 403):
-                    break
-        if errors and not results:
-            raise SourceError("; ".join(errors))
-        return list(results.values())
+        return await search_all_phrases(query.phrases, lambda p, out: self._search_phrase(p, query, out))
 
     async def _search_phrase(self, phrase: str, query: SearchQuery, out: dict[str, RawOffer]) -> None:
         url = SEARCH_URL.format(phrase=quote(phrase))
@@ -90,7 +85,9 @@ class AllegroLokalnieAdapter(SourceAdapter):
             html = await self.http.get_text(url, params=params)
             extracted = [o for o in offers_from_html(html, BASE_URL) if o.currency == "PLN"]
             if page == 1 and not extracted:
-                raise SourceError("nie znaleziono danych ofert na stronie — możliwa zmiana formatu serwisu")
+                if looks_like_no_results(html):
+                    return
+                raise SourceFormatChanged("nie znaleziono danych ofert na stronie — możliwa zmiana formatu serwisu")
             new = 0
             for o in extracted:
                 if o.id not in out:

@@ -39,6 +39,7 @@ class AdapterResult:
     error_type: str | None = None
     raw_offers: int = 0
     accepted: int = 0
+    foreign_currency: int = 0  # oferty odrzucone, bo cena nie w PLN (np. test z serwera poza Polską)
     samples: list[str] = field(default_factory=list)
     seconds: float = 0.0
     trace: list[dict[str, Any]] = field(default_factory=list)
@@ -92,10 +93,11 @@ async def run_adapter(key: str, settings: Settings, timeout: float = 90.0) -> Ad
         except Exception as e:
             res.error = str(e) or e.__class__.__name__
             res.error_type = e.__class__.__name__
-            res.stage = _stage_from_trace(res.trace, e)
+            res.stage = _stage_from_error(res.trace, e)
             res.seconds = round(time.monotonic() - start, 1)
             return res
     res.raw_offers = len(offers)
+    res.foreign_currency = int(getattr(adapter, "stats", {}).get("foreign_currency", 0))
     for o in offers:
         if listing_rejection_reason(o.title) or not parse_offer(o).model:
             continue
@@ -103,10 +105,30 @@ async def run_adapter(key: str, settings: Settings, timeout: float = 90.0) -> Ad
         if len(res.samples) < 5:
             res.samples.append(f"{o.price:.0f} zł | {o.title[:60]} | {o.city or '-'}")
     res.ok = res.accepted > 0
-    res.stage = "OK" if res.ok else ("parsowanie: 0 ofert w odpowiedzi" if not offers
-                                     else "filtrowanie: żadna oferta nie przeszła (model nierozpoznany?)")
+    if res.ok:
+        res.stage = "OK"
+    elif res.foreign_currency:
+        # portal działa i zwraca oferty, tylko w walucie kraju serwera (np. USD z GitHuba w USA)
+        res.ok = True
+        res.stage = f"OK — {res.foreign_currency} ofert w obcej walucie (połączenie spoza Polski)"
+    else:
+        res.stage = ("parsowanie: 0 ofert w odpowiedzi" if not offers
+                     else "filtrowanie: żadna oferta nie przeszła (model nierozpoznany?)")
     res.seconds = round(time.monotonic() - start, 1)
     return res
+
+
+_KIND_STAGE = {
+    "blocked": "blokada portalu",
+    "changed": "zmiana formatu / API portalu",
+    "network": "pobieranie: brak połączenia",
+}
+
+
+def _stage_from_error(trace: list[dict[str, Any]], exc: Exception) -> str:
+    kind = getattr(exc, "kind", None)
+    base = _stage_from_trace(trace, exc)
+    return f"{_KIND_STAGE[kind]} — {base}" if kind in _KIND_STAGE else base
 
 
 def _stage_from_trace(trace: list[dict[str, Any]], exc: Exception) -> str:
@@ -193,7 +215,8 @@ def format_report(data: dict[str, Any]) -> str:
     for a in data["adapters"]:
         status = "DZIAŁA" if a["ok"] else "NIE DZIAŁA"
         lines.append(f"[{a['key']}] {status} — {a['stage']} ({a['seconds']} s)")
-        lines.append(f"    ofert w odpowiedzi: {a['raw_offers']}, po filtrach: {a['accepted']}")
+        lines.append(f"    ofert w odpowiedzi: {a['raw_offers']}, po filtrach: {a['accepted']}"
+                     + (f", w obcej walucie: {a['foreign_currency']}" if a.get("foreign_currency") else ""))
         if a["error"]:
             lines.append(f"    błąd ({a['error_type']}): {a['error']}")
         for s in a["samples"]:

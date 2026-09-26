@@ -1,0 +1,195 @@
+{
+ "items": [
+  {
+   "content_source": "search",
+   "favourite_count": 0,
+   "id": 10090626301,
+   "is_favourite": false,
+   "item_box": {
+    "accessibility_label": "iPhone 13 128 GB, Marka: Apple, Stan: Bardzo dobry, 1450 zł",
+    "exposures": [],
+    "ff_exposures": [],
+    "first_line": "Apple iPhone 13 128 GB",
+    "item_id": 10090626301,
+    "second_line": "Bardzo dobry"
+   },
+   "photo": {
+    "dominant_color": "#BFBDB5",
+    "full_size_url": "https://images1.vinted.net/tc/1/full.webp",
+    "height": 800,
+    "high_resolution": {
+     "id": "hr1",
+     "orientation": 0
+    },
+    "id": 1,
+    "is_main": true,
+    "thumbnails": [
+     {
+      "height": 100,
+      "type": "thumb70x100",
+      "url": "https://images1.vinted.net/t/1/70x100.webp",
+      "width": 70
+     },
+     {
+      "height": 430,
+      "type": "thumb310x430",
+      "url": "https://images1.vinted.net/t/1/310x430.webp",
+      "width": 310
+     }
+    ]
+   },
+   "price": {
+    "amount": "1450.00",
+    "currency_code": "PLN"
+   },
+   "promoted": false,
+   "service_fee": {
+    "amount": "75.40",
+    "currency_code": "PLN"
+   },
+   "title": "iPhone 13 128 GB",
+   "total_item_price": {
+    "amount": "1525.40",
+    "currency_code": "PLN"
+   },
+   "url": "/items/10090626301-iphone-13-128-gb",
+   "user": {
+    "business": false,
+    "id": 3189278415,
+    "login": "sprzedawca"
+   },
+   "view_count": 0
+  },
+  {
+   "content_source": "search",
+   "favourite_count": 0,
+   "id": 10090626302,
+   "is_favourite": false,
+   "item_box": {
+    "accessibility_label": "iPhone 12 zbity tył, Marka: Apple, Stan: Zadowalający, 700 zł",
+    "exposures": [],
+    "ff_exposures": [],
+    "first_line": "Apple iPhone 12 zbity tył",
+    "item_id": 10090626302,
+    "second_line": "Zadowalający"
+   },
+   "photo": {
+    "dominant_color": "#BFBDB5",
+    "full_size_url": "https://images1.vinted.net/tc/2/full.webp",
+    "height": 800,
+    "high_resolution": {
+     "id": "hr2",
+     "orientation": 0
+    },
+    "id": 1,
+    "is_main": true,
+    "thumbnails": [
+     {
+      "height": 100,
+      "type": "thumb70x100",
+      "url": "https://images1.vinted.net/t/2/70x100.webp",
+      "width": 70
+     },
+     {
+      "height": 430,
+      "type": "thumb310x430",
+      "url": "https://images1.vinted.net/t/2/310x430.webp",
+      "width": 310
+     }
+    ]
+   },
+   "price": {
+    "amount": "700.00",
+    "currency_code": "PLN"
+   },
+   "promoted": false,
+   "service_fee": {
+    "amount": "37.90",
+    "currency_code": "PLN"
+   },
+   "title": "iPhone 12 zbity tył",
+   "total_item_price": {
+    "amount": "737.90",
+    "currency_code": "PLN"
+   },
+   "url": "/items/10090626302-iphone-12-zbity-tył",
+   "user": {
+    "business": false,
+    "id": 3189278415,
+    "login": "sprzedawca"
+   },
+   "view_count": 0
+  },
+  {
+   "content_source": "search",
+   "favourite_count": 0,
+   "id": 10090626303,
+   "is_favourite": false,
+   "item_box": {
+    "accessibility_label": "iPhone 14 Pro, Marka: Apple, Stan: Très bon état, 900 zł",
+    "exposures": [],
+    "ff_exposures": [],
+    "first_line": "Apple iPhone 14 Pro",
+    "item_id": 10090626303,
+    "second_line": "Très bon état"
+   },
+   "photo": {
+    "dominant_color": "#BFBDB5",
+    "full_size_url": "https://images1.vinted.net/tc/3/full.webp",
+    "height": 800,
+    "high_resolution": {
+     "id": "hr3",
+     "orientation": 0
+    },
+    "id": 1,
+    "is_main": true,
+    "thumbnails": [
+     {
+      "height": 100,
+      "type": "thumb70x100",
+      "url": "https://images1.vinted.net/t/3/70x100.webp",
+      "width": 70
+     },
+     {
+      "height": 430,
+      "type": "thumb310x430",
+      "url": "https://images1.vinted.net/t/3/310x430.webp",
+      "width": 310
+     }
+    ]
+   },
+   "price": {
+    "amount": "900.00",
+    "currency_code": "USD"
+   },
+   "promoted": false,
+   "service_fee": {
+    "amount": "45.00",
+    "currency_code": "USD"
+   },
+   "title": "iPhone 14 Pro",
+   "total_item_price": {
+    "amount": "945.00",
+    "currency_code": "USD"
+   },
+   "url": "/items/10090626303-iphone-14-pro",
+   "user": {
+    "business": false,
+    "id": 3189278415,
+    "login": "sprzedawca"
+   },
+   "view_count": 0
+  }
+ ],
+ "pagination": {
+  "current_page": 1,
+  "per_page": 96,
+  "time": 1790408618,
+  "total_entries": 3,
+  "total_pages": 1
+ },
+ "search_tracking_params": {
+  "search_correlation_id": "x",
+  "search_session_id": "y"
+ }
+}

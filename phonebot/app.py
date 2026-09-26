@@ -41,9 +41,29 @@ def self_test() -> int:
     return 0
 
 
+def diagnose_cli() -> int:
+    """PhoneBot.exe --diagnose: raport do %LOCALAPPDATA%\\PhoneBot\\diagnostyka.txt i otwarcie go."""
+    import asyncio
+    import os
+
+    from .diagnose import diagnose, format_report
+    from .paths import data_dir
+
+    setup_logging()
+    path = data_dir() / "diagnostyka.txt"
+    path.write_text(format_report(asyncio.run(diagnose())), encoding="utf-8")
+    if sys.platform == "win32":
+        os.startfile(path)  # type: ignore[attr-defined]
+    elif sys.stdout is not None:
+        print(path.read_text(encoding="utf-8"))
+    return 0
+
+
 def main() -> int:
     if "--self-test" in sys.argv:
         return self_test()
+    if "--diagnose" in sys.argv:
+        return diagnose_cli()
     setup_logging()
     log.info("PhoneBot %s — start", __version__)
     path = db_path()
