@@ -1,0 +1,22 @@
+name: clip-prepare
+
+# Przygotowanie modelu CLIP do analizy zdjęć: sumy kontrolne plików ONNX, osadzenia opisów klas
+# i sprawdzenie skuteczności na prawdziwych zdjęciach. Wynik w logu.
+on:
+  push:
+    paths:
+      - "scripts/clip_prepare.py"
+      - ".github/workflows/clip-prepare.yml"
+  workflow_dispatch:
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --index-url https://download.pytorch.org/whl/cpu torch
+      - run: python -m pip install transformers onnxruntime pillow httpx numpy
+      - run: python scripts/clip_prepare.py
