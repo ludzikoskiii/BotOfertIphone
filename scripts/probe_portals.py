@@ -129,10 +129,90 @@ def probe_reference(c: httpx.Client) -> None:
                 page_facts(r, base, "iphone-13")
 
 
+def probe_round2(c: httpx.Client) -> None:
+    """Druga runda: struktura listy Lento, warianty cen Refurbed, Back Market."""
+    say("\n===== LENTO — podkategorie i lista =====")
+    r = get(c, "https://www.lento.pl/elektronika/telefony-i-akcesoria.html")
+    if r is not None and r.status_code == 200:
+        tree = HTMLParser(r.text)
+        cats = [(a.attributes.get("href"), a.text(strip=True)) for a in tree.css(".list-category a")]
+        say("  podkategorie:", cats[:20])
+        phones = next((h for h, t in cats if h and "telefony-komorkowe" in h), None) or \
+            next((h for h, t in cats if h and "smartfon" in h.lower()), None)
+        for url in [u for u in [phones, (phones or "").replace(".html", "/apple.html") if phones else None,
+                                (phones + "?co=iphone") if phones else None] if u]:
+            r2 = get(c, url)
+            if r2 is None or r2.status_code != 200:
+                continue
+            t2 = HTMLParser(r2.text)
+            say("  <title>:", (t2.css_first("title").text(strip=True) if t2.css_first("title") else "—")[:120])
+            titles = t2.css(".gridlist-title, .title-list-item, h2 a, .ogl-title")
+            say(f"  elementy tytułów: {len(titles)}; klasy pierwszych:",
+                [(n.tag, n.attributes.get("class")) for n in titles[:3]])
+            first = next((n for n in t2.css("a[href]") if re.search(r",\d{6,}\.html", n.attributes.get("href") or "")),
+                         None)
+            if first is not None:
+                box = first
+                for _ in range(5):
+                    if box.parent is not None:
+                        box = box.parent
+                say("  pierwsza oferta HTML:", re.sub(r"\s+", " ", box.html or "")[:2500])
+                nxt = [a.attributes.get("href") for a in t2.css("a[href]") if "page=" in (a.attributes.get("href") or "")
+                       or re.search(r"-\d+\.html$", a.attributes.get("href") or "")][:5]
+                say("  paginacja?:", nxt)
+                item = get(c, first.attributes.get("href"))
+                if item is not None and item.status_code == 200:
+                    page_facts(item, "https://www.lento.pl")
+                    ti = HTMLParser(item.text)
+                    for sel in (".desc", "#description", ".opis", "[itemprop=description]", ".ogl-desc"):
+                        n = ti.css_first(sel)
+                        if n is not None:
+                            say(f"  opis ({sel}):", n.text(strip=True)[:300])
+                            break
+            break
+
+    say("\n===== REFURBED — warianty iPhone 13 =====")
+    time.sleep(8)  # robots.txt: crawl-delay 10 dla botów
+    r = get(c, "https://www.refurbed.pl/p/iphone-13/")
+    if r is not None and r.status_code == 200:
+        tree = HTMLParser(r.text)
+        say("  <title>:", tree.css_first("title").text(strip=True)[:150] if tree.css_first("title") else "—")
+        for node in tree.css('script[type="application/ld+json"]'):
+            try:
+                data = json.loads(node.text())
+            except json.JSONDecodeError:
+                continue
+            groups = data if isinstance(data, list) else [data]
+            for g in groups:
+                if isinstance(g, dict) and g.get("@type") == "ProductGroup":
+                    variants = g.get("hasVariant") or []
+                    say(f"  ProductGroup: {len(variants)} wariantów; klucze wariantu:",
+                        list(variants[0].keys()) if variants else [])
+                    for v in variants[:6]:
+                        say("    ", json.dumps(v, ensure_ascii=False)[:500])
+        for m in re.finditer(r"(Stan|stan)[^<]{0,40}(Bardzo dobry|Dobry|Idealny|Świetny|Doskona\w+|Premium)", r.text):
+            say("  stan w tekście:", m.group(0)[:80])
+            break
+
+    say("\n===== BACK MARKET =====")
+    for url in ("https://www.backmarket.pl/", "https://www.backmarket.pl/pl-pl/l/iphone-13/"):
+        r = get(c, url)
+        if r is not None and r.status_code == 200:
+            links = page_facts(r, "https://www.backmarket.pl", "iphone-13")
+            if links:
+                r2 = get(c, links[0])
+                if r2 is not None and r2.status_code == 200:
+                    page_facts(r2, "https://www.backmarket.pl", "iphone")
+            break
+
+    say("\n===== SWAPPIE (strona produktu) =====")
+    get(c, "https://swappie.com/pl-pl/iphone/iphone-13/")
+
+
 def main(out: str) -> int:
     with httpx.Client(headers={"User-Agent": UA, "Accept-Language": "pl-PL,pl;q=0.9"}, timeout=20,
                       follow_redirects=True) as c:
-        for step in (probe_lento, probe_apis, probe_reference):
+        for step in (probe_round2,):
             try:
                 step(c)
             except Exception as e:  # noqa: BLE001 — sonda ma zebrać jak najwięcej informacji
