@@ -9,6 +9,11 @@ on:
     paths:
       - "phonebot/ml/photo_model.py"
   workflow_dispatch:
+    inputs:
+      zdjecia:
+        description: "Sprawdzić też skuteczność na zdjęciach z Vinted"
+        type: boolean
+        default: true
 
 jobs:
   check:
@@ -27,3 +32,4 @@ jobs:
         env:
           PYTHONPATH: .
           PYTHONIOENCODING: utf-8
+          CLIP_CHECK_PHOTOS: ${{ github.event_name != 'workflow_dispatch' || inputs.zdjecia }}

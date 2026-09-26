@@ -20,7 +20,7 @@ from pathlib import Path
 import httpx
 
 from phonebot.core.settings import MlConfig
-from phonebot.ml.photo_model import CLASSES, PhotoClassifier, download_model, model_path
+from phonebot.ml.photo_model import CLASSES, MODEL_URL, PhotoClassifier, download_model, model_path
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
 PER_CLASS = 20
@@ -100,6 +100,10 @@ def collect_samples(client: httpx.Client) -> list[tuple[str, str, str]]:
 
 
 def main() -> int:
+    # bieżąca wersja repozytorium modelu (do przypięcia adresu pobierania w programie)
+    r = httpx.get("https://huggingface.co/api/models/Xenova/clip-vit-base-patch32/revision/main", timeout=30)
+    say("HF WERSJA main:", r.json().get("sha") if r.status_code == 200 else f"HTTP {r.status_code}")
+    say("ADRES W PROGRAMIE:", MODEL_URL)
     directory = Path(tempfile.mkdtemp())
     t = time.time()
     download_model(directory)  # ten sam kod i ta sama suma SHA-256 co w programie
@@ -111,6 +115,9 @@ def main() -> int:
     say(f"MODEL wczytany w {time.time() - t:.2f} s, pamięć +{rss_mb() - before:.0f} MB; procesor: "
         f"{os.cpu_count()} wątków, onnxruntime używa {max(1, (os.cpu_count() or 2) // 2)}")
 
+    if os.environ.get("CLIP_CHECK_PHOTOS", "1") in ("0", "false"):
+        say("Zdjęcia z Vinted pominięte (CLIP_CHECK_PHOTOS=0).")
+        return 0
     client = httpx.Client(headers={"User-Agent": UA}, follow_redirects=True, timeout=30)
     picked = collect_samples(client)
     say("ZDJĘCIA", dict(Counter(s[0] for s in picked)))
