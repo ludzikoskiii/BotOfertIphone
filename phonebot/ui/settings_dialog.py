@@ -765,10 +765,12 @@ class SettingsDialog(QDialog):
         from ..core.messages import DEFAULT_TEMPLATES, PLACEHOLDERS, TEMPLATE_KEYS, TEMPLATE_NAMES
 
         legend = "<br>".join(f"<b>{{{k}}}</b> — {v}" for k, v in PLACEHOLDERS.items())
-        info = QLabel("Szablony wiadomości do sprzedającego (bez AI). Przycisk <b>„📋 Skopiuj wiadomość”</b> "
-                      "w panelu szczegółów wstawia dane oferty i kopiuje tekst do schowka — wklejasz go "
-                      "w portalu. Domyślnie wybierany jest szablon pasujący do werdyktu; strzałka przy przycisku "
-                      f"pozwala wybrać inny.<br><br>Pola do wstawienia:<br>{legend}")
+        info = QLabel("Szablony wiadomości do sprzedającego (bez AI, za darmo). W panelu szczegółów widać gotowy "
+                      "tekst z danymi oferty — możesz go poprawić, a <b>„📋 Skopiuj wiadomość”</b> kopiuje go do "
+                      "schowka; wklejasz go w portalu. Domyślnie wybierany jest szablon pasujący do werdyktu "
+                      "(NEGOCJUJ — Twój styl negocjacji); na liście nad tekstem możesz wybrać inny. Argumenty "
+                      "są tylko prawdziwe — z ogłoszenia i z wyceny.<br><br>"
+                      f"Pola do wstawienia:<br>{legend}")
         info.setWordWrap(True)
         info.setTextFormat(Qt.TextFormat.RichText)
         self.template_edits: dict[str, QPlainTextEdit] = {}
@@ -782,11 +784,22 @@ class SettingsDialog(QDialog):
             lay.addWidget(edit)
             self.template_edits[key] = edit
             boxes.append(box)
+        from ..core.messages import STYLE_NAMES
+
+        style = QGroupBox("Negocjacja (NEGOCJUJ)")
+        style.setLayout(self._form([
+            Field("negotiation_style", "Domyślny styl wiadomości", "choice", choices=STYLE_NAMES,
+                  tip="Uprzejmy — grzecznie i z argumentami; konkretny — krótko, z propozycją ceny; "
+                      "szybki odbiór — najpierw szybki odbiór i gotówka"),
+            Field("pickup_radius_km", "Proponuj odbiór osobisty i gotówkę do", "int", 0, 500, 5, " km",
+                  tip="Dalej (albo gdy odległość nieznana) wiadomość proponuje szybką płatność i wysyłkę. "
+                      "0 = nigdy nie proponuj odbioru."),
+        ]))
         reset = QPushButton("Przywróć domyślne szablony")
         reset.clicked.connect(lambda: [e.setPlainText(DEFAULT_TEMPLATES[k]) for k, e in self.template_edits.items()])
         self._readers.append(lambda st: setattr(st, "message_templates", {
             k: (e.toPlainText().strip() or DEFAULT_TEMPLATES[k]) for k, e in self.template_edits.items()}))
-        return self._page(info, *boxes, reset)
+        return self._page(info, style, *boxes, reset)
 
     def _notify_tab(self) -> QWidget:
         s = self.settings

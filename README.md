@@ -3,7 +3,7 @@
 Aplikacja desktopowa (Windows) do wyszukiwania ofert używanych iPhone'ów na
 Allegro Lokalnie, Vinted i Sprzedajemy.pl, wyceny ich opłacalności i podpowiadania, czy i za ile kupić.
 
-> **Status: wersja 1.6.0.** Trzy portale, wycena, werdykty i negocjacje, filtry, zabezpieczenia werdyktu,
+> **Status: wersja 1.7.0.** Trzy portale, wycena, werdykty i negocjacje, filtry, zabezpieczenia werdyktu,
 > **darmowe lokalne AI** (klasyfikator tytułów, analiza zdjęć, opcjonalnie model językowy w Ollamie),
 > szablony wiadomości do sprzedającego, automatyczne odświeżanie, powiadomienia Windows i Telegram
 > oraz gotowy plik `PhoneBot.exe`. Program nie korzysta z żadnych płatnych usług.
@@ -331,18 +331,28 @@ opis trwał ok. 25 s; na karcie graficznej — kilka sekund.
 
 ### Wiadomości do sprzedającego
 
-Przycisk **„📋 Skopiuj wiadomość”** w panelu szczegółów kopiuje do schowka gotową wiadomość z danymi oferty
-— wklejasz ją w portalu i wysyłasz sam. Szablon wybierany jest według werdyktu, strzałka przy przycisku
-pozwala wybrać inny:
+W panelu szczegółów, w ramce **„Wiadomość do sprzedającego”**, jest gotowy tekst z danymi oferty (bez AI,
+za darmo). Możesz go poprawić w polu tekstowym, a **„📋 Skopiuj wiadomość”** kopiuje go do schowka —
+wklejasz go w portalu i wysyłasz sam. „↺ Od nowa” wstawia tekst z szablonu jeszcze raz. Szablon wybierany
+jest według werdyktu; na liście nad tekstem wybierzesz inny:
 
 - **Kupuję (KUPUJ)** — pytanie o dostępność i prośba o wysyłkę,
-- **Negocjacja ceny (NEGOCJUJ)** — Twoja cena otwierająca (zaokrąglona do 10 zł) i rzeczowe argumenty:
-  usterki z kosztem naprawy z tabeli części, słaba bateria, niższe ceny podobnych ofert (tylko gdy są niższe),
+- **Negocjacja (NEGOCJUJ)** w trzech stylach — domyślny ustawiasz w **Ustawienia → Wiadomości**:
+  - *uprzejmy* — grzecznie, z argumentami i pytaniem o Twoją cenę,
+  - *konkretny* — krótko: argumenty i propozycja ceny,
+  - *szybki odbiór* — na początku szybki odbiór i gotówka, potem jeden argument i cena.
+
+  Wiadomość ma 3–5 zdań, zawiera Twoją cenę otwierającą (zaokrągloną w dół do 10 zł) i **tylko prawdziwe
+  argumenty**: usterki z kosztem naprawy z tabeli części, słaba bateria (poniżej 85%), nieoryginalne części,
+  rysy i brak pudełka (tylko gdy sprzedający sam o nich pisze — „bez rys” się nie liczy), niższe ceny
+  podobnych ofert (tylko gdy są niższe). Propozycja „przyjadę i zapłacę gotówką” pojawia się tylko dla ofert
+  w promieniu odbioru (domyślnie 50 km od Twojej miejscowości); dalej — szybka płatność i paczkomat.
 - **Pytania przed zakupem (DO WERYFIKACJI)** — pytania dopasowane do oferty: pamięć, bateria, blokada iCloud,
   działanie funkcji, naprawy, oryginalność przy podejrzanie niskiej cenie, wysyłka z zagranicy.
 
-Szablony edytujesz w **⚙ Ustawienia → Wiadomości** (pola: `{telefon}`, `{model}`, `{pamiec}`, `{cena}`,
-`{propozycja}`, `{argumenty}`, `{pytania}`, `{wysylka}`); „Przywróć domyślne szablony” cofa zmiany.
+Szablony edytujesz w **⚙ Ustawienia → Wiadomości** (pola: `{telefon}`, `{model}`, `{pamięć}`, `{cena}` — cena
+z ogłoszenia, `{propozycja}` — Twoja cena otwierająca, `{argumenty}`, `{odbior}`, `{pytania}`, `{wysylka}`);
+„Przywróć domyślne szablony” cofa zmiany.
 
 ### Listy „Wszystkie oferty” i „Wybrane”
 

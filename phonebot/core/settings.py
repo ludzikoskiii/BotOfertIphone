@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .listing_filter import ListingFilterConfig
-from .messages import DEFAULT_TEMPLATES
+from .messages import DEFAULT_TEMPLATES, OLD_NEGOTIATE_TEMPLATE
 from .models import Mode, RedFlag
 from .sanity import SanityConfig
 from .selection import SelectionCriteria
@@ -101,7 +101,8 @@ VINTED_COUNTRY_MODES = {
 
 # wersja domyślnych ustawień: zmiana domyślnej wartości, którą trzeba raz przenieść do zapisanych ustawień
 # 2 — oferty z zagranicy widoczne (Vinted: „pl” → „ship”)
-SETTINGS_VERSION = 2
+# 3 — nowy szablon negocjacji (styl uprzejmy), jeśli zapisany był niezmieniony stary
+SETTINGS_VERSION = 3
 
 
 # kolumny tabeli ukryte domyślnie (nazwy z ui.table_model.Col, małymi literami)
@@ -243,6 +244,8 @@ class Settings:
 
     # --- wiadomości do sprzedającego (szablony, bez AI) ---
     message_templates: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_TEMPLATES))
+    negotiation_style: str = "polite"  # polite | concrete | pickup (szybki odbiór)
+    pickup_radius_km: int = 50  # „przyjadę i zapłacę gotówką” tylko dla ofert w tym promieniu
 
     # ---------------------------------------------------------------- API ---
 
@@ -302,6 +305,11 @@ def _from_dict(cls: type, data: Any) -> Any:
         saved_version = data.get("settings_version", 1)
         if isinstance(saved_version, int) and saved_version < 2 and obj.vinted_country_mode == "pl":
             obj.vinted_country_mode = "ship"  # oferty z zagranicy widoczne (można wrócić w Ustawieniach)
+        if isinstance(saved_version, int) and saved_version < 3:
+            if obj.message_templates.get("negotiate", "").strip() == OLD_NEGOTIATE_TEMPLATE.strip():
+                obj.message_templates["negotiate"] = DEFAULT_TEMPLATES["negotiate"]
+        for key, text in DEFAULT_TEMPLATES.items():  # nowe szablony dochodzą do zapisanych ustawień
+            obj.message_templates.setdefault(key, text)
         obj.settings_version = SETTINGS_VERSION
         # listy słów zapisane przez starszą wersję: dopisz nowe słowa (np. akcesoria w innych językach)
         saved = data.get("listing_filter")

@@ -8,19 +8,21 @@ from __future__ import annotations
 from PySide6.QtCore import QSize, Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QGuiApplication
 from PySide6.QtWidgets import (
+    QComboBox,
     QDialog,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QMenu,
+    QPlainTextEdit,
     QPushButton,
     QStackedWidget,
     QTextBrowser,
-    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
-from ..core.messages import DEFAULT_TEMPLATES, TEMPLATE_KEYS, TEMPLATE_NAMES, render, template_for
+from ..core.messages import TEMPLATE_KEYS, TEMPLATE_NAMES, compose, template_for
 from ..core.models import Offer, OfferStatus, Valuation
 from ..core.selection import is_picked
 from ..core.settings import Settings
@@ -98,24 +100,41 @@ class OfferDetailsView(QWidget):
         for label, text in NOT_PHONE_CHOICES:
             menu.addAction(text, lambda label=label: self._mark_not_phone(label))
         self.not_phone_btn.setMenu(menu)
-        # wiadomość do sprzedającego: klik = szablon pasujący do werdyktu, strzałka = wybór szablonu
-        self.copy_btn = QToolButton()
-        self.copy_btn.setText("📋 Wiadomość" if compact else "📋 Skopiuj wiadomość")
-        self.copy_btn.setToolTip("Kopiuje do schowka wiadomość do sprzedającego z danymi tej oferty "
-                                 "(szablony: Ustawienia → Wiadomości). Strzałka — wybór szablonu.")
-        self.copy_btn.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
-        self.copy_btn.clicked.connect(lambda: self.copy_message())
-        copy_menu = QMenu(self.copy_btn)
+        # --- wiadomość do sprzedającego: gotowy tekst, można go poprawić przed skopiowaniem ---
+        self.msg_box = QGroupBox("Wiadomość do sprzedającego")
+        self.msg_template = QComboBox()
+        self.msg_template.setObjectName("message_template")
         for key in TEMPLATE_KEYS:
-            copy_menu.addAction(TEMPLATE_NAMES[key], lambda key=key: self.copy_message(key))
-        self.copy_btn.setMenu(copy_menu)
+            self.msg_template.addItem(TEMPLATE_NAMES[key], key)
+        self.msg_template.setToolTip("Szablon (Ustawienia → Wiadomości). Dla NEGOCJUJ domyślnie Twój styl "
+                                     "negocjacji: uprzejmy, konkretny albo szybki odbiór.")
+        self.msg_template.currentIndexChanged.connect(lambda _=0: self._compose_message())
+        self.msg_edit = QPlainTextEdit()
+        self.msg_edit.setObjectName("message_edit")
+        self.msg_edit.setFixedHeight(118 if compact else 150)
+        self.msg_edit.setToolTip("Możesz poprawić tekst przed skopiowaniem.")
+        self.copy_btn = QPushButton("📋 Skopiuj wiadomość")
+        self.copy_btn.setToolTip("Kopiuje tekst z pola powyżej do schowka — wklejasz go w portalu")
+        self.copy_btn.clicked.connect(lambda: self.copy_message())
+        self.reset_msg_btn = QPushButton("↺ Od nowa")
+        self.reset_msg_btn.setToolTip("Wstawia tekst z szablonu od nowa (cofa Twoje poprawki)")
+        self.reset_msg_btn.clicked.connect(lambda: self._compose_message())
+        msg_lay = QVBoxLayout(self.msg_box)
+        msg_lay.setContentsMargins(SPACING, SPACING, SPACING, SPACING)
+        msg_lay.setSpacing(SPACING // 2)
+        msg_lay.addWidget(self.msg_template)
+        msg_lay.addWidget(self.msg_edit)
+        msg_row = QHBoxLayout()
+        msg_row.addWidget(self.copy_btn)
+        msg_row.addWidget(self.reset_msg_btn)
+        msg_row.addStretch(1)
+        msg_lay.addLayout(msg_row)
         buttons = QHBoxLayout()
         buttons.setSpacing(SPACING)
         buttons.addWidget(self.open_btn)
         buttons.addWidget(self.watch_btn)
         buttons.addWidget(self.pick_btn)
         if not compact:
-            buttons.addWidget(self.copy_btn)
             buttons.addWidget(self.hide_btn)
             buttons.addWidget(self.not_phone_btn)
         buttons.addStretch(1)
@@ -126,7 +145,6 @@ class OfferDetailsView(QWidget):
             full.setToolTip("Pełne okno szczegółów (Enter / podwójne kliknięcie)")
             full.clicked.connect(self.full_view_requested.emit)
             buttons.addWidget(full)
-            second.addWidget(self.copy_btn)
             second.addWidget(self.hide_btn)
             second.addWidget(self.not_phone_btn)
             second.addStretch(1)
@@ -149,6 +167,7 @@ class OfferDetailsView(QWidget):
         body_wrap.setContentsMargins(0, 0, 0, 0)
         body_wrap.setSpacing(SPACING)
         body_wrap.addWidget(content, 1)
+        body_wrap.addWidget(self.msg_box)
         body_wrap.addLayout(buttons)
         if compact:
             body_wrap.addLayout(second)
@@ -177,6 +196,8 @@ class OfferDetailsView(QWidget):
         self.stack.setCurrentWidget(self._page)
         self.render()
         self._refresh_buttons()
+        # NEGOCJUJ → Twój styl negocjacji; KUPUJ → kupno; DO WERYFIKACJI → pytania
+        self._select_template(template_for(val.verdict, val, self.settings.negotiation_style))
         self._show_photo(0)
 
     def render(self) -> None:
@@ -188,15 +209,35 @@ class OfferDetailsView(QWidget):
         self.browser.setHtml(build_details_html(self.offer, self.val, self.settings, history))
         self.browser.verticalScrollBar().setValue(scroll)
 
+    def _compose_message(self, key: str | None = None) -> None:
+        """Tekst wiadomości z szablonu (bez AI). ``key`` = None → szablon wybrany w liście."""
+        if self.offer is None or self.val is None:
+            self.msg_edit.clear()
+            return
+        key = key or self.msg_template.currentData()
+        _, text = compose(self.offer, self.val, self.settings.message_templates, key=key,
+                          pickup_km=self.settings.pickup_radius_km)
+        self.msg_edit.setPlainText(text)
+
+    def _select_template(self, key: str) -> None:
+        self.msg_template.blockSignals(True)
+        self.msg_template.setCurrentIndex(max(0, self.msg_template.findData(key)))
+        self.msg_template.blockSignals(False)
+        self._compose_message(key)
+
+    def message_text(self) -> str:
+        return self.msg_edit.toPlainText().strip()
+
     def copy_message(self, key: str | None = None) -> str:
-        """Wiadomość do sprzedającego z danymi oferty → schowek. Zwraca tekst."""
+        """Wiadomość z pola (z Twoimi poprawkami) → schowek. ``key`` — najpierw wstaw ten szablon. Zwraca tekst."""
         if self.offer is None or self.val is None:
             return ""
-        key = key or template_for(self.val.verdict, self.val)
-        template = self.settings.message_templates.get(key) or DEFAULT_TEMPLATES[key]
-        text = render(template, self.offer, self.val)
+        if key is not None and key != self.msg_template.currentData():
+            self._select_template(key)
+        text = self.message_text()
         QGuiApplication.clipboard().setText(text)
-        self.message_copied.emit(f"Skopiowano wiadomość „{TEMPLATE_NAMES[key]}” — wklej ją w portalu.")
+        name = TEMPLATE_NAMES.get(self.msg_template.currentData(), "")
+        self.message_copied.emit(f"Skopiowano wiadomość „{name}” — wklej ją w portalu.")
         return text
 
     def _open_offer(self) -> None:

@@ -318,7 +318,7 @@ def test_saved_poland_only_setting_upgraded_once(conn):
     del old["settings_version"]  # zapis starszej wersji programu
     repo.set_value(repo.KEY, json.dumps(old))
     loaded = repo.load()
-    assert loaded.vinted_country_mode == "ship" and loaded.settings_version == 2
+    assert loaded.vinted_country_mode == "ship" and loaded.settings_version >= 2
     # wybór „tylko z Polski” po aktualizacji zostaje
     repo.save(Settings(vinted_country_mode="pl"))
     assert repo.load().vinted_country_mode == "pl"

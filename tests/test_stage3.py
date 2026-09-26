@@ -413,10 +413,10 @@ def valued(title, price, description="", market=MARKET):
 
 def test_message_negotiation_has_arguments_and_opening_price():
     offer, val = valued("iPhone 13 128GB zbity ekran", 1200, "Zbity ekran, bateria 82%, reszta działa.")
-    text = messages.render(messages.DEFAULT_TEMPLATES["negotiate"], offer, val)
+    text = messages.render(messages.DEFAULT_TEMPLATES["negotiate"], offer, val, key="negotiate")
     assert "iPhone 13 128 GB" in text and "Wyświetlacz / szyba do naprawy — to koszt ok." in text
     assert "Kondycja baterii 82%" in text
-    assert f"Czy cena {messages.zl(messages.opening_price(offer, val))}" in text
+    assert f"na {messages.zl(messages.opening_price(offer, val))}?" in text
     assert messages.opening_price(offer, val) % 10 == 0 and messages.opening_price(offer, val) <= offer.price
     assert "{" not in text and "paczkomat" in text
 
@@ -497,13 +497,15 @@ def test_copy_message_button(window):
     offer_id = window.model.row_at(0)[0].id
     window._select_offer(offer_id)
     view = window.details
-    assert [a.text() for a in view.copy_btn.menu().actions()] == list(messages.TEMPLATE_NAMES.values())
+    names = [view.msg_template.itemText(i) for i in range(view.msg_template.count())]
+    assert names == list(messages.TEMPLATE_NAMES.values())
     shown = []
     view.message_copied.connect(shown.append)
     text = view.copy_message()
     assert text and QtWidgets.QApplication.clipboard().text() == text
     assert view.offer.parsed.model in text and "Skopiowano wiadomość" in shown[0]
-    view.copy_btn.menu().actions()[2].trigger()  # pytania przed zakupem
+    view.msg_template.setCurrentIndex(view.msg_template.findData("verify"))  # pytania przed zakupem
+    view.copy_btn.click()
     assert "Zanim kupię" in QtWidgets.QApplication.clipboard().text()
     window.settings.message_templates["verify"] = ""  # pusty szablon → domyślny
     assert "Zanim kupię" in view.copy_message("verify")
