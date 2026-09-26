@@ -5,6 +5,7 @@ from html import escape
 from urllib.parse import urlencode
 
 from ..core.catalog import format_storage
+from ..core.fraud import SAFETY_TIPS
 from ..core.messages import NEGOTIATION_STYLES, STYLE_NAMES, TEMPLATE_KEYS, TEMPLATE_NAMES, compose, opening_price, zl
 from ..core.models import Offer, OfferStatus, Severity, Valuation, Verdict
 from ..core.selection import pick_reason
@@ -113,12 +114,16 @@ def _place(offer: Offer) -> str:
 def card(offer: Offer, val: Valuation) -> str:
     marks = ("⌛ " if not offer.active else "") + ("★ " if offer.status is OfferStatus.WATCHED else "")
     flags = f' · <span class="flag">⚑{len(set(val.flags))}</span>' if val.flags else ""
+    level = getattr(val.risk, "level", "low")
+    if level != "low":
+        flags += f' · <span class="{"flag" if level == "high" else "soft"}">⚠ ryzyko {escape(val.risk.label)}</span>'
+    verdict = "MOŻLIWE OSZUSTWO" if level == "high" else val.verdict.value
     portal = SOURCE_NAMES.get(offer.raw.source, offer.raw.source)
     if offer.also_on:
         portal += " + " + ", ".join(SOURCE_NAMES.get(src, src) for src, _, _ in offer.also_on)
     return (f'<a class="card{" out" if not offer.active else ""}" href="/oferta/{offer.id}">'
             f'<div class="row"><span class="model">{marks}{escape(_name(offer))}</span>'
-            f'<span class="badge {VERDICT_CLASS[val.verdict]}">{escape(val.verdict.value)}</span></div>'
+            f'<span class="badge {VERDICT_CLASS[val.verdict]}">{escape(verdict)}</span></div>'
             f'<div class="row"><span class="price">{zl(offer.price)}</span>{_profit(val.expected_profit)}</div>'
             f'<div class="muted">{escape(portal)} · {escape(_place(offer))} · ocena {val.score}{flags}</div></a>')
 
@@ -173,11 +178,13 @@ def details_page(offer: Offer, val: Valuation, settings: Settings, *, csrf: str,
                  key: str | None = None, back: str = "/") -> str:
     style = style if style in NEGOTIATION_STYLES else settings.negotiation_style
     if key not in TEMPLATE_KEYS:
-        key = None
+        key = "verify" if getattr(val.risk, "level", "low") != "low" else None
     key, text = compose(offer, val, settings.message_templates, key=key, style=style,
                         pickup_km=settings.pickup_radius_km)
     header = (f'<header><div class="row"><a class="btn" href="{escape(back)}">← Lista</a>'
-              f'<span class="badge {VERDICT_CLASS[val.verdict]}">{escape(val.verdict.value)}</span></div></header>')
+              f'<span class="badge {VERDICT_CLASS[val.verdict]}">'
+              f'{escape("MOŻLIWE OSZUSTWO" if getattr(val.risk, "level", "") == "high" else val.verdict.value)}'
+              f"</span></div></header>")
     parts = []
     if offer.raw.photos:
         parts.append(f'<img class="photo" src="{escape(offer.raw.photos[0], quote=True)}" alt="" loading="lazy" '
@@ -201,6 +208,14 @@ def details_page(offer: Offer, val: Valuation, settings: Settings, *, csrf: str,
         items = "".join(f'<li class="{"flag" if f.severity is Severity.HARD else "soft"}">⚑ {escape(f.label)}</li>'
                         for f in dict.fromkeys(val.flags))
         parts.append(f'<div class="box"><b>Czerwone flagi</b><ul>{items}</ul></div>')
+    risk = val.risk
+    if risk is not None and getattr(risk, "level", "low") != "low":
+        title = "MOŻLIWE OSZUSTWO" if risk.level == "high" else f"Ryzyko oszustwa: {risk.label}"
+        items = "".join(f"<li>{escape(r)}</li>" for r in risk.reasons())
+        tips = "".join(f"<li>{escape(t)}</li>" for t in SAFETY_TIPS)
+        parts.append(f'<div class="box"><b class="{"flag" if risk.level == "high" else "soft"}">⚠ {escape(title)}</b>'
+                     f' ({risk.score} pkt)<ul>{items}</ul><details><summary>Jak kupić bezpiecznie</summary>'
+                     f"<ul>{tips}</ul></details></div>")
     if val.reasons:
         parts.append('<div class="box">' + "<br>".join(escape(r) for r in val.reasons[:4]) + "</div>")
     # wiadomość do sprzedającego

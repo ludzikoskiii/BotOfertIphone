@@ -85,6 +85,8 @@ FIELDS: dict[str, SortField] = {f.key: f for f in (
               lambda o, v: len(set(v.flags)) + (100 if v.has_hard_flag else 0)),
     SortField("source", "Portal", ASC, "A → Z", "Z → A", lambda o, v: o.raw.source),
     SortField("photos", "Liczba zdjęć", DESC, "najmniej", "najwięcej", lambda o, v: len(o.raw.photos)),
+    SortField("risk", "Ryzyko oszustwa", DESC, "najmniejsze", "największe",
+              lambda o, v: getattr(v.risk, "score", None)),
 )}
 
 

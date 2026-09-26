@@ -24,7 +24,7 @@ from html import escape
 from ..core.catalog import format_storage
 from ..core.messages import compose, opening_price, zl
 from ..core.models import Offer, OfferStatus, Valuation, Verdict
-from ..core.selection import auto_match, is_picked
+from ..core.selection import auto_match, high_risk, is_picked
 from ..core.settings import Settings
 from ..sources import SOURCE_NAMES
 from ..storage.repositories import OfferRepository, SettingsRepository
@@ -77,6 +77,9 @@ def format_offer(offer: Offer, val: Valuation, settings: Settings, *, kind: str 
     lines.append(f"{escape(SOURCE_NAMES.get(offer.raw.source, offer.raw.source))} · {escape(place)}")
     if val.flags:
         lines.append("⚑ " + escape(", ".join(f.label for f in dict.fromkeys(val.flags))))
+    risk = val.risk
+    if risk is not None and getattr(risk, "level", "low") != "low":
+        lines.append(f"⚠️ <b>Ryzyko oszustwa: {escape(risk.label)}</b> — " + escape("; ".join(risk.reasons()[:3])))
     if val.verdict is Verdict.NEGOTIATE:
         neg = val.negotiation
         top = f" (maks. {zl(neg.max_price)})" if neg.max_price else ""
@@ -184,7 +187,7 @@ class TelegramQueue:
                 history = repo.price_history(offer_id)
                 old = next((price for _, price in reversed(history[:-1]) if price > offer.price), None)
                 val = evaluate(offer)
-                if old is not None and is_picked(offer, val, self.settings.selection):
+                if old is not None and is_picked(offer, val, self.settings.selection) and not high_risk(val):
                     added += self.enqueue(offer, val, "drop", old_price=old, now=now)
         return added
 

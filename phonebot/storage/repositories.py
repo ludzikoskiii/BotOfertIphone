@@ -540,17 +540,23 @@ class SellerRepository:
             i not in known or known[i].checked_at is None or known[i].checked_at < cutoff)]
 
     def save_country(self, source: str, seller_id: str, country_code: str | None, *, login: str | None = None,
-                     business: bool | None = None) -> None:
+                     business: bool | None = None, reviews: int | None = None, positive_pct: float | None = None,
+                     negative: int | None = None, created_at: str | None = None) -> None:
+        """Dane z profilu sprzedawcy: kraj oraz (do wykrywania oszustw) opinie i wiek konta."""
         self.conn.execute(
             """
-            INSERT INTO sellers (source, seller_id, login, country_code, business, checked_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO sellers (source, seller_id, login, country_code, business, checked_at, reviews, positive_pct,
+                                 negative, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (source, seller_id) DO UPDATE SET
                 login = COALESCE(excluded.login, login), country_code = excluded.country_code,
-                business = COALESCE(excluded.business, business), checked_at = excluded.checked_at
+                business = COALESCE(excluded.business, business), checked_at = excluded.checked_at,
+                reviews = COALESCE(excluded.reviews, reviews), positive_pct = COALESCE(excluded.positive_pct,
+                positive_pct), negative = COALESCE(excluded.negative, negative),
+                created_at = COALESCE(excluded.created_at, created_at)
             """,
             (source, seller_id, login, (country_code or "").upper() or None,
-             None if business is None else int(business), _iso(utcnow())))
+             None if business is None else int(business), _iso(utcnow()), reviews, positive_pct, negative, created_at))
 
     def mark_serial(self, source: str, seller_id: str, reason: str, login: str | None = None) -> None:
         self.conn.execute(
@@ -667,3 +673,71 @@ class AiRepository:
             WHERE o.is_active = 1 AND (a.text_model IS NULL OR a.text_model != ?)
             """, (model,))
         return [(r["source"], r["source_id"], r["title"]) for r in rows]
+
+
+@dataclass
+class BlockedSeller:
+    id: int
+    source: str
+    seller_id: str | None
+    login: str | None
+    phones: list[str]
+    title: str | None
+    reason: str | None
+    created_at: datetime | None
+
+
+class BlacklistRepository:
+    """Czarna lista sprzedających: ukrywa ich oferty na wszystkich portalach (login, ID albo numer telefonu)."""
+
+    def __init__(self, conn: sqlite3.Connection):
+        self.conn = conn
+
+    def add(self, raw: RawOffer, reason: str = "zablokowany ręcznie") -> int:
+        from ..core.fraud import phone_numbers
+
+        phones = phone_numbers(f"{raw.title}\n{raw.description or ''}")
+        cur = self.conn.execute(
+            "INSERT INTO blocked_sellers (source, seller_id, login, phones, title, reason, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (raw.source, raw.params.get("seller_id") or None, raw.params.get("seller") or None, json.dumps(phones),
+             raw.title, reason, _iso(utcnow())))
+        return int(cur.lastrowid)
+
+    def list(self) -> list[BlockedSeller]:
+        rows = self.conn.execute("SELECT * FROM blocked_sellers ORDER BY id DESC")
+        return [BlockedSeller(r["id"], r["source"], r["seller_id"], r["login"], json.loads(r["phones"] or "[]"),
+                              r["title"], r["reason"], _dt(r["created_at"])) for r in rows]
+
+    def remove(self, blocked_id: int) -> None:
+        self.conn.execute("DELETE FROM blocked_sellers WHERE id = ?", (blocked_id,))
+
+    def version(self) -> str:
+        row = self.conn.execute("SELECT COUNT(*), COALESCE(MAX(id), 0) FROM blocked_sellers").fetchone()
+        return f"{row[0]}:{row[1]}"
+
+
+class BlacklistMatcher:
+    """Szybkie sprawdzanie ofert: ten sam portal i ID, ten sam login (każdy portal) albo numer telefonu."""
+
+    def __init__(self, entries: list[BlockedSeller]):
+        self.ids = {(e.source, e.seller_id) for e in entries if e.seller_id}
+        self.logins = {e.login.lower(): e for e in entries if e.login}
+        self.phones = {p: e for e in entries for p in e.phones}
+
+    def __bool__(self) -> bool:
+        return bool(self.ids or self.logins or self.phones)
+
+    def match(self, raw: RawOffer) -> str | None:
+        if (raw.source, str(raw.params.get("seller_id") or "")) in self.ids:
+            return "ten sam sprzedający"
+        login = str(raw.params.get("seller") or "").lower()
+        if login and login in self.logins:
+            return f"login „{raw.params.get('seller')}”"
+        if self.phones:
+            from ..core.fraud import phone_numbers
+
+            for p in phone_numbers(f"{raw.title}\n{raw.description or ''}"):
+                if p in self.phones:
+                    return f"numer telefonu +{p}"
+        return None

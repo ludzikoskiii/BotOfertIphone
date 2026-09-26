@@ -226,6 +226,34 @@ MIGRATIONS: list[str] = [
         PRIMARY KEY (source, model, storage_gb)
     );
     """,
+    # v11 — wykrywanie oszustw: skróty zdjęć (liczone w tle, po ID ogłoszenia), opinie i wiek konta
+    # sprzedających, czarna lista sprzedających (ukrywa ich oferty na wszystkich portalach)
+    """
+    CREATE TABLE photo_hashes (
+        source      TEXT NOT NULL,
+        source_id   TEXT NOT NULL,
+        url         TEXT NOT NULL,
+        dhash       TEXT,
+        stock       INTEGER NOT NULL DEFAULT 0,
+        computed_at TEXT NOT NULL,
+        error       TEXT,
+        PRIMARY KEY (source, source_id)
+    );
+    ALTER TABLE sellers ADD COLUMN reviews INTEGER;
+    ALTER TABLE sellers ADD COLUMN positive_pct REAL;
+    ALTER TABLE sellers ADD COLUMN negative INTEGER;
+    ALTER TABLE sellers ADD COLUMN created_at TEXT;
+    CREATE TABLE blocked_sellers (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        source      TEXT NOT NULL,
+        seller_id   TEXT,
+        login       TEXT,
+        phones      TEXT NOT NULL DEFAULT '[]',
+        title       TEXT,
+        reason      TEXT,
+        created_at  TEXT NOT NULL
+    );
+    """,
 ]
 
 

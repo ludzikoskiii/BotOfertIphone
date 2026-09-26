@@ -54,6 +54,16 @@ def _self_test() -> str:
     if unprotect(stored) != "123:SELFTEST" or (is_encrypted() and not stored.startswith("dpapi:")):
         raise RuntimeError("magazyn sekretów (DPAPI) nie działa")
     secrets = "sekrety: DPAPI" if is_encrypted() else "sekrety: bez szyfrowania (nie Windows)"
+    import io
+
+    from PIL import Image
+
+    from .services.photo_hash import analyze
+
+    buf = io.BytesIO()
+    Image.new("RGB", (120, 120), "white").save(buf, "JPEG")
+    if not analyze(buf.getvalue())[1]:
+        raise RuntimeError("analiza zdjęć (oszustwa) nie działa")
 
     app = QApplication.instance() or QApplication(sys.argv)
     tmp = Path(tempfile.mkdtemp())

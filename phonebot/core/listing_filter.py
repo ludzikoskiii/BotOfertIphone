@@ -135,6 +135,7 @@ STAGE_LABELS = {
     "country": "kraj / język ogłoszenia",
     "seller": "sprzedawca seryjny",
     "manual": "odrzucona ręcznie",
+    "blacklist": "sprzedający na czarnej liście",
 }
 
 # ------------------------------------------------------------ pomocnicze ---

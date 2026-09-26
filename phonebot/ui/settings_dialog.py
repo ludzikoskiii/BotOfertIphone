@@ -209,11 +209,12 @@ class SettingsDialog(QDialog):
     retrain_requested = Signal()
 
     def __init__(self, settings: Settings, parent=None, false_positives: list[tuple[str, int]] | None = None, *,
-                 model_info=None, photo_model_ready: bool = False, labels: int = 0):
+                 model_info=None, photo_model_ready: bool = False, labels: int = 0, blacklist: list | None = None):
         super().__init__(parent)
         self.setWindowTitle("Ustawienia")
         self.resize(900, 700)
         self.settings = copy.deepcopy(settings)
+        self.blacklist = blacklist or []  # czarna lista (z bazy) — do przeglądu i usuwania
         self.false_positives = false_positives or []
         self.model_info = model_info
         self.photo_model_ready = photo_model_ready
@@ -232,6 +233,7 @@ class SettingsDialog(QDialog):
         tabs.addTab(self._ai_tab(), "AI lokalne")
         tabs.addTab(self._messages_tab(), "Wiadomości")
         tabs.addTab(self._portals_tab(), "Portale")
+        tabs.addTab(self._fraud_tab(), "Oszustwa")
         tabs.addTab(self._notify_tab(), "Powiadomienia")
         tabs.addTab(self._phone_tab(), "Telefon")
 
@@ -1002,6 +1004,79 @@ class SettingsDialog(QDialog):
             st.reference_manual = manual
         self._readers.append(read_refs)
         return self._page(allegro, ebay, ref)
+
+    def _fraud_tab(self) -> QWidget:
+        from ..core.fraud import SIGNALS
+
+        s = self.settings
+        intro = QLabel("Wykrywanie możliwych oszustw działa lokalnie i za darmo (reguły, skróty zdjęć). Każdy sygnał "
+                       "dodaje punkty; bardzo niska cena razem z innym sygnałem dodaje premię. <b>Średnie</b> ryzyko → "
+                       "werdykt najwyżej DO WERYFIKACJI; <b>wysokie</b> → czerwona etykieta „MOŻLIWE OSZUSTWO”, oferta "
+                       "nie trafia automatycznie do „Wybrane” i nie wywołuje powiadomień.")
+        intro.setWordWrap(True)
+        intro.setTextFormat(Qt.TextFormat.RichText)
+        general = QGroupBox("Progi")
+        general.setLayout(self._form([
+            Field("fraud.enabled", "Wykrywaj możliwe oszustwa", "bool"),
+            Field("fraud.medium_threshold", "Ryzyko średnie od", "int", 1, 300, 5, " pkt"),
+            Field("fraud.high_threshold", "Ryzyko wysokie od", "int", 1, 300, 5, " pkt"),
+            Field("fraud.combo_bonus", "Premia: bardzo tanio + inny sygnał", "int", 0, 100, 5, " pkt"),
+            Field("fraud.cheap_ratio", "„Bardzo tanio” — poniżej", "pct", 5, 100, 5, " % wartości rynkowej"),
+            Field("fraud.gift_ratio", "„Zafoliowany/prezent” podejrzany poniżej", "pct", 5, 100, 5, " % wartości"),
+            Field("fraud.new_account_days", "Nowe konto — młodsze niż", "int", 1, 365, 1, " dni"),
+            Field("fraud.negative_pct", "Dużo negatywnych — pozytywnych poniżej", "float", 0, 100, 1, " %"),
+            Field("fraud.expensive_price", "„Drogi telefon” od", "float", 0, 20000, 100, " zł"),
+            Field("fraud.expensive_count", "…i co najmniej ofert", "int", 1, 50),
+            Field("fraud.photo_distance", "To samo zdjęcie — różnica skrótu do", "int", 0, 7, 1, " bitów"),
+            Field("fraud.photos_per_run", "Zdjęć sprawdzanych w tle na raz", "int", 1, 500),
+        ]))
+        weights = QGroupBox("Wagi sygnałów (punkty)")
+        wf = QFormLayout(weights)
+        self.fraud_weights: dict[str, QSpinBox] = {}
+        for key, (label, default) in SIGNALS.items():
+            spin = QSpinBox(minimum=0, maximum=100)
+            spin.setObjectName(f"fraud_weight_{key}")
+            spin.setValue(int(s.fraud.weights.get(key, default)))
+            wf.addRow(label + ":", spin)
+            self.fraud_weights[key] = spin
+        self._readers.append(lambda st: setattr(st.fraud, "weights", {
+            k: sp.value() for k, sp in self.fraud_weights.items() if sp.value() != SIGNALS[k][1]}))
+        black = QGroupBox("Czarna lista sprzedających (ich oferty są ukryte na wszystkich portalach)")
+        bl = QVBoxLayout(black)
+        self.blacklist_table = QTableWidget(0, 4)
+        self.blacklist_table.setObjectName("blacklist")
+        self.blacklist_table.setHorizontalHeaderLabels(["Portal", "Sprzedający", "Telefony", "Dodano (ogłoszenie)"])
+        self.blacklist_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.blacklist_table.verticalHeader().hide()
+        self.blacklist_removed: set[int] = set()
+        for e in self.blacklist:
+            r = self.blacklist_table.rowCount()
+            self.blacklist_table.insertRow(r)
+            vals = [SOURCE_NAMES.get(e.source, e.source), e.login or e.seller_id or "—",
+                    ", ".join("+" + p for p in e.phones) or "—", e.title or ""]
+            for c, v in enumerate(vals):
+                item = QTableWidgetItem(v)
+                item.setData(Qt.ItemDataRole.UserRole, e.id)
+                self.blacklist_table.setItem(r, c, item)
+        remove = QPushButton("Usuń zaznaczonego z czarnej listy")
+        remove.clicked.connect(self._blacklist_remove)
+        hint = QLabel("Dodajesz przyciskiem „⛔ Zablokuj sprzedającego” (prawy przycisk na ofercie albo menu "
+                      "„To nie jest telefon” w szczegółach). Dopasowanie: ten sam login (każdy portal), ID albo "
+                      "numer telefonu z ogłoszenia. Usunięcie z listy przywraca jego oferty.")
+        hint.setWordWrap(True)
+        hint.setObjectName("muted")
+        bl.addWidget(self.blacklist_table)
+        bl.addWidget(remove)
+        bl.addWidget(hint)
+        return self._page(intro, general, weights, black)
+
+    def _blacklist_remove(self) -> None:
+        row = self.blacklist_table.currentRow()
+        if row < 0:
+            return
+        item = self.blacklist_table.item(row, 0)
+        self.blacklist_removed.add(int(item.data(Qt.ItemDataRole.UserRole)))
+        self.blacklist_table.removeRow(row)
 
     def _phone_tab(self) -> QWidget:
         from ..web.auth import MIN_PIN_LEN

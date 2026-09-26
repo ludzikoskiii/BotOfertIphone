@@ -20,6 +20,7 @@ class ViewFilter:
     min_profit: float = 150.0
     shipping_only: bool = False
     colors: list[str] = field(default_factory=list)  # np. ["green"]; puste = wszystkie
+    risk_levels: list[str] = field(default_factory=list)  # low / medium / high; puste = wszystkie
     text: str = ""
 
     def is_active(self) -> bool:
@@ -47,6 +48,8 @@ def matches(offer: Offer, val: Valuation, f: ViewFilter) -> bool:
     if f.min_profit_enabled and (val.expected_profit is None or val.expected_profit < f.min_profit):
         return False
     if f.colors and val.color.value not in f.colors:
+        return False
+    if f.risk_levels and getattr(val.risk, "level", "low") not in f.risk_levels:
         return False
     if f.text:
         haystack = normalize(f"{offer.raw.title} {offer.raw.city or ''}")

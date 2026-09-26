@@ -115,8 +115,10 @@ class FiltersPanel(QScrollArea):
         colors_box, self.color_checks = _checks([(c.value, COLOR_LABEL[c]) for c in RowColor], f.colors, self._changed)
         cond_box, self.cond_checks = _checks([(c.value, c.label) for c in Condition], f.conditions, self._changed)
         src_box, self.src_checks = _checks(list(SOURCE_NAMES.items()), f.sources, self._changed)
+        risk_box, self.risk_checks = _checks([("low", "niskie"), ("medium", "⚠ średnie"), ("high", "⛔ wysokie")],
+                                             f.risk_levels, self._changed)
         for title, w in (("Ocena (puste = wszystkie)", colors_box), ("Stan (puste = wszystkie)", cond_box),
-                         ("Portal (puste = wszystkie)", src_box)):
+                         ("Portal (puste = wszystkie)", src_box), ("Ryzyko oszustwa (puste = wszystkie)", risk_box)):
             g = QGroupBox(title)
             QVBoxLayout(g).addWidget(w)
             lay.addWidget(g)
@@ -162,6 +164,7 @@ class FiltersPanel(QScrollArea):
             conditions=picked(self.cond_checks), sources=picked(self.src_checks),
             min_profit_enabled=self.min_profit_on.isChecked(), min_profit=self.min_profit.value(),
             shipping_only=self.shipping_only.isChecked(), colors=picked(self.color_checks), text=self.text.text(),
+            risk_levels=picked(self.risk_checks),
         )
 
     def set_filter(self, f: ViewFilter) -> None:
@@ -175,7 +178,7 @@ class FiltersPanel(QScrollArea):
         self.min_profit_on.setChecked(f.min_profit_enabled)
         self.min_profit.setValue(f.min_profit)
         for checks, selected in ((self.color_checks, f.colors), (self.cond_checks, f.conditions),
-                                 (self.src_checks, f.sources)):
+                                 (self.src_checks, f.sources), (self.risk_checks, f.risk_levels)):
             for v, cb in checks.items():
                 cb.setChecked(v in selected)
         for i in range(self.models.count()):

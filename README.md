@@ -3,7 +3,7 @@
 Aplikacja desktopowa (Windows) do wyszukiwania ofert używanych iPhone'ów na
 Allegro Lokalnie, Vinted i Sprzedajemy.pl, wyceny ich opłacalności i podpowiadania, czy i za ile kupić.
 
-> **Status: wersja 1.10.0.** Trzy portale, wycena, werdykty i negocjacje, filtry, zabezpieczenia werdyktu,
+> **Status: wersja 1.11.0.** Trzy portale, wycena, werdykty i negocjacje, filtry, zabezpieczenia werdyktu,
 > **darmowe lokalne AI** (klasyfikator tytułów, analiza zdjęć, opcjonalnie model językowy w Ollamie),
 > szablony wiadomości do sprzedającego, automatyczne odświeżanie, powiadomienia Windows i Telegram
 > oraz gotowy plik `PhoneBot.exe`. Program nie korzysta z żadnych płatnych usług.
@@ -295,6 +295,31 @@ są sprawdzani przy kolejnych odświeżeniach.
 
 Uwaga: Vinted podaje ceny w walucie kraju, z którego łączy się komputer — z Polski wszystkie ceny są
 w złotych (także ofert zagranicznych). Ceny w innej walucie (np. z serwera testowego poza Polską) są pomijane.
+
+### Wykrywanie możliwych oszustw
+
+Działa lokalnie i za darmo (reguły i skróty zdjęć — bez zewnętrznych usług). Każdy sygnał dodaje punkty
+(wagi i progi w **⚙ Ustawienia → Oszustwa**); suma daje ryzyko **niskie / średnie / wysokie** z listą powodów:
+
+- **sprzedający:** nowe konto (< 30 dni), brak opinii albo dużo negatywnych, nowe konto z wieloma drogimi
+  telefonami — tam, gdzie portal podaje te dane (profil Vinted, opinie eBay); gdzie ich nie podaje,
+  sygnał nie działa (program nie zgaduje);
+- **tekst:** kontakt poza portalem (WhatsApp, Telegram, e-mail, numer telefonu — zagraniczny osobno),
+  „tylko wysyłka” przy bardzo niskiej cenie, przedpłata / BLIK / „link do płatności”, „nowy, zafoliowany”
+  albo „prezent” wyraźnie poniżej rynku, opis skopiowany z ogłoszenia innego sprzedającego;
+- **zdjęcia** (liczone w tle, zapisywane po ID ogłoszenia): to samo lub prawie to samo zdjęcie u innego
+  sprzedającego / w innym mieście (skrót dHash), zdjęcie katalogowe (jednolite białe tło), brak zdjęć;
+- **cena:** bardzo niska cena **razem z innym sygnałem** dodaje premię — tak wyglądają typowe oszustwa.
+
+Skutki: **średnie** ryzyko → werdykt najwyżej DO WERYFIKACJI; **wysokie** → czerwona etykieta
+**„MOŻLIWE OSZUSTWO”**, oferta nie trafia automatycznie do „Wybrane” i nie wywołuje powiadomień.
+W szczegółach są powody i porady bezpiecznego zakupu, a domyślną wiadomością są pytania kontrolne.
+Kolumna **„Ryzyko”** (włączana w menu kolumn) jest sortowalna, a w panelu filtrów można filtrować po ryzyku.
+Oznaczenia widać też na telefonie i w wiadomościach Telegram.
+
+**Czarna lista:** „⛔ Zablokuj sprzedającego” (prawy przycisk na ofercie albo menu „To nie jest telefon”)
+ukrywa jego oferty na wszystkich portalach — ten sam login, ID albo numer telefonu z ogłoszenia (trafiają
+do „Odrzucone” z powodem). Listę przejrzysz i zmienisz w Ustawienia → Oszustwa; usunięcie przywraca oferty.
 
 ### Sprzedawcy seryjni
 

@@ -28,6 +28,8 @@ from ..core.normalizer import parse_offer
 from ..core.settings import Settings
 from ..sources import REGISTRY
 from ..storage.repositories import (
+    BlacklistMatcher,
+    BlacklistRepository,
     OfferRepository,
     RejectedRepository,
     SellerInfo,
@@ -71,6 +73,7 @@ class OfferGuard:
         self.rejected = RejectedRepository(conn)
         self.sellers = SellerRepository(conn)
         self.whitelist = self.rejected.whitelist()
+        self.blacklist = BlacklistMatcher(BlacklistRepository(conn).list())
         self.listing_filter = ListingFilter(settings.listing_filter, self.whitelist)
         self._medians: dict[tuple[str, int | None], float | None] = {}
         self.restored = 0  # ile ofert wróciło z odrzuconych przy ostatnim ``refilter_stored``
@@ -105,6 +108,10 @@ class OfferGuard:
                         international: bool) -> FilterDecision | None:
         """Etapy sprzedawcy: seryjny → odrzuć; zagraniczny → odrzuć (tryb „tylko Polska”) lub oflaguj."""
         raw = p.raw
+        blocked = self.blacklist.match(raw) if self.blacklist else None
+        if blocked:  # Twoja czarna lista — na każdym portalu, także ofert z białej listy
+            return FilterDecision(False, "blacklist", f"sprzedający na czarnej liście ({blocked})",
+                                  raw.params.get("seller") or None)
         if self.whitelisted(raw):
             return None
         key = seller_key(raw)
@@ -185,7 +192,8 @@ class OfferGuard:
         s = self.settings
         payload = {"rules": RULES_VERSION, "filter": json.loads(json.dumps(s.listing_filter.__dict__, default=str)),
                    "country": s.vinted_country_mode, "min_price": s.min_valid_price,
-                   "serial": [s.sanity.serial_enabled, s.sanity.serial_min_offers, s.sanity.serial_price_ratio]}
+                   "serial": [s.sanity.serial_enabled, s.sanity.serial_min_offers, s.sanity.serial_price_ratio],
+                   "blacklist": BlacklistRepository(self.conn).version()}
         return hashlib.sha1(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
     def refilter_stored(self, *, force: bool = False) -> int:
@@ -226,6 +234,7 @@ class OfferGuard:
                             moved += 1
             if self.settings.vinted_country_mode != "pl":
                 self.restored = self.restore_country_rejected()
+            self.restored += self.restore_rejected("blacklist")  # usunięci z czarnej listy wracają
             settings_repo.set_value(_SIGNATURE_KEY, sig)
             if not in_tx:
                 self.conn.execute("COMMIT")
@@ -240,13 +249,17 @@ class OfferGuard:
         return moved
 
     def restore_country_rejected(self) -> int:
-        """Oferty odrzucone wcześniej za kraj/język sprzedawcy → z powrotem do wyników (z flagą „z zagranicy”).
+        return self.restore_rejected("country")
+
+    def restore_rejected(self, stage: str) -> int:
+        """Oferty odrzucone wcześniej na etapie ``stage`` (np. kraj, czarna lista), które obecne reguły
+        przepuszczają → z powrotem do wyników (zagraniczne z flagą „z zagranicy”).
 
         Każda przechodzi pozostałe reguły (filtr tekstu, sprzedawcy seryjni, test ceny) tak jak przy skanie.
         Bez białej listy — to zmiana ustawień, nie Twoja poprawka. Ostatnie „widziano” = chwila odrzucenia,
         więc oferty dawno niewidziane na portalu znikną same (``offer_stale_days``)."""
         rows = self.conn.execute(
-            "SELECT raw_json, rejected_at FROM rejected_offers WHERE stage = 'country'").fetchall()
+            "SELECT raw_json, rejected_at FROM rejected_offers WHERE stage = ?", (stage,)).fetchall()
         by_source: dict[str, list[tuple[Prepared, str]]] = defaultdict(list)
         for row in rows:
             raw = raw_from_json(row["raw_json"])
@@ -264,7 +277,7 @@ class OfferGuard:
                 if decision.accepted:
                     decision = self.price_decision(p)
                 if not decision.accepted:
-                    if decision.stage != "country":  # inny powód odrzucenia — zapisz go
+                    if decision.stage != stage:  # inny powód odrzucenia — zapisz go
                         self.rejected.add(p.raw, decision.stage, decision.reason, decision.keyword)
                     continue
                 if decision.suspicious:

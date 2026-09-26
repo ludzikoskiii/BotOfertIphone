@@ -48,6 +48,7 @@ class OfferDetailsView(QWidget):
     not_phone = Signal(int, str)  # offer_id, klasa (accessory | part | wanted)
     message_copied = Signal(str)  # komunikat do paska stanu
     pick_requested = Signal(int, bool)  # offer_id, True = dodaj do „Wybrane”, False = usuń
+    block_requested = Signal(int)  # offer_id — „Zablokuj sprzedającego”
 
     def __init__(self, settings: Settings, repo: OfferRepository, photos: ThumbnailCache, parent=None, *,
                  compact: bool = True):
@@ -99,6 +100,9 @@ class OfferDetailsView(QWidget):
         menu = QMenu(self.not_phone_btn)
         for label, text in NOT_PHONE_CHOICES:
             menu.addAction(text, lambda label=label: self._mark_not_phone(label))
+        menu.addSeparator()
+        menu.addAction("⛔ Zablokuj sprzedającego (ukryj jego oferty na wszystkich portalach)",
+                       lambda: self.offer is not None and self.block_requested.emit(self.offer.id))
         self.not_phone_btn.setMenu(menu)
         # --- wiadomość do sprzedającego: gotowy tekst, można go poprawić przed skopiowaniem ---
         self.msg_box = QGroupBox("Wiadomość do sprzedającego")
@@ -197,7 +201,10 @@ class OfferDetailsView(QWidget):
         self.render()
         self._refresh_buttons()
         # NEGOCJUJ → Twój styl negocjacji; KUPUJ → kupno; DO WERYFIKACJI → pytania
-        self._select_template(template_for(val.verdict, val, self.settings.negotiation_style))
+        key = template_for(val.verdict, val, self.settings.negotiation_style)
+        if getattr(val.risk, "level", "low") != "low":
+            key = "verify"  # podejrzana oferta — najpierw pytania kontrolne, nie negocjacja ceny
+        self._select_template(key)
         self._show_photo(0)
 
     def render(self) -> None:
@@ -325,6 +332,7 @@ class OfferDetailsDialog(QDialog):
     not_phone = Signal(int, str)
     message_copied = Signal(str)
     pick_requested = Signal(int, bool)
+    block_requested = Signal(int)
 
     def __init__(self, offer: Offer, val: Valuation, settings: Settings, repo: OfferRepository,
                  photos: ThumbnailCache, parent=None):
@@ -337,6 +345,8 @@ class OfferDetailsDialog(QDialog):
         self.view.not_phone.connect(self.not_phone.emit)
         self.view.message_copied.connect(self.message_copied.emit)
         self.view.pick_requested.connect(self.pick_requested.emit)
+        self.view.block_requested.connect(self.block_requested.emit)
+        self.view.block_requested.connect(lambda *_: self.accept())
         self.view.not_phone.connect(lambda *_: self.accept())  # oferta znika z tabeli — okno też
         self.view.open_btn.setDefault(True)
         self.browser, self.watch_btn, self.hide_btn = self.view.browser, self.view.watch_btn, self.view.hide_btn

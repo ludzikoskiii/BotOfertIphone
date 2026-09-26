@@ -12,6 +12,7 @@ import typing
 from dataclasses import dataclass, field
 from typing import Any
 
+from .fraud import FraudConfig
 from .listing_filter import ListingFilterConfig
 from .messages import DEFAULT_TEMPLATES, OLD_NEGOTIATE_TEMPLATE
 from .models import Mode, RedFlag
@@ -215,6 +216,8 @@ class Settings:
     listing_filter: ListingFilterConfig = field(default_factory=ListingFilterConfig)
     # --- zabezpieczenia werdyktu (testy sensowności, limity przy flagach, sprzedawcy seryjni) ---
     sanity: SanityConfig = field(default_factory=SanityConfig)
+    # --- wykrywanie oszustw (wagi i progi) ---
+    fraud: FraudConfig = field(default_factory=FraudConfig)
     # --- lista „Wybrane”: kryteria automatyczne ---
     selection: SelectionCriteria = field(default_factory=SelectionCriteria)
     # --- lokalne AI (etap 2) ---

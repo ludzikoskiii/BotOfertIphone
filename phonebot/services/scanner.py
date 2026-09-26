@@ -208,7 +208,9 @@ class Scanner:
             for source, by_id in profiles.items():
                 for seller_id, prof in by_id.items():
                     sellers.save_country(source, seller_id, prof.country_code, login=prof.login,
-                                         business=prof.business)
+                                         business=prof.business, reviews=prof.reviews,
+                                         positive_pct=prof.positive_pct, negative=prof.negative,
+                                         created_at=prof.created_at)
             self.conn.execute("COMMIT")
         except Exception:
             self.conn.execute("ROLLBACK")

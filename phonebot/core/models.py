@@ -327,6 +327,7 @@ class Valuation:
     color: RowColor
     flags: list[RedFlag]
     reasons: list[str]
+    risk: object | None = None  # core.fraud.FraudAssessment (ryzyko oszustwa) — ustawiane przez Evaluator
 
     @property
     def has_hard_flag(self) -> bool:

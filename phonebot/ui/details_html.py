@@ -8,6 +8,7 @@ from datetime import datetime
 from html import escape
 
 from ..core.catalog import format_storage
+from ..core.fraud import SAFETY_TIPS
 from ..core.models import Offer, OfferStatus, RedFlag, Severity, Valuation
 from ..core.sanity import SANITY_FLAGS
 from ..core.selection import pick_reason
@@ -110,10 +111,11 @@ def build_details_html(
                           for src, url, price in offer.also_on)
         parts.append(f'<p class="muted">Ta sama oferta także na: {links}</p>')
     # werdykt w osobnej linii — „DO WERYFIKACJI” nie łamie się w wąskim panelu
+    verdict = "MOŻLIWE OSZUSTWO" if getattr(val.risk, "level", "") == "high" else val.verdict.value
     parts.append(
         f'<table width="100%" cellpadding="10" style="background:{pal.verdict_bg[val.verdict]}; '
         f'color:{pal.verdict_fg[val.verdict]};"><tr><td>'
-        f'<span style="font-size:15pt; font-weight:bold; white-space:nowrap;">{val.verdict.value}</span><br>'
+        f'<span style="font-size:15pt; font-weight:bold; white-space:nowrap;">{verdict}</span><br>'
         f'Cena: <b>{zl(raw.price)}</b> · Ocena: <b>{val.score}/100</b> ({COLOR_LABEL[val.color]})'
         f"</td></tr></table>"
     )
@@ -165,6 +167,20 @@ def build_details_html(
 
     # --- warstwy oceny: reguły + lokalne AI ---
     parts.append(_layers_html(offer, val, settings, pal))
+
+    # --- ryzyko oszustwa ---
+    risk = val.risk
+    if risk is not None and risk.signals:
+        cls = "flag-hard" if risk.level == "high" else "flag-soft" if risk.level == "medium" else "muted"
+        title = "MOŻLIWE OSZUSTWO" if risk.level == "high" else f"Ryzyko oszustwa: {risk.label}"
+        parts.append(f'<h3>Ryzyko oszustwa</h3><p class="{cls}"><b>{escape(title)}</b> ({risk.score} pkt)</p><ul>')
+        for sgn in risk.signals:
+            detail = f" — {escape(sgn.detail)}" if sgn.detail else ""
+            parts.append(f"<li>{escape(sgn.label)}{detail} <span class=\"muted\">(+{sgn.points} pkt)</span></li>")
+        parts.append("</ul>")
+        if risk.level != "low":
+            parts.append("<p><b>Jak kupić bezpiecznie:</b></p><ul>"
+                         + "".join(f"<li>{escape(t)}</li>" for t in SAFETY_TIPS) + "</ul>")
 
     # --- flagi ---
     if val.flags:

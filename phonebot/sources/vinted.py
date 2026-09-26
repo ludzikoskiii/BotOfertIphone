@@ -134,6 +134,25 @@ def parse_item(item: dict[str, Any]) -> RawOffer | None:
     )
 
 
+def _feedback(user: dict[str, Any]) -> dict[str, Any]:
+    """Opinie i wiek konta z profilu (tylko pola, które Vinted faktycznie podał)."""
+    out: dict[str, Any] = {}
+    total, positive = user.get("feedback_count"), user.get("positive_feedback_count")
+    negative = user.get("negative_feedback_count")
+    if isinstance(total, int):
+        out["reviews"] = total
+        if isinstance(positive, int) and total:
+            out["positive_pct"] = round(100 * positive / total, 1)
+    if isinstance(negative, int):
+        out["negative"] = negative
+    created = user.get("created_at") or user.get("registered_at")
+    if isinstance(created, str) and created[:4].isdigit():
+        out["created_at"] = created
+    elif isinstance(created, (int, float)) and created > 1e9:
+        out["created_at"] = datetime.fromtimestamp(created).astimezone().isoformat()
+    return out
+
+
 def find_items(data: Any) -> list[dict[str, Any]]:
     """Lista przedmiotów z odpowiedzi — pod kluczem ``items`` albo gdziekolwiek w strukturze."""
     if isinstance(data, dict) and isinstance(data.get("items"), list):
@@ -217,7 +236,8 @@ class VintedAdapter(SourceAdapter):
                 continue
             country = user.get("country_code") or user.get("country_iso_code")
             out[seller_id] = SellerProfile(str(country).upper() if country else None, user.get("login"),
-                                           user.get("business") if isinstance(user.get("business"), bool) else None)
+                                           user.get("business") if isinstance(user.get("business"), bool) else None,
+                                           **_feedback(user))
         return out
 
     async def _fetch(self, params: dict[str, Any]) -> Any:

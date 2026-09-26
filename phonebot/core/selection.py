@@ -27,8 +27,13 @@ class SelectionCriteria:
     skip_hard_flags: bool = True  # oferta z poważną flagą (iCloud, IMEI, podróbka) nie trafia automatycznie
 
 
+def high_risk(val: Valuation) -> bool:
+    """Wysokie ryzyko oszustwa (``core.fraud``) — nigdy automatycznie do „Wybrane” ani na Telegram."""
+    return getattr(val.risk, "level", "low") == "high"
+
+
 def auto_match(offer: Offer, val: Valuation, c: SelectionCriteria) -> bool:
-    if not c.enabled or offer.status is OfferStatus.HIDDEN:
+    if not c.enabled or offer.status is OfferStatus.HIDDEN or high_risk(val):
         return False
     if c.verdicts and val.verdict.value not in c.verdicts:
         return False

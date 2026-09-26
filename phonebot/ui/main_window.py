@@ -84,6 +84,7 @@ from .table_model import (
     COL_FIELD,
     DEFAULT_WIDTHS,
     FIELD_COL,
+    FRAUD_LABEL,
     HEADERS,
     Col,
     OffersTableModel,
@@ -211,6 +212,11 @@ class MainWindow(QMainWindow):
         self.reference_timer.timeout.connect(self.refresh_references)
         self.reference_timer.start()
         QTimer.singleShot(60_000, self.refresh_references)
+        # skróty zdjęć do wykrywania oszustw — w tle co 10 minut (i po każdym odświeżeniu ofert)
+        self._hash_worker = None
+        self.photo_hash_timer = QTimer(self, interval=10 * 60_000)
+        self.photo_hash_timer.timeout.connect(self.hash_photos)
+        self.photo_hash_timer.start()
         self._configure_timer()
         self.refresh_source_status()
         # wersja na telefon (serwer www w tle): włączana w Ustawieniach → Telefon
@@ -325,7 +331,8 @@ class MainWindow(QMainWindow):
         self._min_widths = {c: fm.horizontalAdvance(HEADERS[c] + " ²↓") + 28 for c in Col}
         # etykieta werdyktu (kropka + tekst) musi się zmieścić w całości, także „DO WERYFIKACJI”
         self._min_widths[Col.VERDICT] = max(self._min_widths[Col.VERDICT],
-                                            max(fm.horizontalAdvance(v.value) for v in Verdict) + 34 + 16)
+                                            max(fm.horizontalAdvance(t) for t in [*(v.value for v in Verdict),
+                                                                                   FRAUD_LABEL]) + 34 + 16)
         for col in Col:
             default = max(DEFAULT_WIDTHS[col], self._min_widths[col])
             width = self.settings.column_widths.get(col_key(col), default)
@@ -519,6 +526,7 @@ class MainWindow(QMainWindow):
         self.details.setMinimumWidth(PANEL_PHOTO_SIZE.width() + 2 * MARGIN + 24)
         self.details.status_changed.connect(self._status_changed)
         self.details.pick_requested.connect(self.set_picked)
+        self.details.block_requested.connect(self.block_seller)
         self.details.full_view_requested.connect(self._details_for_current)
         self.details.not_phone.connect(self.mark_not_phone)
         self.details.message_copied.connect(self._show_status)
@@ -882,6 +890,24 @@ class MainWindow(QMainWindow):
         self.reload()
         self._maybe_retrain()
 
+    def block_seller(self, offer_id: int) -> int:
+        """Czarna lista: oferty tego sprzedającego znikają na wszystkich portalach (login, ID, numer telefonu).
+        Zwraca liczbę ukrytych ofert. Listę zmienisz w Ustawieniach → Oszustwa."""
+        row = self.model.row_of(offer_id)
+        if row is None:
+            return 0
+        offer = self.model.row_at(row)[0]
+        from ..storage.repositories import BlacklistRepository
+
+        BlacklistRepository(self.conn).add(offer.raw, f"zablokowany ręcznie: {offer.raw.title[:60]}")
+        guard = OfferGuard(self.conn, self.settings)
+        moved = guard.refilter_stored(force=True)
+        who = offer.raw.params.get("seller") or offer.raw.title[:40]
+        self._status.setText(f"Zablokowano sprzedającego „{who}” — ukryto {moved} "
+                             f"{plural(moved, 'ofertę', 'oferty', 'ofert').split(' ', 1)[1]}.")
+        self.reload()
+        return moved
+
     def current_offer_id(self) -> int | None:
         index = self.table.currentIndex()
         return self._row_at(index)[0].id if index.isValid() else None
@@ -989,18 +1015,30 @@ class MainWindow(QMainWindow):
     def open_settings(self) -> SettingsDialog:
         fp = RejectedRepository(self.conn).false_positives_by_keyword()
         clf = current_classifier()
+        from ..storage.repositories import BlacklistRepository
+
         dialog = SettingsDialog(self.settings, self, false_positives=fp, model_info=clf.info if clf else None,
                                 photo_model_ready=model_ready(models_dir()),
-                                labels=labels_count(self.conn, self.settings))
+                                labels=labels_count(self.conn, self.settings),
+                                blacklist=BlacklistRepository(self.conn).list())
         dialog.parts_editor_requested.connect(self.open_parts_editor)
         dialog.retrain_requested.connect(self.ai_retrain_requested.emit)
         dialog.retrain_requested.connect(lambda: dialog.set_training_state("Douczanie w tle…"))
         self._settings_dialog = dialog
         dialog.finished.connect(lambda _r: setattr(self, "_settings_dialog", None))
-        dialog.accepted.connect(lambda: self.apply_settings(dialog.result_settings()))
+        dialog.accepted.connect(lambda: self._settings_accepted(dialog))
         dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         dialog.open()
         return dialog
+
+    def _settings_accepted(self, dialog: SettingsDialog) -> None:
+        if dialog.blacklist_removed:  # usunięci z czarnej listy — ich oferty wracają przy ponownym filtrowaniu
+            from ..storage.repositories import BlacklistRepository
+
+            repo = BlacklistRepository(self.conn)
+            for blocked_id in dialog.blacklist_removed:
+                repo.remove(blocked_id)
+        self.apply_settings(dialog.result_settings())
 
     def open_rejected(self) -> RejectedDialog:
         dialog = RejectedDialog(RejectedRepository(self.conn), self)
@@ -1091,6 +1129,24 @@ class MainWindow(QMainWindow):
             self._web_changes = self.web.app.changes
             self.reload()
 
+    def hash_photos(self) -> bool:
+        """Skróty zdjęć (duplikaty między ogłoszeniami, zdjęcia katalogowe) w wątku roboczym."""
+        from ..services.photo_hash import hash_in_background
+
+        if self._hash_worker is not None or not self.settings.fraud.enabled:
+            return False
+        worker = FuncWorker(hash_in_background, self.db_path, copy.deepcopy(self.settings))
+        worker.finished.connect(self._photos_hashed)
+        worker.failed.connect(self._photos_hashed)
+        self._hash_worker = worker
+        start_in_thread(worker, self)
+        return True
+
+    def _photos_hashed(self, result) -> None:
+        self._hash_worker = None
+        if isinstance(result, int) and result:
+            self.reload()  # nowe skróty zdjęć → nowa ocena ryzyka
+
     def refresh_references(self, force: bool = False) -> bool:
         """Ceny referencyjne w wątku roboczym (raz dziennie; błędy nie przeszkadzają w pracy)."""
         from ..services.reference_prices import due, refresh_in_background
@@ -1150,6 +1206,7 @@ class MainWindow(QMainWindow):
         self._status.setText(f"{datetime.now():%H:%M} · " + (summary or "Brak włączonych portali."))
         self._status.setToolTip("\n".join(errors))
         self.reload()
+        QTimer.singleShot(2000, self.hash_photos)  # nowe oferty → skróty ich zdjęć w tle
         if post is not None and post.green:
             self.notify_green(post.green)
 
@@ -1204,6 +1261,7 @@ class MainWindow(QMainWindow):
         dialog.not_phone.connect(self.mark_not_phone)
         dialog.message_copied.connect(self._show_status)
         dialog.pick_requested.connect(self.set_picked)
+        dialog.block_requested.connect(self.block_seller)
         dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         dialog.show()
         return dialog
@@ -1256,6 +1314,7 @@ class MainWindow(QMainWindow):
             menu.addAction("Przywróć (odkryj)", lambda: self.set_offer_status(offer.id, OfferStatus.NEW))
         else:
             menu.addAction("Ukryj ofertę", lambda: self.set_offer_status(offer.id, OfferStatus.HIDDEN))
+        menu.addAction("⛔ Zablokuj sprzedającego", lambda: self.block_seller(offer.id))
         menu.exec(self.table.viewport().mapToGlobal(pos))
 
     def closeEvent(self, event) -> None:  # noqa: N802

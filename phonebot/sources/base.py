@@ -141,6 +141,10 @@ class SellerProfile:
     country_code: str | None
     login: str | None = None
     business: bool | None = None
+    reviews: int | None = None  # liczba opinii (do wykrywania oszustw)
+    positive_pct: float | None = None
+    negative: int | None = None
+    created_at: str | None = None  # data założenia konta (ISO), gdy portal ją podaje
 
 
 REGISTRY: dict[str, type[SourceAdapter]] = {}

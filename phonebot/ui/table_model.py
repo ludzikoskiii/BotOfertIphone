@@ -42,6 +42,7 @@ class Col(IntEnum):
     LOCATION = 13
     ADDED = 14
     LINK = 15
+    RISK = 16
 
 
 HEADERS = {
@@ -61,6 +62,7 @@ HEADERS = {
     Col.LOCATION: "Lokalizacja",
     Col.ADDED: "Dodano",
     Col.LINK: "Link",
+    Col.RISK: "Ryzyko",
 }
 NUMERIC = {Col.PRICE, Col.MARKET, Col.PROFIT, Col.MAX_BUY, Col.BATTERY, Col.SCORE}
 ALWAYS_VISIBLE = {Col.MODEL}
@@ -68,12 +70,14 @@ ALWAYS_VISIBLE = {Col.MODEL}
 COL_FIELD = {Col.PHOTO: "photos", Col.MODEL: "model", Col.STORAGE: "storage", Col.PRICE: "price",
              Col.PROFIT: "profit", Col.MAX_BUY: "max_buy", Col.VERDICT: "verdict", Col.SOURCE: "source",
              Col.CONDITION: "condition", Col.BATTERY: "battery", Col.MARKET: "market", Col.SCORE: "score",
-             Col.FLAGS: "flags", Col.LOCATION: "distance", Col.ADDED: "added"}
+             Col.FLAGS: "flags", Col.LOCATION: "distance", Col.ADDED: "added", Col.RISK: "risk"}
 FIELD_COL = {f: c for c, f in COL_FIELD.items()}
+FRAUD_LABEL = "MOŻLIWE OSZUSTWO"  # werdykt przy wysokim ryzyku oszustwa (czerwona etykieta)
 _SUPERSCRIPT = {2: "²", 3: "³"}
 DEFAULT_WIDTHS = {Col.PHOTO: 84, Col.MODEL: 150, Col.STORAGE: 80, Col.PRICE: 95, Col.PROFIT: 110,
                   Col.MAX_BUY: 140, Col.VERDICT: 115, Col.SOURCE: 130, Col.CONDITION: 125, Col.BATTERY: 85,
-                  Col.MARKET: 140, Col.SCORE: 75, Col.FLAGS: 220, Col.LOCATION: 170, Col.ADDED: 110, Col.LINK: 80}
+                  Col.MARKET: 140, Col.SCORE: 75, Col.FLAGS: 220, Col.LOCATION: 170, Col.ADDED: 110, Col.LINK: 80,
+                  Col.RISK: 110}
 
 
 def col_key(col: Col) -> str:
@@ -122,6 +126,7 @@ class OffersTableModel(QAbstractTableModel):
         self._positive = QBrush(QColor(palette.positive))
         self._negative = QBrush(QColor(palette.negative))
         self._muted = QBrush(QColor(palette.muted))
+        self._warning = QBrush(QColor(palette.warning))
         self._watched_bg = QBrush(QColor(palette.watched))
         if self._rows:
             self.dataChanged.emit(self.index(0, 0), self.index(len(self._rows) - 1, len(Col) - 1))
@@ -257,6 +262,9 @@ class OffersTableModel(QAbstractTableModel):
     def _foreground(self, col: Col, offer: Offer, val: Valuation) -> QBrush | None:
         if not offer.active:  # nieaktualna (zniknęła z portalu) — cały wiersz wyszarzony
             return self._muted
+        if col is Col.RISK:
+            level = getattr(val.risk, "level", "low")
+            return self._negative if level == "high" else self._warning if level == "medium" else self._muted
         if col is Col.PROFIT:
             if val.expected_profit is None:
                 return self._muted
@@ -281,6 +289,11 @@ class OffersTableModel(QAbstractTableModel):
             return offer.raw.url
         if col is Col.VERDICT:
             return f"Ocena {val.score}/100\n" + "\n".join(val.reasons)
+        if col is Col.RISK:
+            risk = val.risk
+            if risk is None or not risk.signals:
+                return "Brak sygnałów oszustwa"
+            return f"Ryzyko oszustwa: {risk.label} ({risk.score} pkt)\n" + "\n".join(f"• {r}" for r in risk.reasons())
         if col is Col.SOURCE and offer.also_on:
             return "Ta sama oferta także na:\n" + "\n".join(
                 f"{SOURCE_NAMES.get(src, src)} — {money(price)}" for src, _, price in offer.also_on)
@@ -312,7 +325,7 @@ class OffersTableModel(QAbstractTableModel):
             case Col.MAX_BUY:
                 return money(val.max_buy_price)
             case Col.VERDICT:
-                return val.verdict.value
+                return FRAUD_LABEL if getattr(val.risk, "level", "low") == "high" else val.verdict.value
             case Col.SCORE:
                 return str(val.score)
             case Col.FLAGS:
@@ -329,6 +342,12 @@ class OffersTableModel(QAbstractTableModel):
                 return format_dt(added_at(offer))
             case Col.LINK:
                 return "Otwórz ↗"
+            case Col.RISK:
+                risk = val.risk
+                if risk is None:
+                    return "—"
+                return {"high": "⛔ WYSOKIE", "medium": "⚠ średnie"}.get(risk.level, "niskie") + \
+                    (f" ({risk.score})" if risk.score else "")
         return ""
 
 
