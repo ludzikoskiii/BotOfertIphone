@@ -131,6 +131,26 @@ i filtr promienia.
 
 ![Wybór lokalizacji](docs/screenshots/lokalizacja.png)
 
+### Filtr ogłoszeń i „Odrzucone”
+
+Zanim oferta trafi do tabeli, przechodzi przez kilka etapów:
+
+1. **Kategoria portalu** — np. „Akcesoria GSM” odpada, „Telefony” przechodzi.
+2. **„Kupię / zamienię / szukam”** na początku tytułu → odrzucone („Sprzedam lub zamienię” przechodzi).
+3. **Akcesoria i części z kontekstem** — „Etui do iPhone 13” odpada, ale „iPhone 13 128GB + etui gratis”
+   czy „iPhone 12 z pudełkiem i ładowarką” przechodzą. „Sam wyświetlacz iPhone 11” odpada,
+   a „iPhone 11 zbity wyświetlacz” i „iPhone XR na części” to cały telefon.
+4. **Model** — ogłoszenie bez rozpoznanego modelu iPhone'a odpada.
+5. **Test ceny** — cena poniżej 15% mediany rynkowej: jeśli opis wskazuje na akcesorium/atrapę,
+   oferta odpada; w przeciwnym razie zostaje z czerwoną flagą „Cena nierealnie niska — sprawdź”
+   i nigdy nie dostaje zielonego „KUPUJ”.
+
+Odrzucone ogłoszenia z powodem znajdziesz pod przyciskiem **🚫 Odrzucone** na pasku narzędzi.
+Przycisk **„✔ To jest telefon”** przywraca ofertę do tabeli i zapamiętuje ją, więc filtr nie odrzuci
+jej ponownie. Listy słów (akcesoria, części, „kupię”, słowa dodatków itd.) oraz próg ceny edytujesz
+w **Ustawienia → Filtr ogłoszeń**; zakładka podpowiada też słowa, które najczęściej dawały
+fałszywe odrzucenia.
+
 ### Okno główne
 
 - Tabela ma kolumny: zdjęcie, model, pamięć, stan, cena, wartość rynkowa,
@@ -265,7 +285,7 @@ phonebot/
     settings.py      wszystkie ustawienia (JSON w bazie)
     geo.py           odległości
   storage/       SQLite: schemat z migracjami, repozytoria
-  core/filters.py  odsiewanie akcesoriów i ogłoszeń „kupię”
+  core/listing_filter.py  wieloetapowy filtr: akcesoria, części, „kupię”, test ceny
   net/http.py    klient HTTP: limit zapytań na host, ponawianie (tenacity), cache odpowiedzi
   services/      evaluator.py (baza + wycena), scanner.py (równoległe pobieranie z izolacją błędów),
                  post_scan.py (AI + powiadomienia po skanie), ai_analysis.py (Claude),

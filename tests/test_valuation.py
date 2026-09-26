@@ -187,3 +187,11 @@ def test_no_buyer_fee_on_allegro_lokalnie():
     offer = make_offer("iPhone 13 128GB", price=1000, source="allegro_lokalnie")
     v = evaluate(offer, market(2200), PARTS, Settings(), Mode.RESELL)
     assert all("Opłata kupującego" not in c.label for c in v.cost_items)
+
+
+def test_unrealistic_price_is_never_a_green_buy():
+    offer = make_offer("iPhone 13 128GB", price=250)
+    offer.parsed.flags.append(RedFlag.PRICE_UNREALISTIC)
+    v = evaluate(offer, market(2000), PARTS, Settings(), Mode.RESELL)
+    assert v.verdict is Verdict.NEGOTIATE and v.color is not RowColor.GREEN
+    assert "sprawdź ogłoszenie" in v.negotiation.note

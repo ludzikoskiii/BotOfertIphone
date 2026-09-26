@@ -35,13 +35,20 @@ from ..paths import thumbnails_dir
 from ..services.evaluator import Evaluator
 from ..services.scanner import ScanReport
 from ..sources import SOURCE_NAMES
-from ..storage.repositories import FetchRunRepository, OfferRepository, PartsRepository, SettingsRepository
+from ..storage.repositories import (
+    FetchRunRepository,
+    OfferRepository,
+    PartsRepository,
+    RejectedRepository,
+    SettingsRepository,
+)
 from .filters_panel import FiltersPanel
 from .icons import app_icon
 from .images import THUMB_SIZE, ThumbnailCache
 from .location_dialog import LocationDialog
 from .offer_details import PHOTO_SIZE, OfferDetailsDialog
 from .parts_editor import PartsEditor
+from .rejected_dialog import RejectedDialog
 from .settings_dialog import SettingsDialog
 from .source_status import SourceStatusBar
 from .table_model import SORT_ROLE, Col, OffersTableModel
@@ -141,6 +148,10 @@ class MainWindow(QMainWindow):
         settings_action = QAction("⚙ Ustawienia", self)
         settings_action.triggered.connect(self.open_settings)
         tb.addAction(settings_action)
+        self.rejected_action = QAction("🚫 Odrzucone", self)
+        self.rejected_action.setToolTip("Ogłoszenia odrzucone przez filtr (akcesoria, części, „kupię”…)")
+        self.rejected_action.triggered.connect(self.open_rejected)
+        tb.addAction(self.rejected_action)
         parts_action = QAction("🔧 Tabela części", self)
         parts_action.triggered.connect(self.open_parts_editor)
         tb.addAction(parts_action)
@@ -346,6 +357,7 @@ class MainWindow(QMainWindow):
         self.model.set_rows(rows)
         self.stack.setCurrentWidget(self.table if rows else self.empty_label)
         self._update_count()
+        self._update_rejected_count()
 
     def _update_count(self) -> None:
         rows = self.model.rows()
@@ -375,12 +387,25 @@ class MainWindow(QMainWindow):
         self.reload()
 
     def open_settings(self) -> SettingsDialog:
-        dialog = SettingsDialog(self.settings, self)
+        fp = RejectedRepository(self.conn).false_positives_by_keyword()
+        dialog = SettingsDialog(self.settings, self, false_positives=fp)
         dialog.parts_editor_requested.connect(self.open_parts_editor)
         dialog.accepted.connect(lambda: self.apply_settings(dialog.result_settings()))
         dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         dialog.open()
         return dialog
+
+    def open_rejected(self) -> RejectedDialog:
+        dialog = RejectedDialog(RejectedRepository(self.conn), self)
+        dialog.restored.connect(lambda _oid: self.reload())
+        dialog.finished.connect(lambda _r: self._update_rejected_count())
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        dialog.open()
+        return dialog
+
+    def _update_rejected_count(self) -> None:
+        n = RejectedRepository(self.conn).count()
+        self.rejected_action.setText(f"🚫 Odrzucone ({n})")
 
     def open_parts_editor(self) -> PartsEditor:
         editor = PartsEditor(PartsRepository(self.conn), self)

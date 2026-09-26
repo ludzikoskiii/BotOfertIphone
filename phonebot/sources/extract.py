@@ -26,6 +26,7 @@ _DESC_KEYS = ("description", "desc", "shortDescription")
 _CITY_KEYS = ("city", "cityName", "locationName", "town")
 _PHOTO_KEYS = ("photos", "images", "photo", "image", "thumbnails", "pictures", "mainImage", "thumbnail")
 _COND_KEYS = ("condition", "state", "status", "itemCondition")
+_CATEGORY_KEYS = ("category", "categoryName", "categoryPath", "catalog", "breadcrumbs", "categories")
 _DATE_KEYS = ("createdAt", "created_at", "publishedAt", "startTime", "created", "created_time", "datePublished")
 _PRICE_RE = re.compile(r"(\d[\d\s .]*(?:,\d{1,2})?)")
 
@@ -41,6 +42,7 @@ class ExtractedOffer:
     city: str | None = None
     photos: list[str] = field(default_factory=list)
     condition: str | None = None
+    category: str | None = None
     created_at: datetime | None = None
     raw: dict[str, Any] = field(default_factory=dict)
 
@@ -135,6 +137,21 @@ def _condition(value: Any) -> str | None:
     return None
 
 
+def _category(value: Any) -> str | None:
+    """Kategoria jako tekst: „Telefony > Smartfony”, z napisu, obiektu lub ścieżki (listy)."""
+    if isinstance(value, str):
+        return value.strip() or None
+    if isinstance(value, dict):
+        name = _first(value, ("path", "name", "label", "title"))
+        if isinstance(name, list):
+            return _category(name)
+        return name if isinstance(name, str) else None
+    if isinstance(value, list):
+        names = [c for c in (_category(v) for v in value) if c]
+        return " > ".join(names) or None
+    return None
+
+
 def offer_from_dict(d: dict[str, Any], base_url: str) -> ExtractedOffer | None:
     title = _first(d, _TITLE_KEYS)
     if not isinstance(title, str) or len(title) < 3:
@@ -164,6 +181,7 @@ def offer_from_dict(d: dict[str, Any], base_url: str) -> ExtractedOffer | None:
         city=_city(d),
         photos=_photo_urls(_first(d, _PHOTO_KEYS)),
         condition=condition,
+        category=_category(_first(d, _CATEGORY_KEYS)),
         created_at=_date(_first(d, _DATE_KEYS)),
         raw=d,
     )

@@ -188,3 +188,35 @@ def test_settings_notify_tab(window):
     s = SettingsRepository(window.conn).load()
     assert (s.telegram_bot_token, s.telegram_chat_id, s.telegram_enabled) == ("123:ABC", "42", True)
     assert (s.anthropic_api_key, s.llm_model, s.llm_enabled) == ("sk-ant-test", "claude-sonnet-5", True)
+
+
+def test_rejected_view_and_this_is_a_phone(window):
+    from phonebot.storage.repositories import RejectedRepository
+
+    assert window.rejected_action.text() == "🚫 Odrzucone (3)"  # 2× etui + „kupię”
+    dialog = window.open_rejected()
+    titles = [dialog.table.item(r, 0).text() for r in range(dialog.table.rowCount())]
+    assert "Etui do iPhone 13 skórzane" in titles and "Kupię iPhone 12/13 uszkodzony" in titles
+    row = titles.index("Etui do iPhone 13 skórzane")
+    assert "etui" in dialog.table.item(row, 4).text()
+    dialog.stage_combo.setCurrentIndex(dialog.stage_combo.findData("wanted"))
+    assert dialog.table.rowCount() == 1
+    dialog.stage_combo.setCurrentIndex(0)
+    before = window.model.rowCount()
+    dialog.table.selectRow(row)
+    offer_id = dialog.restore_selected()
+    assert offer_id is not None and window.model.rowCount() == before + 1
+    assert dialog.table.rowCount() == 2
+    assert RejectedRepository(window.conn).false_positives_by_keyword() == [("etui", 1)]
+    dialog.close()
+    assert window.rejected_action.text() == "🚫 Odrzucone (2)"
+
+
+def test_filter_keywords_editable_in_settings(window):
+    dialog = window.open_settings()
+    dialog.filter_edits["accessory_words"].setPlainText("etui\nskarpetka\netui")
+    dialog.findChild(QtWidgets.QDoubleSpinBox, "listing_filter.suspicious_price_ratio").setValue(0.2)
+    dialog.accept()
+    cfg = SettingsRepository(window.conn).load().listing_filter
+    assert cfg.accessory_words == ["etui", "skarpetka"]
+    assert cfg.suspicious_price_ratio == 0.2

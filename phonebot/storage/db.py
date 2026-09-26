@@ -93,6 +93,34 @@ MIGRATIONS: list[str] = [
     """
     UPDATE offers SET is_active = 0 WHERE source = 'olx';
     """,
+    # v4 — odrzucone ogłoszenia (z powodem) i ręcznie przywrócone („To jest telefon”)
+    """
+    CREATE TABLE rejected_offers (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        source       TEXT NOT NULL,
+        source_id    TEXT NOT NULL,
+        url          TEXT NOT NULL,
+        title        TEXT NOT NULL,
+        price        REAL NOT NULL,
+        stage        TEXT NOT NULL,
+        reason       TEXT NOT NULL,
+        keyword      TEXT,
+        raw_json     TEXT NOT NULL,
+        rejected_at  TEXT NOT NULL,
+        UNIQUE (source, source_id)
+    );
+    CREATE INDEX idx_rejected_time ON rejected_offers (rejected_at);
+
+    CREATE TABLE filter_whitelist (
+        source       TEXT NOT NULL,
+        source_id    TEXT NOT NULL,
+        title        TEXT NOT NULL,
+        stage        TEXT,
+        keyword      TEXT,
+        restored_at  TEXT NOT NULL,
+        PRIMARY KEY (source, source_id)
+    );
+    """,
 ]
 
 

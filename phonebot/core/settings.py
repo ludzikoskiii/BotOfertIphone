@@ -12,6 +12,7 @@ import typing
 from dataclasses import dataclass, field
 from typing import Any
 
+from .listing_filter import ListingFilterConfig
 from .models import Mode, RedFlag
 from .view_filter import ViewFilter
 
@@ -66,6 +67,7 @@ def _default_penalties() -> dict[str, int]:
         RedFlag.NON_ORIGINAL_PARTS.value: 10,
         RedFlag.UNTESTED.value: 15,
         RedFlag.UNKNOWN_REPAIR_COST.value: 10,
+        RedFlag.PRICE_UNREALISTIC.value: 30,
     }
 
 
@@ -136,6 +138,9 @@ class Settings:
     watched_models: list[str] = field(default_factory=list)  # pusta = wszystkie
     price_min: float = 0.0
     price_max: float = 0.0  # 0 = bez limitu
+
+    # --- filtr ogłoszeń (akcesoria, części, „kupię”, test ceny) ---
+    listing_filter: ListingFilterConfig = field(default_factory=ListingFilterConfig)
 
     # --- filtry widoku (zapamiętywane) ---
     view_filter: ViewFilter = field(default_factory=ViewFilter)

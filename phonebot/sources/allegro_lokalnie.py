@@ -37,6 +37,8 @@ def to_raw(o: ExtractedOffer) -> RawOffer:
     params: dict[str, str] = {}
     if o.condition:
         params["condition"] = _CONDITIONS.get(o.condition.lower(), o.condition)
+    if o.category:
+        params["category"] = o.category
     raw = o.raw
     delivery = raw.get("delivery") or raw.get("shipping") or raw.get("deliveryAvailable")
     shipping = None

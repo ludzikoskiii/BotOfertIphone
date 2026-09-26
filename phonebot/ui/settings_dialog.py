@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
+    QPlainTextEdit,
     QPushButton,
     QSpinBox,
     QTableWidget,
@@ -151,11 +152,12 @@ VERDICT = [
 class SettingsDialog(QDialog):
     parts_editor_requested = Signal()
 
-    def __init__(self, settings: Settings, parent=None):
+    def __init__(self, settings: Settings, parent=None, false_positives: list[tuple[str, int]] | None = None):
         super().__init__(parent)
         self.setWindowTitle("Ustawienia")
         self.resize(900, 700)
         self.settings = copy.deepcopy(settings)
+        self.false_positives = false_positives or []
         self._readers: list[Callable[[Settings], None]] = []
 
         tabs = QTabWidget()
@@ -164,6 +166,7 @@ class SettingsDialog(QDialog):
         tabs.addTab(self._buying_tab(), "Zakup i naprawa")
         tabs.addTab(self._market_tab(), "Wycena rynkowa")
         tabs.addTab(self._verdict_tab(), "Werdykt i flagi")
+        tabs.addTab(self._filter_tab(), "Filtr ogłoszeń")
         tabs.addTab(self._notify_tab(), "Powiadomienia i AI")
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
@@ -361,6 +364,54 @@ class SettingsDialog(QDialog):
         self._readers.append(lambda st: setattr(st, "flag_penalties",
                                                 {k: w.value() for k, w in self.penalties.items()}))
         return self._page(form, pen)
+
+    _FILTER_LISTS = (
+        ("accessory_words", "Akcesoria (odrzucane, gdy są przedmiotem sprzedaży)"),
+        ("part_words", "Części zamienne (odrzucane, gdy sprzedawana jest sama część)"),
+        ("wanted_words", "Ogłoszenia kupna / zamiany"),
+        ("addon_markers", "Słowa oznaczające dodatek do telefonu (+ etui gratis, z pudełkiem)"),
+        ("single_part_markers", "Słowa oznaczające samą część („sam wyświetlacz”)"),
+        ("accessory_category_words", "Kategorie portalu z akcesoriami/częściami"),
+    )
+
+    def _filter_tab(self) -> QWidget:
+        cfg = self.settings.listing_filter
+        info = QLabel("Każda pozycja w osobnej linii (wielkość liter i polskie znaki nie mają znaczenia). "
+                      "Akcesorium w tytule razem z telefonem („iPhone 13 + etui gratis”) nie powoduje odrzucenia — "
+                      "filtr ocenia kontekst. Odrzucone ogłoszenia z powodem: przycisk „Odrzucone” w oknie głównym.")
+        info.setWordWrap(True)
+        grid = QWidget()
+        glay = QHBoxLayout(grid)
+        glay.setContentsMargins(0, 0, 0, 0)
+        self.filter_edits: dict[str, QPlainTextEdit] = {}
+        columns = [QVBoxLayout(), QVBoxLayout()]
+        for i, (attr, label) in enumerate(self._FILTER_LISTS):
+            box = QGroupBox(label)
+            edit = QPlainTextEdit("\n".join(getattr(cfg, attr)))
+            edit.setMinimumHeight(110)
+            QVBoxLayout(box).addWidget(edit)
+            columns[i % 2].addWidget(box)
+            self.filter_edits[attr] = edit
+        for col in columns:
+            glay.addLayout(col)
+        form = self._form([Field("listing_filter.suspicious_price_ratio",
+                                 "Sprawdź dokładniej, gdy cena poniżej × mediany rynkowej", "float", 0.01, 0.9,
+                                 0.01, "", 2)])
+        self._readers.append(self._read_filter_lists)
+        widgets: list = [info, grid, form]
+        if self.false_positives:
+            fp = ", ".join(f"„{k}” ×{n}" for k, n in self.false_positives[:10])
+            hint = QLabel(f"Niesłuszne odrzucenia (przywrócone „To jest telefon”) według słowa: {fp}. "
+                          "Jeśli któreś słowo często się myli, rozważ usunięcie go z listy.")
+            hint.setWordWrap(True)
+            hint.setStyleSheet("color: #e67700;")
+            widgets.insert(1, hint)
+        return self._page(*widgets)
+
+    def _read_filter_lists(self, s: Settings) -> None:
+        for attr, edit in self.filter_edits.items():
+            words = [w.strip() for w in edit.toPlainText().splitlines() if w.strip()]
+            setattr(s.listing_filter, attr, list(dict.fromkeys(words)))
 
     def _notify_tab(self) -> QWidget:
         s = self.settings

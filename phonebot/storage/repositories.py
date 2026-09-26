@@ -280,3 +280,99 @@ class FetchRunRepository:
 
     def last_runs(self, limit: int = 20) -> list[sqlite3.Row]:
         return list(self.conn.execute("SELECT * FROM fetch_runs ORDER BY id DESC LIMIT ?", (limit,)))
+
+
+def raw_to_json(raw: RawOffer) -> str:
+    data = {
+        "source": raw.source, "source_id": raw.source_id, "url": raw.url, "title": raw.title, "price": raw.price,
+        "description": raw.description, "currency": raw.currency, "city": raw.city, "region": raw.region,
+        "lat": raw.lat, "lon": raw.lon, "photos": raw.photos, "created_at": _iso(raw.created_at),
+        "shipping_available": raw.shipping_available, "negotiable": raw.negotiable, "params": raw.params,
+    }
+    return json.dumps(data, ensure_ascii=False)
+
+
+def raw_from_json(text: str) -> RawOffer:
+    d = json.loads(text)
+    d["created_at"] = _dt(d.get("created_at"))
+    return RawOffer(**d)
+
+
+@dataclass
+class RejectedOffer:
+    id: int
+    source: str
+    source_id: str
+    url: str
+    title: str
+    price: float
+    stage: str
+    reason: str
+    keyword: str | None
+    rejected_at: datetime | None
+    raw: RawOffer
+
+
+class RejectedRepository:
+    """Ogłoszenia odrzucone przez filtr (do przeglądu) i biała lista przywróconych."""
+
+    def __init__(self, conn: sqlite3.Connection):
+        self.conn = conn
+
+    def add(self, raw: RawOffer, stage: str, reason: str, keyword: str | None = None) -> None:
+        self.conn.execute(
+            """INSERT INTO rejected_offers (source, source_id, url, title, price, stage, reason, keyword, raw_json,
+                                            rejected_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT (source, source_id) DO UPDATE SET
+                 url = excluded.url, title = excluded.title, price = excluded.price, stage = excluded.stage,
+                 reason = excluded.reason, keyword = excluded.keyword, raw_json = excluded.raw_json,
+                 rejected_at = excluded.rejected_at""",
+            (raw.source, raw.source_id, raw.url, raw.title, raw.price, stage, reason, keyword, raw_to_json(raw),
+             _iso(utcnow())),
+        )
+
+    def list(self, limit: int = 2000) -> list[RejectedOffer]:
+        rows = self.conn.execute("SELECT * FROM rejected_offers ORDER BY rejected_at DESC, id DESC LIMIT ?", (limit,))
+        return [RejectedOffer(r["id"], r["source"], r["source_id"], r["url"], r["title"], float(r["price"]),
+                              r["stage"], r["reason"], r["keyword"], _dt(r["rejected_at"]), raw_from_json(r["raw_json"]))
+                for r in rows]
+
+    def count(self) -> int:
+        return int(self.conn.execute("SELECT COUNT(*) FROM rejected_offers").fetchone()[0])
+
+    def remove(self, source: str, source_id: str) -> None:
+        self.conn.execute("DELETE FROM rejected_offers WHERE source = ? AND source_id = ?", (source, source_id))
+
+    def purge_older_than(self, days: int) -> int:
+        cur = self.conn.execute("DELETE FROM rejected_offers WHERE rejected_at < ?",
+                                (_iso(utcnow() - timedelta(days=days)),))
+        return cur.rowcount
+
+    # --- biała lista („To jest telefon”) ---
+
+    def whitelist(self) -> set[tuple[str, str]]:
+        return {(r["source"], r["source_id"]) for r in self.conn.execute("SELECT source, source_id FROM filter_whitelist")}
+
+    def false_positives_by_keyword(self) -> list[tuple[str, int]]:
+        """Które słowa najczęściej niesłusznie odrzucały telefony (podpowiedź do poprawy list)."""
+        rows = self.conn.execute(
+            "SELECT COALESCE(keyword, stage) AS k, COUNT(*) AS n FROM filter_whitelist GROUP BY k ORDER BY n DESC")
+        return [(r["k"], int(r["n"])) for r in rows]
+
+    def restore(self, rejected_id: int) -> int | None:
+        """„To jest telefon”: dodaje do białej listy i przenosi ofertę do wyników. Zwraca id oferty."""
+        from ..core.normalizer import parse_offer
+
+        row = self.conn.execute("SELECT * FROM rejected_offers WHERE id = ?", (rejected_id,)).fetchone()
+        if row is None:
+            return None
+        raw = raw_from_json(row["raw_json"])
+        self.conn.execute(
+            "INSERT OR REPLACE INTO filter_whitelist (source, source_id, title, stage, keyword, restored_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (raw.source, raw.source_id, raw.title, row["stage"], row["keyword"], _iso(utcnow())),
+        )
+        offer_id = OfferRepository(self.conn).upsert(raw, parse_offer(raw)).offer_id
+        self.remove(raw.source, raw.source_id)
+        return offer_id

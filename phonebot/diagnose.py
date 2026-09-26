@@ -20,7 +20,7 @@ from datetime import datetime
 from typing import Any
 
 from . import __version__
-from .core.filters import listing_rejection_reason
+from .core.listing_filter import ListingFilter
 from .core.models import Mode
 from .core.normalizer import parse_offer
 from .core.settings import Settings
@@ -119,8 +119,9 @@ async def run_adapter(key: str, settings: Settings, timeout: float = 90.0) -> Ad
             return res
     res.raw_offers = len(offers)
     res.foreign_currency = int(getattr(adapter, "stats", {}).get("foreign_currency", 0))
+    listing_filter = ListingFilter(settings.listing_filter)
     for o in offers:
-        if listing_rejection_reason(o.title) or not parse_offer(o).model:
+        if not listing_filter.check(o.title, model=parse_offer(o).model, category=o.params.get("category")).accepted:
             continue
         res.accepted += 1
         if len(res.samples) < 5:

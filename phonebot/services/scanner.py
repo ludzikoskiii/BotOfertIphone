@@ -9,18 +9,19 @@ from __future__ import annotations
 import asyncio
 import logging
 import sqlite3
+import statistics
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
-from ..core.filters import listing_rejection_reason
-from ..core.models import RawOffer
+from ..core.listing_filter import FilterDecision, ListingFilter
+from ..core.models import RawOffer, RedFlag
 from ..core.normalizer import parse_offer
 from ..core.settings import Settings
 from ..net.http import HostRateLimiter, HttpClient, ResponseCache
 from ..sources import REGISTRY, SearchQuery, SourceAdapter, search_phrases
-from ..storage.repositories import FetchRunRepository, OfferRepository, utcnow
+from ..storage.repositories import FetchRunRepository, OfferRepository, RejectedRepository, utcnow
 
 log = logging.getLogger(__name__)
 
@@ -34,7 +35,8 @@ class SourceReport:
     found: int = 0
     saved: int = 0
     new: int = 0
-    skipped: int = 0
+    skipped: int = 0  # odrzucone przez filtr ogłoszeń (lista: widok „Odrzucone oferty”)
+    suspicious: int = 0  # przyjęte, ale z podejrzanie niską ceną
     error: str | None = None
     kind: str = "ok"  # ok | empty | error | network | blocked | changed | timeout
     seconds: float = 0.0
@@ -154,19 +156,45 @@ class Scanner:
         rep.seconds = round(time.monotonic() - start, 1)
         return offers, rep
 
+    def _market_median(self, model: str, storage_gb: int | None, cache: dict) -> float | None:
+        """Mediana cen modelu (ta sama pojemność, gdy jest dość danych) — do testu ceny."""
+        key = (model, storage_gb)
+        if key not in cache:
+            obs = OfferRepository(self.conn).market_observations(model, self.settings.market_window_days)
+            prices = [o.price for o in obs if o.price >= self.settings.min_valid_price]
+            same = [o.price for o in obs if o.storage_gb == storage_gb and o.price >= self.settings.min_valid_price]
+            use = same if len(same) >= 3 else prices
+            cache[key] = statistics.median(use) if len(use) >= 3 else None
+        return cache[key]
+
     def _store(self, raw_offers: list[RawOffer], rep: SourceReport, report: ScanReport) -> None:
         repo = OfferRepository(self.conn)
+        rejected = RejectedRepository(self.conn)
+        listing_filter = ListingFilter(self.settings.listing_filter, rejected.whitelist())
         threshold = self.settings.battery_health_threshold
+        medians: dict = {}
         self.conn.execute("BEGIN")
         try:
             for raw in raw_offers:
-                if listing_rejection_reason(raw.title) or raw.price < self.settings.min_valid_price:
-                    rep.skipped += 1
-                    continue
                 parsed = parse_offer(raw, battery_threshold=threshold)
-                if not parsed.model:
+                decision = listing_filter.check(raw.title, model=parsed.model, category=raw.params.get("category"),
+                                                source=raw.source, source_id=raw.source_id)
+                if decision.accepted and raw.price < self.settings.min_valid_price:
+                    decision = FilterDecision(False, "price", f"cena {raw.price:.0f} zł poniżej minimalnej "
+                                                              f"({self.settings.min_valid_price:.0f} zł) — "
+                                                              "zwykle „za darmo” lub zamiana")
+                if decision.accepted and parsed.model:
+                    median = self._market_median(parsed.model, parsed.storage_gb, medians)
+                    decision = listing_filter.check_price(raw.price, median, raw.description,
+                                                          source=raw.source, source_id=raw.source_id)
+                if not decision.accepted:
+                    rejected.add(raw, decision.stage, decision.reason, decision.keyword)
                     rep.skipped += 1
                     continue
+                if decision.suspicious:
+                    parsed.flags.append(RedFlag.PRICE_UNREALISTIC)
+                    rep.suspicious += 1
+                rejected.remove(raw.source, raw.source_id)
                 res = repo.upsert(raw, parsed)
                 rep.saved += 1
                 if res.is_new:
@@ -174,6 +202,7 @@ class Scanner:
                     report.new_offer_ids.append(res.offer_id)
                 elif res.price_changed and res.old_price and raw.price < res.old_price:
                     report.price_drop_ids.append(res.offer_id)
+            rejected.purge_older_than(max(self.settings.market_window_days, 14))
             self.conn.execute("COMMIT")
         except Exception:
             self.conn.execute("ROLLBACK")

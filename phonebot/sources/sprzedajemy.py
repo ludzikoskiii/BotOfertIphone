@@ -61,6 +61,8 @@ def to_raw(o: ExtractedOffer) -> RawOffer:
     params: dict[str, str] = {}
     if o.condition:
         params["condition"] = _CONDITIONS.get(o.condition.lower(), o.condition)
+    if o.category:
+        params["category"] = o.category
     return RawOffer(
         source=SprzedajemyAdapter.key,
         source_id=offer_id(o.url, o.id),

@@ -105,6 +105,7 @@ class RedFlag(StrEnum):
     NON_ORIGINAL_PARTS = "non_original_parts"
     UNTESTED = "untested"
     UNKNOWN_REPAIR_COST = "unknown_repair_cost"
+    PRICE_UNREALISTIC = "price_unrealistic"
 
     @property
     def label(self) -> str:
@@ -128,6 +129,7 @@ _FLAG_INFO = {
     RedFlag.NON_ORIGINAL_PARTS: ("Nieoryginalne części", Severity.SOFT),
     RedFlag.UNTESTED: ("Niesprawdzony / „sprzedaję jak jest”", Severity.SOFT),
     RedFlag.UNKNOWN_REPAIR_COST: ("Nieznany koszt naprawy", Severity.SOFT),
+    RedFlag.PRICE_UNREALISTIC: ("Cena nierealnie niska — sprawdź ogłoszenie", Severity.HARD),
 }
 
 

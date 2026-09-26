@@ -101,3 +101,72 @@ def test_olx_is_not_a_source_anymore():
     from phonebot.sources import REGISTRY
 
     assert "olx" not in REGISTRY
+
+
+# ------------------------------------------------------ filtr ogłoszeń w skanerze ---
+
+from phonebot.core.models import RawOffer, RedFlag  # noqa: E402
+from phonebot.sources.base import SourceAdapter as _Base  # noqa: E402
+from phonebot.storage.repositories import RejectedRepository  # noqa: E402
+
+
+class ListAdapter(_Base):
+    key = "lista"
+    display_name = "Lista"
+    offers: list = []
+
+    async def search(self, query):
+        return list(self.offers)
+
+
+def raw(sid, title, price, description=""):
+    return RawOffer("lista", sid, f"https://x.pl/{sid}", title, price, description=description, photos=["p"])
+
+
+def scan_list(conn, offers):
+    ListAdapter.offers = offers
+    return asyncio.run(make_scanner(conn, [ListAdapter]).run())
+
+
+def test_rejected_offers_are_stored_with_reason(conn):
+    report = scan_list(conn, [
+        raw("1", "iPhone 13 128GB + etui gratis", 1500),
+        raw("2", "Etui do iPhone 13", 1500),
+        raw("3", "Kupię iPhone 12", 1000),
+        raw("4", "Sam wyświetlacz iPhone 11", 1000),
+        raw("5", "Samsung Galaxy S21", 1000),
+        raw("6", "iPhone 12 za darmo", 1),
+    ])
+    assert report.sources[0].saved == 1 and report.sources[0].skipped == 5
+    rejected = {r.source_id: r for r in RejectedRepository(conn).list()}
+    assert {k: v.stage for k, v in rejected.items()} == {
+        "2": "accessory", "3": "wanted", "4": "part", "5": "model", "6": "price"}
+    assert "etui" in rejected["2"].reason and rejected["2"].keyword == "etui"
+
+
+def test_unrealistic_price_is_checked_against_market(conn):
+    market = [raw(f"m{i}", "iPhone 13 128GB", 1800 + i * 20, "sprawny") for i in range(5)]
+    scan_list(conn, market)
+    report = scan_list(conn, market + [
+        raw("cheap", "iPhone 13 128GB", 200, "Telefon sprawny, bateria 90%"),
+        raw("case", "iPhone 13 128GB", 150, "Sprzedam etui do iPhone 13, nowe"),
+    ])
+    assert report.sources[0].suspicious == 1
+    offers = {o.raw.source_id: o for o in OfferRepository(conn).list()}
+    assert RedFlag.PRICE_UNREALISTIC in offers["cheap"].parsed.flags
+    assert "case" not in offers
+    rej = {r.source_id: r for r in RejectedRepository(conn).list()}
+    assert rej["case"].stage == "price" and "akcesorium" in rej["case"].reason
+
+
+def test_this_is_a_phone_restores_and_whitelists(conn):
+    scan_list(conn, [raw("x", "Obudowa iPhone 12 niebieska", 900)])
+    repo = RejectedRepository(conn)
+    (item,) = repo.list()
+    offer_id = repo.restore(item.id)
+    assert OfferRepository(conn).get(offer_id).raw.source_id == "x"
+    assert repo.list() == [] and ("lista", "x") in repo.whitelist()
+    assert repo.false_positives_by_keyword() == [(item.keyword, 1)]
+    # kolejne pobranie nie odrzuca już tej oferty
+    report = scan_list(conn, [raw("x", "Obudowa iPhone 12 niebieska", 900)])
+    assert report.sources[0].saved == 1 and repo.list() == []

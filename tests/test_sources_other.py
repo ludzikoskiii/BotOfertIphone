@@ -239,3 +239,16 @@ def test_sprzedajemy_layout_change_and_no_results():
     assert run(go("<html>Brak ogłoszeń spełniających kryteria</html>")) == []
     with pytest.raises(SourceFormatChanged):
         run(go("<html>zupełnie nowy wygląd</html>"))
+
+
+def test_category_is_extracted_for_the_filter():
+    from phonebot.sources.allegro_lokalnie import to_raw as allegro_raw
+    from phonebot.sources.extract import offer_from_dict
+
+    o = offer_from_dict({"id": "1", "title": "Etui iPhone 13", "price": 20,
+                         "category": {"path": [{"name": "Telefony"}, {"name": "Akcesoria"}, {"name": "Etui"}]}},
+                        "https://allegrolokalnie.pl")
+    assert o.category == "Telefony > Akcesoria > Etui"
+    assert allegro_raw(o).params["category"] == "Telefony > Akcesoria > Etui"
+    o2 = offer_from_dict({"id": "2", "title": "iPhone 13", "price": 1500, "categoryName": "Smartfony"}, "https://x.pl")
+    assert o2.category == "Smartfony"

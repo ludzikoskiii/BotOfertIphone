@@ -190,6 +190,14 @@ def evaluate(offer: Offer, market: MarketEstimate, parts: PartsCatalog, settings
         negotiation = Negotiation(False, None, None, "Tryb szybkiego resellu: telefon wymaga naprawy.")
         reasons.append("Telefon ma usterki wymagające naprawy — nie pasuje do trybu „Szybki resell”.")
 
+    if RedFlag.PRICE_UNREALISTIC in flags and verdict is Verdict.BUY:
+        # nierealnie niska cena: zamiast „okazji” — najpierw sprawdzić ogłoszenie
+        verdict = Verdict.NEGOTIATE
+        negotiation = Negotiation(False, None, negotiation.max_price,
+                                  "Cena nierealnie niska — przed zakupem sprawdź ogłoszenie (czy to na pewno cały, "
+                                  "sprawny telefon, a nie akcesorium, część lub oszustwo).")
+        reasons.append("Cena nierealnie niska względem rynku — wymaga sprawdzenia, nie traktuj jako pewnej okazji.")
+
     hard = [f for f in flags if f.severity.value == "hard"]
     if hard and settings.hard_flags_force_skip and verdict is not Verdict.SKIP:
         verdict = Verdict.SKIP
@@ -210,6 +218,8 @@ def evaluate(offer: Offer, market: MarketEstimate, parts: PartsCatalog, settings
         margin=negotiation_margin(offer.parsed.negotiable, settings), confidence=market.confidence,
         flags=flags, settings=settings, mode_mismatch=mode_mismatch,
     )
+    if RedFlag.PRICE_UNREALISTIC in flags:
+        score = min(score, settings.score_green - 1)  # najwyżej „przeciętna”, nigdy zielona
     return Valuation(
         mode=mode, market=market, repair_items=repair_items, repair_cost=repair_total,
         cost_items=cost_items, total_costs=total_costs, expected_profit=profit, roi_pct=roi,
