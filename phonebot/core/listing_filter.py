@@ -300,10 +300,13 @@ class ListingFilter:
         """Etap 1: kategoria z portalu. ``None`` = brak rozstrzygnięcia (idź dalej)."""
         if not category:
             return None
-        cat = normalize(category)
-        acc = next((w for w in self._acc_cat if w and w in cat), None)
-        phone = next((w for w in self._phone_cat if w and w in cat), None)
-        if acc and not (phone and cat.rfind(phone) > cat.rfind(acc)):
+        # rozstrzyga ostatni (najwęższy) poziom ścieżki: „Telefony > Akcesoria GSM > Etui” → „Etui”;
+        # kategoria mieszana („Telefony i akcesoria”) niczego nie przesądza — decyduje filtr tekstu
+        segments = [normalize(part) for part in re.split(r"[>/»]", category) if normalize(part)]
+        last = segments[-1] if segments else ""
+        acc = next((w for w in self._acc_cat if w and w in last), None)
+        phone = next((w for w in self._phone_cat if w and w in last), None)
+        if acc and not phone:
             return FilterDecision(False, "category", f"kategoria portalu „{category}” to akcesoria/części", acc)
         return None
 

@@ -97,6 +97,9 @@ def test_reason_names_the_keyword():
     ("Elektronika > Telefony > Smartfony > iPhone", True),
     ("Elektronika > Telefony > Akcesoria GSM > Etui", False),
     ("Telefony i akcesoria > Części zamienne", False),
+    ("Telefony i akcesoria", True),  # kategoria mieszana (Allegro Lokalnie, ID 4) — decyduje tytuł
+    ("Elektronika > Telefony i akcesoria", True),
+    ("Elektronika > Telefony i akcesoria > Akcesoria GSM", False),
     (None, True),
 ])
 def test_category_stage(category, accepted):

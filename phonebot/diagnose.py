@@ -15,6 +15,7 @@ import json
 import sys
 import time
 import traceback
+from collections import Counter
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Any
@@ -120,8 +121,11 @@ async def run_adapter(key: str, settings: Settings, timeout: float = 90.0) -> Ad
     res.raw_offers = len(offers)
     res.foreign_currency = int(getattr(adapter, "stats", {}).get("foreign_currency", 0))
     listing_filter = ListingFilter(settings.listing_filter)
+    reasons: Counter[str] = Counter()
     for o in offers:
-        if not listing_filter.check(o.title, model=parse_offer(o).model, category=o.params.get("category")).accepted:
+        decision = listing_filter.check(o.title, model=parse_offer(o).model, category=o.params.get("category"))
+        if not decision.accepted:
+            reasons[f"{decision.stage}: {decision.reason[:70]}"] += 1
             continue
         res.accepted += 1
         if len(res.samples) < 5:
@@ -134,8 +138,9 @@ async def run_adapter(key: str, settings: Settings, timeout: float = 90.0) -> Ad
         res.ok = True
         res.stage = f"OK — {res.foreign_currency} ofert w obcej walucie (połączenie spoza Polski)"
     else:
+        top = "; ".join(f"{n}× {r}" for r, n in reasons.most_common(3))
         res.stage = ("parsowanie: 0 ofert w odpowiedzi" if not offers
-                     else "filtrowanie: żadna oferta nie przeszła (model nierozpoznany?)")
+                     else f"filtrowanie: żadna oferta nie przeszła ({top})")
     res.seconds = round(time.monotonic() - start, 1)
     return res
 
