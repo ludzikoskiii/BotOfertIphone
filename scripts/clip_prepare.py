@@ -65,6 +65,7 @@ _PROT_B = ["a photo of a screen protector", "a photo of tempered glass screen pr
            "a photo of a screen protector package", "a photo of a glass screen protector kit"]
 _BOX_B = ["a photo of an empty iPhone box", "a photo of an empty phone box", "a photo of a white phone box",
           "a photo of phone packaging without a phone"]
+FINAL_SET = "C"
 PROMPT_SETS = {
     "A": _BASE,
     "B": {"smartphone": _PHONE_B, "case": _CASE_B, "screen_protector": _PROT_B, "box": _BOX_B},
@@ -126,10 +127,14 @@ def main() -> int:
         return np.stack(out).astype(np.float32)
 
     embs = {name: embed(prompts) for name, prompts in PROMPT_SETS.items()}
-    scale = float(model.logit_scale.exp())
+    scale = float(model.logit_scale.detach().exp())
     say("LOGIT_SCALE", scale)
-    for name, emb in embs.items():
-        say(f"EMB_B64 {name}", base64.b64encode(emb.astype(np.float16).tobytes()).decode())
+    # zestaw wybrany do programu: wiersz po wierszu z sumą kontrolną (do bezbłędnego przeniesienia)
+    final = embs[FINAL_SET].astype(np.float16)
+    say("FINAL_SET", FINAL_SET, "SHA256", hashlib.sha256(final.tobytes()).hexdigest())
+    for i, c in enumerate(classes):
+        row = final[i].tobytes()
+        say(f"ROW {c} {hashlib.sha256(row).hexdigest()[:16]} {base64.b64encode(row).decode()}")
 
     def torch_image(pix: np.ndarray) -> np.ndarray:
         with torch.no_grad():
