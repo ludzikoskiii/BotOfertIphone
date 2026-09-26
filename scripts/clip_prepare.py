@@ -90,7 +90,9 @@ def main() -> int:
     with torch.no_grad():
         for c in classes:
             t = tok(PROMPTS[c], padding=True, return_tensors="pt")
-            f = model.get_text_features(**t)
+            # jawnie z warstw modelu — API get_text_features zmienia się między wersjami transformers
+            pooled = model.text_model(input_ids=t["input_ids"], attention_mask=t["attention_mask"]).pooler_output
+            f = model.text_projection(pooled)
             f = f / f.norm(dim=-1, keepdim=True)
             m = f.mean(0)
             emb.append((m / m.norm()).numpy())
@@ -102,7 +104,8 @@ def main() -> int:
 
     def torch_image(pix: np.ndarray) -> np.ndarray:
         with torch.no_grad():
-            f = model.get_image_features(pixel_values=torch.from_numpy(pix))
+            pooled = model.vision_model(pixel_values=torch.from_numpy(pix)).pooler_output
+            f = model.visual_projection(pooled)
         f = f / f.norm(dim=-1, keepdim=True)
         return f.numpy()[0]
 
