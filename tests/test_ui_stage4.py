@@ -37,14 +37,14 @@ def sources_shown(win):
     return {win.proxy.index(r, Col.SOURCE).data() for r in range(win.proxy.rowCount())}
 
 
-def test_three_portals_scanned(window):
+def test_all_portals_scanned(window):
     by_source = {s.key: s for s in window.report.sources}
+    assert set(by_source) == {"allegro_lokalnie", "vinted", "sprzedajemy"}  # OLX usunięty
     assert all(s.ok for s in by_source.values()), [s.error for s in by_source.values()]
-    assert by_source["olx"].saved == 12
-    assert by_source["allegro_lokalnie"].saved == 2  # etui odrzucone
+    assert by_source["allegro_lokalnie"].saved == 12  # etui i „kupię” odrzucone
     assert by_source["vinted"].saved == 2  # oferta w obcej walucie odrzucona
     assert by_source["sprzedajemy"].saved == 3  # etui odrzucone
-    assert sources_shown(window) == {"OLX", "Allegro Lokalnie", "Vinted", "Sprzedajemy.pl"}
+    assert sources_shown(window) == {"Allegro Lokalnie", "Vinted", "Sprzedajemy.pl"}
 
 
 def test_filters_apply_and_persist(window):

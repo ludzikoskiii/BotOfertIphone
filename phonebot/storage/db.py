@@ -88,6 +88,11 @@ MIGRATIONS: list[str] = [
     ALTER TABLE offers ADD COLUMN ai_checked_at TEXT;
     CREATE INDEX idx_offers_first_seen ON offers (first_seen);
     """,
+    # v3 — OLX usunięty ze źródeł (blokuje automatyczne pobieranie): stare oferty znikają z listy,
+    # ale ich ceny zostają w danych rynkowych (okno czasowe wyceny)
+    """
+    UPDATE offers SET is_active = 0 WHERE source = 'olx';
+    """,
 ]
 
 

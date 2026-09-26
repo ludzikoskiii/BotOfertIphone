@@ -12,7 +12,6 @@ from phonebot.net.http import HostRateLimiter, HttpClient
 from phonebot.services.scanner import Scanner
 from phonebot.sources.allegro_lokalnie import AllegroLokalnieAdapter
 from phonebot.sources.base import SearchQuery, SourceBlocked, SourceFormatChanged, SourceNetworkError
-from phonebot.sources.olx import OlxAdapter
 from phonebot.storage.repositories import FetchRunRepository, utcnow
 
 CLOUDFRONT_403 = ('<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN"><HTML><HEAD>'
@@ -24,7 +23,7 @@ def client(handler):
     return HttpClient(HostRateLimiter(0), transport=httpx.MockTransport(handler), wait=lambda s: 0)
 
 
-def search(adapter_cls, handler, phrases=("iphone", "iphone zbity")):
+def search(adapter_cls, handler, phrases=("iphone", "iphone zbity")):  # noqa: D103
     calls = []
 
     def wrapped(request):
@@ -38,24 +37,21 @@ def search(adapter_cls, handler, phrases=("iphone", "iphone zbity")):
     return asyncio.run(go()), calls
 
 
-def test_olx_cloudfront_403_is_reported_as_block_and_stops_immediately():
-    handler = lambda r: httpx.Response(403, text=CLOUDFRONT_403,  # noqa: E731
-                                       headers={"content-type": "text/html", "server": "CloudFront"})
+def test_403_is_reported_as_block_and_stops_immediately():
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        return httpx.Response(403, text=CLOUDFRONT_403, headers={"content-type": "text/html", "server": "CloudFront"})
+
     with pytest.raises(SourceBlocked, match="blokuje automatyczne pobieranie"):
-        search(OlxAdapter, handler)
-    _, calls = None, []
-    try:
-        search(OlxAdapter, lambda r: (calls.append(r), httpx.Response(403, text=CLOUDFRONT_403))[1])
-    except SourceBlocked:
-        pass
+        search(AllegroLokalnieAdapter, handler)
     assert len(calls) == 1  # bez ponawiania i bez kolejnych fraz
 
 
-def test_olx_changed_json_is_reported_as_format_change():
-    with pytest.raises(SourceFormatChanged, match="brak pola"):
-        search(OlxAdapter, lambda r: httpx.Response(200, json={"items": []}))
+def test_gone_endpoint_is_reported_as_format_change():
     with pytest.raises(SourceFormatChanged, match="zmienił API"):
-        search(OlxAdapter, lambda r: httpx.Response(404, text="nie ma"))
+        search(AllegroLokalnieAdapter, lambda r: httpx.Response(404, text="nie ma"))
 
 
 def test_network_error_category():
@@ -63,7 +59,7 @@ def test_network_error_category():
         raise httpx.ConnectError("brak sieci")
 
     with pytest.raises(SourceNetworkError):
-        search(OlxAdapter, boom)
+        search(AllegroLokalnieAdapter, boom)
 
 
 def test_allegro_no_results_is_not_a_format_change():
@@ -79,7 +75,7 @@ def scanner(conn, handler, settings=None):
     limiter = HostRateLimiter(0)
     return Scanner(conn, settings or Settings(max_pages_per_query=1), limiter,
                    http_factory=lambda: HttpClient(limiter, transport=httpx.MockTransport(handler), wait=lambda s: 0),
-                   adapter_factory=lambda http, s: [OlxAdapter(http, s)])
+                   adapter_factory=lambda http, s: [AllegroLokalnieAdapter(http, s)])
 
 
 def test_scanner_records_kind_and_pauses_blocked_source(conn):
@@ -91,7 +87,7 @@ def test_scanner_records_kind_and_pauses_blocked_source(conn):
 
     report = asyncio.run(scanner(conn, blocked).run())
     assert report.sources[0].kind == "blocked"
-    assert FetchRunRepository(conn).latest_by_source()["olx"]["status"] == "blocked"
+    assert FetchRunRepository(conn).latest_by_source()["allegro_lokalnie"]["status"] == "blocked"
     # automatyczne odświeżenie w czasie pauzy nie odpytuje portalu
     again = asyncio.run(scanner(conn, blocked).run())
     assert len(calls) == 1
@@ -103,7 +99,7 @@ def test_scanner_records_kind_and_pauses_blocked_source(conn):
 
 def test_pause_expires(conn):
     runs = FetchRunRepository(conn)
-    run_id = runs.start("olx")
+    run_id = runs.start("allegro_lokalnie")
     runs.finish(run_id, found=0, new=0, error="403", status="blocked")
     old = (utcnow() - timedelta(hours=10)).isoformat()
     conn.execute("UPDATE fetch_runs SET finished_at = ? WHERE id = ?", (old, run_id))
@@ -112,7 +108,7 @@ def test_pause_expires(conn):
 
 
 def test_empty_source_is_flagged(conn):
-    report = asyncio.run(scanner(conn, lambda r: httpx.Response(200, json={"data": [], "links": {}})).run())
+    report = asyncio.run(scanner(conn, lambda r: httpx.Response(200, text="<html>Brak wyników</html>")).run())
     assert report.sources[0].kind == "empty"
 
 
@@ -132,16 +128,17 @@ def test_status_bar_shows_each_source(app, tmp_path):
 
     conn, _ = build_sample_db(tmp_path / "db.sqlite3")
     runs = FetchRunRepository(conn)
-    rid = runs.start("olx")
+    rid = runs.start("allegro_lokalnie")
     runs.finish(rid, found=0, new=0, error="HTTP 403 — portal blokuje", status="blocked")
     from phonebot.ui.main_window import MainWindow
 
     win = MainWindow(conn, tmp_path / "db.sqlite3", thumbs_dir=tmp_path)
     bar = win.source_status
-    assert bar.kinds["olx"] == "blocked" and "zablokowane" in bar.text_of("olx")
+    assert bar.kinds["allegro_lokalnie"] == "blocked" and "zablokowane" in bar.text_of("allegro_lokalnie")
     assert bar.kinds["vinted"] == "ok" and "działa" in bar.text_of("vinted")
-    assert bar.kinds["allegro_lokalnie"] == "ok"
-    tooltip = win.findChild(type(win._status), "status_olx").toolTip()
+    assert bar.kinds["sprzedajemy"] == "ok"
+    assert "olx" not in bar.kinds
+    tooltip = win.findChild(type(win._status), "status_allegro_lokalnie").toolTip()
     assert "HTTP 403" in tooltip and "Zwiększ odstęp" in tooltip
 
     import copy

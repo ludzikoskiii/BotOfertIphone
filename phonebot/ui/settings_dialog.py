@@ -114,7 +114,6 @@ GENERAL = [
     Field("max_pages_per_query", "Stron wyników na frazę", "int", 1, 10),
     Field("source_timeout_s", "Limit czasu jednego portalu", "float", 20, 900, 10, " s"),
     Field("offer_stale_days", "Ukryj oferty niewidziane od", "int", 1, 60, 1, " dni"),
-    Field("olx_category_id", "ID kategorii OLX (0 = bez filtra)", "int", 0, 999999),
 ]
 BUYING = [
     Field("buy_shipping_cost", "Wysyłka telefonu do Ciebie", suffix=" zł"),

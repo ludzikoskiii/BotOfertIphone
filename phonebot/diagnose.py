@@ -170,9 +170,6 @@ def _stage_from_trace(trace: list[dict[str, Any]], exc: Exception) -> str:
 
 def default_probes() -> list[Probe]:
     return [
-        Probe("OLX API", "https://www.olx.pl/api/v1/offers/?offset=0&limit=5&query=iphone%2013"
-                         "&sort_by=created_at%3Adesc", headers={"Accept": "application/json"}),
-        Probe("OLX strona wyników", "https://www.olx.pl/oferty/q-iphone-13/"),
         Probe("Vinted strona (sesja)", "https://www.vinted.pl/catalog?search_text=iphone", method="HEAD"),
         Probe("Vinted stary API", "https://www.vinted.pl/api/v2/catalog/items?search_text=iphone&per_page=5",
               headers={"Accept": "application/json"}),

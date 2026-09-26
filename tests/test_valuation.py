@@ -38,7 +38,7 @@ def test_max_buy_price_never_negative():
 
 
 def test_repair_offer_full_calculation():
-    s = Settings()  # OLX 0%, pakowanie 5, wysyłka zakupu 15, wysyłka części 12
+    s = Settings()  # kanał sprzedaży OLX 0%, pakowanie 5, wysyłka zakupu 15, wysyłka części 12
     offer = make_offer("iPhone 13 128GB zbity ekran", price=900)
     v = evaluate(offer, market(2000), PARTS, s, Mode.REPAIR)
     assert v.repair_cost == 300 + 12
@@ -183,6 +183,7 @@ def test_exact_buyer_fee_from_portal_wins():
     assert {c.label: c.amount for c in v.cost_items}["Opłata kupującego (ochrona kupujących)"] == pytest.approx(53.4)
 
 
-def test_no_buyer_fee_on_olx():
-    v = evaluate(make_offer("iPhone 13 128GB", price=1000, source="olx"), market(2200), PARTS, Settings(), Mode.RESELL)
+def test_no_buyer_fee_on_allegro_lokalnie():
+    offer = make_offer("iPhone 13 128GB", price=1000, source="allegro_lokalnie")
+    v = evaluate(offer, market(2200), PARTS, Settings(), Mode.RESELL)
     assert all("Opłata kupującego" not in c.label for c in v.cost_items)

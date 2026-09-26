@@ -1,6 +1,6 @@
 # PhoneBot — wyszukiwarka opłacalnych ofert iPhone'ów
 
-Aplikacja desktopowa (Windows) do wyszukiwania ofert używanych iPhone'ów na OLX.pl,
+Aplikacja desktopowa (Windows) do wyszukiwania ofert używanych iPhone'ów na
 Allegro Lokalnie, Vinted i Sprzedajemy.pl, wyceny ich opłacalności i podpowiadania, czy i za ile kupić.
 
 > **Status: wszystkie 5 etapów gotowe.** Trzy portale, wycena, werdykty i negocjacje, filtry,
@@ -49,7 +49,7 @@ dist\PhoneBot.exe --self-test             # sprawdzenie, czy plik ma wszystkie m
    Jeśli PowerShell blokuje aktywację, wykonaj raz:
    `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
 3. Uruchom aplikację: `python -m phonebot`.
-   Kliknij **⟳ Odśwież oferty** (F5), aby pobrać ogłoszenia z OLX.
+   Kliknij **⟳ Odśwież oferty** (F5), aby pobrać ogłoszenia z portali.
 4. Testy: `python -m pytest`.
 5. Demo wyceny w konsoli: `python -m phonebot.demo`.
 
@@ -245,7 +245,7 @@ Ceny części (`core/parts.py`) i prowizje portali (`core/settings.py`) to
 Sprawdź zwłaszcza:
 
 - ceny części u swojego dostawcy,
-- aktualny cennik OLX (opłaty za ogłoszenia w kategorii Telefony),
+- aktualny cennik OLX, jeśli tam sprzedajesz (opłaty za ogłoszenia w kategorii Telefony),
 - prowizję Allegro dla smartfonów (domyślnie 8% + 1 zł).
 
 ## Struktura projektu
@@ -272,12 +272,12 @@ phonebot/
                  notifications.py (Telegram)
   core/view_filter.py  filtry widoku;  core/places.py  wbudowana lista miejscowości
   net/geocode.py wyszukiwanie miejscowości (OpenStreetMap Nominatim)
-  sources/       adaptery portali: base.py (interfejs), olx.py, allegro_lokalnie.py, vinted.py,
+  sources/       adaptery portali: base.py (interfejs), allegro_lokalnie.py, vinted.py, sprzedajemy.py,
                  extract.py (odporne wyciąganie ofert z JSON osadzonego w stronach)
   ui/            GUI PySide6: main_window.py, table_model.py, offer_details.py (+ details_html.py),
                  images.py (miniatury), workers.py (wątek), theme.py (kolory), filters_panel.py,
                  settings_dialog.py, parts_editor.py, location_dialog.py
-tests/           testy jednostkowe (+ fixtures z przykładowymi odpowiedziami OLX)
+tests/           testy jednostkowe (+ fixtures z przykładowymi odpowiedziami portali)
 tools/           screenshot.py — zrzut okna na danych testowych
 phonebot.spec    konfiguracja PyInstaller (PhoneBot.exe); run_phonebot.py — punkt wejścia
 assets/          ikona aplikacji
@@ -290,7 +290,7 @@ Awaria jednego adaptera jest izolowana i nie zatrzymuje pozostałych.
 ## Plan etapów
 
 1. ✅ Architektura, baza danych i logika wyceny z testami.
-2. ✅ Adapter OLX i podstawowa tabela ofert w GUI.
+2. ✅ Pierwszy adapter i podstawowa tabela ofert w GUI (adapter OLX później usunięty, patrz niżej).
 3. ✅ Kolorowanie, werdykty i rekomendacje negocjacji w GUI (okno szczegółów).
 4. ✅ Allegro Lokalnie i Vinted, filtry, tryby, okno ustawień, wybór miejscowości i edytor tabeli części.
 5. ✅ Automatyczne odświeżanie, zasobnik systemowy, powiadomienia Windows i Telegram, opcjonalna
@@ -299,12 +299,6 @@ Awaria jednego adaptera jest izolowana i nie zatrzymuje pozostałych.
 
 ## Uwaga o źródłach danych
 
-Adapter OLX korzysta z endpointu JSON `https://www.olx.pl/api/v1/offers/`, z którego ładuje dane strona OLX.
-Parser jest przetestowany na próbkach w `tests/fixtures/`, przygotowanych według formatu tego endpointu.
-Jeśli OLX zmieni format i adapter przestanie działać, pasek stanu pokaże błąd, a szczegóły trafią do logu.
-Opcja `olx_category_id` w ustawieniach pozwala zawęzić wyniki do kategorii iPhone.
-Domyślnie jest wyłączona i wyniki filtruje sama aplikacja.
-
 Allegro Lokalnie nie ma API dla ogłoszeń, więc adapter czyta dane osadzone w stronie wyników
 (JSON / JSON-LD). Wyszukuje w nich obiekty wyglądające jak oferta, zamiast polegać na sztywnej
 ścieżce, dlatego drobne zmiany serwisu go nie psują. Jeśli serwis całkowicie zmieni wygląd,
@@ -312,10 +306,14 @@ aplikacja zgłosi błąd źródła („możliwa zmiana formatu serwisu”).
 Allegro Lokalnie podaje tylko nazwę miasta. Odległość jest liczona, gdy to miasto jest
 na wbudowanej liście miejscowości.
 
-**OLX blokuje automatyczne pobieranie (wrzesień 2026).** Zapora CloudFront odpowiada
-„403 Request blocked” zarówno na API, jak i na stronę wyników. Aplikacja pokazuje wtedy
-status „zablokowane” i nie próbuje obchodzić zabezpieczeń. Oficjalne API OLX (Partner API)
-służy tylko do zarządzania własnymi ogłoszeniami, nie do wyszukiwania cudzych.
+**OLX i Facebook Marketplace nie są obsługiwane.** OLX blokuje automatyczne pobieranie
+(zapora CloudFront odpowiada „403 Request blocked” na API i stronę wyników), a jego oficjalne
+Partner API służy tylko do zarządzania własnymi ogłoszeniami. Facebook Marketplace nie ma
+publicznego API, a regulamin Meta zabrania automatycznego zbierania danych. Adapter OLX
+został usunięty z projektu. Stare oferty z OLX znikają z listy przy aktualizacji bazy,
+ale ich ceny nadal zasilają wycenę rynkową do końca okna czasowego (30 dni).
+OLX pozostaje dostępny jako **kanał sprzedaży** w ustawieniach zysku, bo dotyczy Twojej
+ręcznej sprzedaży, a nie pobierania ofert.
 
 Vinted działa w trybie „best effort”. We wrześniu 2026 Vinted przeniósł katalog na
 `api.vinted.pl/svc-catalogue/items` (stary adres zwraca 404) i adapter korzysta już z nowego. Adapter pobiera anonimowy token sesji

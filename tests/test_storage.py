@@ -26,7 +26,7 @@ def test_schema_version(conn):
 
 def test_upsert_new_and_update_with_price_history(conn):
     repo = OfferRepository(conn)
-    raw = make_raw("iPhone 13 128GB", 1500, source="olx", source_id="A1", photos=["p.jpg"])
+    raw = make_raw("iPhone 13 128GB", 1500, source="allegro_lokalnie", source_id="A1", photos=["p.jpg"])
     first = save(repo, raw)
     assert first.is_new
     raw.price = 1400
@@ -74,20 +74,20 @@ def test_notified(conn):
 def test_deactivate_missing(conn):
     repo = OfferRepository(conn)
     old = datetime.now(timezone.utc) - timedelta(days=2)
-    save(repo, make_raw("iPhone 13", 1000, source="olx"), seen=old)
-    save(repo, make_raw("iPhone 14", 1000, source="olx"))
-    assert repo.deactivate_missing("olx", datetime.now(timezone.utc) - timedelta(days=1)) == 1
+    save(repo, make_raw("iPhone 13", 1000, source="allegro_lokalnie"), seen=old)
+    save(repo, make_raw("iPhone 14", 1000, source="allegro_lokalnie"))
+    assert repo.deactivate_missing("allegro_lokalnie", datetime.now(timezone.utc) - timedelta(days=1)) == 1
     assert len(repo.list()) == 1
 
 
 def test_market_observations_window_and_cross_portal_dedup(conn):
     repo = OfferRepository(conn)
     now = datetime.now(timezone.utc)
-    save(repo, make_raw("iPhone 13 128GB", 1500, source="olx", city="Kraków"))
+    save(repo, make_raw("iPhone 13 128GB", 1500, source="allegro_lokalnie", city="Kraków"))
     save(repo, make_raw("iPhone 13 128GB", 1500, source="vinted", city="Kraków"))  # ta sama sztuka
-    save(repo, make_raw("iPhone 13 128GB", 1600, source="olx", city="Zakopane"))
-    save(repo, make_raw("iPhone 13 128GB", 900, source="olx"), seen=now - timedelta(days=60))  # za stara
-    save(repo, make_raw("iPhone 14 128GB", 2000, source="olx"))
+    save(repo, make_raw("iPhone 13 128GB", 1600, source="allegro_lokalnie", city="Zakopane"))
+    save(repo, make_raw("iPhone 13 128GB", 900, source="allegro_lokalnie"), seen=now - timedelta(days=60))  # za stara
+    save(repo, make_raw("iPhone 14 128GB", 2000, source="allegro_lokalnie"))
     obs = repo.market_observations("iPhone 13", window_days=30)
     assert sorted(o.price for o in obs) == [1500, 1600]
 
@@ -115,12 +115,12 @@ def test_settings_persist(conn):
 
 def test_fetch_runs(conn):
     repo = FetchRunRepository(conn)
-    run = repo.start("olx")
+    run = repo.start("allegro_lokalnie")
     repo.finish(run, found=10, new=3, error=None)
     err = repo.start("vinted")
     repo.finish(err, found=0, new=0, error="HTTP 403")
     rows = repo.last_runs()
-    assert [(r["source"], r["status"]) for r in rows] == [("vinted", "error"), ("olx", "ok")]
+    assert [(r["source"], r["status"]) for r in rows] == [("vinted", "error"), ("allegro_lokalnie", "ok")]
 
 
 def test_evaluator_end_to_end(conn):
@@ -150,7 +150,7 @@ def test_upgrade_from_v1_keeps_offers(tmp_path):
             old.execute(stmt)
     old.execute("PRAGMA user_version = 1")
     old.execute("INSERT INTO offers (source, source_id, url, title, price, condition, first_seen, last_seen) "
-                "VALUES ('olx', '1', 'u', 'iPhone 13', 1000, 'good', '2026-09-01T00:00:00+00:00', "
+                "VALUES ('vinted', '1', 'u', 'iPhone 13', 1000, 'good', '2026-09-01T00:00:00+00:00', "
                 "'2026-09-01T00:00:00+00:00')")
     old.commit()
     old.close()
@@ -158,3 +158,31 @@ def test_upgrade_from_v1_keeps_offers(tmp_path):
     assert migrate(conn) == len(MIGRATIONS)
     offer = OfferRepository(conn).get(1)
     assert offer.raw.title == "iPhone 13" and offer.ai_note is None
+
+
+def test_migration_v3_hides_old_olx_offers(tmp_path):
+    import sqlite3
+
+    from phonebot.storage.db import connect, migrate
+
+    path = tmp_path / "v2.sqlite3"
+    old = sqlite3.connect(path)
+    for script in MIGRATIONS[:2]:
+        for stmt in (s.strip() for s in script.split(";")):
+            if stmt:
+                old.execute(stmt)
+    old.execute("PRAGMA user_version = 2")
+    for src, sid in (("olx", "1"), ("vinted", "2")):
+        old.execute("INSERT INTO offers (source, source_id, url, title, price, model, storage_gb, condition, "
+                    "first_seen, last_seen) "
+                    f"VALUES ('{src}', '{sid}', 'u', 'iPhone 13 128GB', 1000, 'iPhone 13', 128, 'good', "
+                    "'2026-09-20T00:00:00+00:00', '2026-09-20T00:00:00+00:00')")
+    old.commit()
+    old.close()
+    conn = connect(path)
+    migrate(conn)
+    repo = OfferRepository(conn)
+    assert [o.raw.source for o in repo.list()] == ["vinted"]  # OLX znika z listy
+    # ceny z OLX nadal zasilają wycenę rynkową
+    now = datetime(2026, 9, 25, tzinfo=timezone.utc)
+    assert len(repo.market_observations("iPhone 13", window_days=30, now=now)) == 2

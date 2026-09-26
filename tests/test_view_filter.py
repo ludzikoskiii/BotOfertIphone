@@ -22,7 +22,7 @@ def test_default_filter_accepts_everything():
 
 
 def test_models_price_condition_source():
-    o, v = pair("iPhone 13 128GB", 1000, source="olx")
+    o, v = pair("iPhone 13 128GB", 1000, source="allegro_lokalnie")
     assert matches(o, v, ViewFilter(models=["iPhone 13"]))
     assert not matches(o, v, ViewFilter(models=["iPhone 14"]))
     assert not matches(o, v, ViewFilter(price_min=1200))

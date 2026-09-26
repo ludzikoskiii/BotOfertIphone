@@ -47,7 +47,7 @@ def main() -> None:
     _market_data(repo)
     ids = []
     for i, (title, price, desc) in enumerate(SAMPLES):
-        raw = RawOffer("olx", f"demo{i}", "https://olx.pl/...", title, price, description=desc,
+        raw = RawOffer("allegro_lokalnie", f"demo{i}", "https://allegrolokalnie.pl/oferta/demo", title, price, description=desc,
                        photos=["x"], shipping_available=True)
         ids.append(repo.upsert(raw, parse_offer(raw)).offer_id)
 

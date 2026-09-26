@@ -145,9 +145,9 @@ def test_new_green_offer_triggers_notifications(tmp_path):
     from phonebot.core.normalizer import parse_offer
 
     raw = make_raw("iPhone 13 128GB zbity ekran", 600, description="zbity ekran, reszta sprawna",
-                   source="olx", source_id="NEW1", city="Nowy Targ")
+                   source="allegro_lokalnie", source_id="NEW1", city="Nowy Targ")
     new_id = repo.upsert(raw, parse_offer(raw)).offer_id
-    bad = make_raw("iPhone 13 128GB", 3000, source="olx", source_id="NEW2")
+    bad = make_raw("iPhone 13 128GB", 3000, source="allegro_lokalnie", source_id="NEW2")
     bad_id = repo.upsert(bad, parse_offer(bad)).offer_id
     log = []
     settings = Settings(telegram_enabled=True, telegram_bot_token="t", telegram_chat_id="1")

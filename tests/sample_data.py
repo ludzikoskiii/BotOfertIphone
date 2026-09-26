@@ -18,11 +18,10 @@ FIX = Path(__file__).parent / "fixtures"
 
 def mock_portals(request: httpx.Request) -> httpx.Response:
     host = request.url.host
-    if host == "www.olx.pl":
-        name = "olx_page2.json" if "offset=40" in str(request.url) else "olx_page1.json"
-        return httpx.Response(200, json=json.loads((FIX / name).read_text(encoding="utf-8")))
     if host == "allegrolokalnie.pl":
-        return httpx.Response(200, text=(FIX / "allegro_lokalnie_page1.html").read_text(encoding="utf-8"))
+        name = "allegro_lokalnie_search_p2.html" if request.url.params.get("page") == "2" \
+            else "allegro_lokalnie_search_p1.html"
+        return httpx.Response(200, text=(FIX / name).read_text(encoding="utf-8"))
     if host == "www.vinted.pl":  # sesja: strona wydaje token w ciasteczku
         return httpx.Response(200, text="", headers={"set-cookie": "access_token_web=tok; Path=/; Domain=.vinted.pl"})
     if host == "api.vinted.pl":  # nowy katalog (od września 2026)
