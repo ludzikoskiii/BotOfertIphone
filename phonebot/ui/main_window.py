@@ -57,7 +57,6 @@ from .table_model import (
     ALWAYS_VISIBLE,
     DEFAULT_WIDTHS,
     HEADERS,
-    SORT_ROLE,
     Col,
     OffersTableModel,
     VerdictDelegate,
@@ -84,6 +83,10 @@ class OfferFilterProxy(QSortFilterProxyModel):
         else:
             self.view_filter = f
             self.invalidateFilter()
+
+    def sort(self, column: int, order: Qt.SortOrder = Qt.SortOrder.AscendingOrder) -> None:
+        """Sortuje model źródłowy (szybko, w Pythonie); proxy tylko filtruje i zachowuje kolejność."""
+        self.sourceModel().sort(column, order)
 
     def filterAcceptsRow(self, source_row: int, source_parent: QModelIndex) -> bool:  # noqa: N802
         offer, val = self.sourceModel().row_at(source_row)
@@ -117,7 +120,6 @@ class MainWindow(QMainWindow):
         self.model = OffersTableModel(self.thumbs, self)
         self.proxy = OfferFilterProxy(self)
         self.proxy.setSourceModel(self.model)
-        self.proxy.setSortRole(SORT_ROLE)
         self.proxy.set_view_filter(self.settings.view_filter)
 
         self._ui_save_timer = QTimer(self, singleShot=True, interval=600)
@@ -137,6 +139,8 @@ class MainWindow(QMainWindow):
         self._configure_timer()
         self.refresh_source_status()
         self.reload()
+        # sprzątanie starych miniatur po starcie, żeby nie opóźniać otwarcia okna
+        QTimer.singleShot(5000, lambda: (self.thumbs.prune_disk(), self.photos.prune_disk()))
 
     # ---------------------------------------------------------------- UI ---
 

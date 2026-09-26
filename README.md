@@ -328,8 +328,23 @@ Awaria jednego adaptera jest izolowana i nie zatrzymuje pozostałych.
 3. ✅ Kolorowanie, werdykty i rekomendacje negocjacji w GUI (okno szczegółów).
 4. ✅ Allegro Lokalnie i Vinted, filtry, tryby, okno ustawień, wybór miejscowości i edytor tabeli części.
 5. ✅ Automatyczne odświeżanie, zasobnik systemowy, powiadomienia Windows i Telegram, opcjonalna
-   analiza opisów przez AI (Claude), wydajność (5000 ofert: wczytanie ok. 0,7 s, filtrowanie
-   poniżej 10 ms) oraz gotowy plik `PhoneBot.exe` budowany automatycznie przez GitHub Actions.
+   analiza opisów przez AI (Claude) oraz gotowy plik `PhoneBot.exe` budowany automatycznie przez GitHub Actions.
+6. ✅ Wieloetapowy filtr akcesoriów z widokiem „Odrzucone”, nowy układ okna (filtry | tabela | szczegóły),
+   motyw jasny/ciemny i optymalizacja wydajności.
+
+### Wydajność
+
+Zmierzone na 5000 aktywnych ofert:
+
+| Operacja | Czas |
+|---|---|
+| Otwarcie okna (wczytanie, wycena, tabela) | ok. 0,45 s |
+| Sortowanie po dowolnej kolumnie | kilkadziesiąt ms |
+| Zapis 3000 pobranych ofert (filtr + rozpoznanie + baza) | ok. 1,5 s (w tle) |
+
+Baza nie rośnie bez końca: oferty nieaktywne dłużej niż 2 × okno wyceny (min. 60 dni) są usuwane,
+z wyjątkiem obserwowanych. Nieużywane od 30 dni miniatury znikają z dysku, a zdjęcia w pamięci
+mają limit.
 
 ## Uwaga o źródłach danych
 

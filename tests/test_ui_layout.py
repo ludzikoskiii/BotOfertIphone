@@ -188,3 +188,18 @@ def test_fast_with_many_rows(app, tmp_path):
     assert sort_s < 1.5, sort_s
     assert filter_s < 1.0, filter_s
     assert scroll_s < 3.0, scroll_s
+
+
+def test_sorting_keeps_selected_offer(window):
+    window.table.selectRow(3)
+    oid = window.current_offer_id()
+    for col in (Col.PRICE, Col.MODEL, Col.VERDICT):
+        window.table.sortByColumn(col, Qt.SortOrder.DescendingOrder)
+        assert window.current_offer_id() == oid
+        assert window.details.offer.id == oid
+    window.table.sortByColumn(Col.PRICE, Qt.SortOrder.AscendingOrder)
+    prices = [window._row_at(window.proxy.index(r, 0))[0].price for r in range(window.proxy.rowCount())]
+    assert prices == sorted(prices)
+    # nowe dane zachowują wybrane sortowanie
+    window.reload()
+    assert [window._row_at(window.proxy.index(r, 0))[0].price for r in range(window.proxy.rowCount())] == prices

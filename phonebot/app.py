@@ -88,6 +88,10 @@ def main() -> int:
     window.quit_on_close = True
     window.show()
     code = app.exec()
+    try:
+        conn.execute("PRAGMA optimize")  # aktualizuje statystyki zapytań SQLite (szybkie, raz przy wyjściu)
+    except Exception:  # noqa: BLE001
+        log.debug("PRAGMA optimize nie powiodło się", exc_info=True)
     conn.close()
     return code
 

@@ -186,3 +186,16 @@ def test_migration_v3_hides_old_olx_offers(tmp_path):
     # ceny z OLX nadal zasilają wycenę rynkową
     now = datetime(2026, 9, 25, tzinfo=timezone.utc)
     assert len(repo.market_observations("iPhone 13", window_days=30, now=now)) == 2
+
+
+def test_purge_inactive_removes_old_offers_and_history(conn):
+    repo = OfferRepository(conn)
+    old = datetime.now(timezone.utc) - timedelta(days=120)
+    gone = save(repo, make_raw("iPhone 11 64GB", 700, source_id="OLD"), old).offer_id
+    kept_watched = save(repo, make_raw("iPhone 12 64GB", 900, source_id="W"), old).offer_id
+    fresh = save(repo, make_raw("iPhone 13 128GB", 1500, source_id="NEW")).offer_id
+    repo.set_status(kept_watched, OfferStatus.WATCHED)
+    repo.deactivate_missing("test", datetime.now(timezone.utc) - timedelta(days=7))
+    assert repo.purge_inactive(60) == 1
+    assert repo.get(gone) is None and repo.get(kept_watched) and repo.get(fresh)
+    assert conn.execute("SELECT COUNT(*) FROM price_history WHERE offer_id = ?", (gone,)).fetchone()[0] == 0

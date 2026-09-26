@@ -103,7 +103,8 @@ class OffersTableModel(QAbstractTableModel):
         self._thumbs = thumbs
         self._rows_by_photo: dict[str, list[int]] = defaultdict(list)
         self._row_by_id: dict[int, int] = {}
-        self._sort_cache: dict[tuple[int, int], Any] = {}
+        self._sort_col: Col | None = Col.PROFIT
+        self._sort_order = Qt.SortOrder.DescendingOrder
         thumbs.ready.connect(self._thumb_ready)
         self._bold = QFont()
         self._bold.setBold(True)
@@ -123,14 +124,37 @@ class OffersTableModel(QAbstractTableModel):
 
     def set_rows(self, rows: list[tuple[Offer, Valuation]]) -> None:
         self.beginResetModel()
-        self._rows = rows
-        self._sort_cache.clear()
+        self._rows = list(rows)
+        self._apply_sort()
+        self.endResetModel()
+
+    def _reindex(self) -> None:
         self._rows_by_photo.clear()
-        self._row_by_id = {offer.id: i for i, (offer, _) in enumerate(rows) if offer.id is not None}
-        for i, (offer, _) in enumerate(rows):
+        self._row_by_id = {offer.id: i for i, (offer, _) in enumerate(self._rows) if offer.id is not None}
+        for i, (offer, _) in enumerate(self._rows):
             if offer.raw.photos:
                 self._rows_by_photo[offer.raw.photos[0]].append(i)
-        self.endResetModel()
+
+    def _apply_sort(self) -> None:
+        """Sortowanie w Pythonie (klucz liczony raz na wiersz) — dużo szybsze niż porównania
+        wykonywane przez QSortFilterProxyModel, które przy każdym porównaniu wołają ``data()``."""
+        if self._sort_col is not None:
+            col = self._sort_col
+            self._rows.sort(key=lambda r: self._sort_key(col, r[0], r[1]),
+                            reverse=self._sort_order == Qt.SortOrder.DescendingOrder)
+        self._reindex()
+
+    def sort(self, column: int, order: Qt.SortOrder = Qt.SortOrder.AscendingOrder) -> None:
+        self._sort_col = Col(column) if 0 <= column < len(Col) else None
+        self._sort_order = order
+        self.layoutAboutToBeChanged.emit()
+        persistent = self.persistentIndexList()
+        ids = [self._rows[i.row()][0].id for i in persistent]
+        self._apply_sort()
+        new = [self.index(self._row_by_id[oid], i.column()) if oid in self._row_by_id else QModelIndex()
+               for oid, i in zip(ids, persistent, strict=True)]
+        self.changePersistentIndexList(persistent, new)
+        self.layoutChanged.emit()
 
     def row_at(self, row: int) -> tuple[Offer, Valuation]:
         return self._rows[row]
@@ -143,7 +167,6 @@ class OffersTableModel(QAbstractTableModel):
         if row is None:
             return
         self._rows[row][0].status = status
-        self._sort_cache = {k: v for k, v in self._sort_cache.items() if k[0] != row}
         self.dataChanged.emit(self.index(row, 0), self.index(row, len(Col) - 1))
 
     def rows(self) -> list[tuple[Offer, Valuation]]:
@@ -179,10 +202,7 @@ class OffersTableModel(QAbstractTableModel):
         if role == Qt.ItemDataRole.DisplayRole:
             return self._display(col, offer, val)
         if role == SORT_ROLE:
-            key = (index.row(), index.column())
-            if key not in self._sort_cache:
-                self._sort_cache[key] = self._sort_key(col, offer, val)
-            return self._sort_cache[key]
+            return self._sort_key(col, offer, val)
         if role == OFFER_ROLE:
             return offer.id
         if role == VERDICT_ROLE:

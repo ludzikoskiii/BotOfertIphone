@@ -6,6 +6,7 @@ Dowolną inną miejscowość znajdziesz wyszukiwarką w oknie „Lokalizacja”
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 
 
 @dataclass(frozen=True)
@@ -68,6 +69,7 @@ def _key(name: str) -> str:
 _BY_NAME = {_key(p.name): p for p in PLACES}
 
 
+@lru_cache(maxsize=4096)  # wołane dla każdej oferty przy każdym przeliczeniu tabeli
 def find_place(city: str | None) -> Place | None:
     """Współrzędne miejscowości z wbudowanej listy (dla ofert bez współrzędnych)."""
     return _BY_NAME.get(_key(city)) if city else None

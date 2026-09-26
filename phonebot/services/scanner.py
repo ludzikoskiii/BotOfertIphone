@@ -131,6 +131,10 @@ class Scanner:
             runs.finish(run_id, found=src_report.found, new=src_report.new, error=src_report.error,
                         status=src_report.kind)
             report.sources.append(src_report)
+        # porządki: stare nieaktywne oferty nie są już potrzebne do wyceny (okno rynkowe × 2)
+        purged = OfferRepository(self.conn).purge_inactive(max(s.market_window_days * 2, 60))
+        if purged:
+            log.info("Usunięto %d dawno nieaktywnych ofert", purged)
         progress(_summary(report))
         return report
 

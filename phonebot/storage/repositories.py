@@ -136,6 +136,17 @@ class OfferRepository:
         )
         return cur.rowcount
 
+    def purge_inactive(self, older_than_days: int) -> int:
+        """Usuwa dawno nieaktywne oferty (i ich historię cen), których nie potrzebuje już wycena rynkowa.
+
+        Obserwowane oferty zostają. Bez tego baza rośnie bez końca przy każdym skanie.
+        """
+        cutoff = _iso(utcnow() - timedelta(days=older_than_days))
+        cur = self.conn.execute(
+            "DELETE FROM offers WHERE is_active = 0 AND last_seen < ? AND status != 'watched'", (cutoff,)
+        )
+        return cur.rowcount
+
     def price_history(self, offer_id: int) -> list[tuple[datetime, float]]:
         rows = self.conn.execute(
             "SELECT seen_at, price FROM price_history WHERE offer_id = ? ORDER BY seen_at", (offer_id,)

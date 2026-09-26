@@ -107,21 +107,40 @@ def _phrases(words: list[str]) -> list[list[str]]:
     return sorted(out, key=len, reverse=True)
 
 
-def _find(tokens: list[str], phrases: list[list[str]]) -> list[tuple[int, int, str]]:
-    """Wystąpienia fraz: (start, koniec, fraza). Dopasowanie po początku słowa (odmiana: etui/etuii, ładowarką)."""
+class _PhraseIndex:
+    """Frazy pogrupowane po pierwszych 4 literach pierwszego słowa — ``_find`` sprawdza tylko
+    frazy, które mogą pasować do danego słowa tytułu (zamiast wszystkich fraz × wszystkich pozycji)."""
+
+    __slots__ = ("phrases", "by_key")
+
+    def __init__(self, phrases: list[list[str]]):
+        self.phrases = phrases
+        self.by_key: dict[str, list[int]] = {}
+        for order, phrase in enumerate(phrases):
+            self.by_key.setdefault(phrase[0][:4], []).append(order)
+
+
+def _word_match(token: str, word: str) -> bool:
+    return token == word or (len(word) >= 4 and token.startswith(word[:max(4, len(word) - 2)]))
+
+
+def _find(tokens: list[str], phrases: list[list[str]] | _PhraseIndex) -> list[tuple[int, int, str]]:
+    """Wystąpienia fraz: (start, koniec, fraza). Dopasowanie po początku słowa (odmiana: etui/etuii, ładowarką).
+
+    Kolejność jak w liście fraz (dłuższe najpierw); słowo zajęte przez frazę nie pasuje już do innej.
+    """
+    index = phrases if isinstance(phrases, _PhraseIndex) else _PhraseIndex(phrases)
+    candidates = sorted((order, i) for i, t in enumerate(tokens) for order in index.by_key.get(t[:4], ()))
     found: list[tuple[int, int, str]] = []
     taken: set[int] = set()
-    for phrase in phrases:
+    for order, i in candidates:
+        phrase = index.phrases[order]
         n = len(phrase)
-        for i in range(len(tokens) - n + 1):
-            if any(j in taken for j in range(i, i + n)):
-                continue
-            ok = all(tokens[i + k] == phrase[k] or
-                     (len(phrase[k]) >= 4 and tokens[i + k].startswith(phrase[k][:max(4, len(phrase[k]) - 2)]))
-                     for k in range(n))
-            if ok:
-                found.append((i, i + n, " ".join(phrase)))
-                taken.update(range(i, i + n))
+        if i + n > len(tokens) or any(j in taken for j in range(i, i + n)):
+            continue
+        if all(_word_match(tokens[i + k], phrase[k]) for k in range(n)):
+            found.append((i, i + n, " ".join(phrase)))
+            taken.update(range(i, i + n))
     return sorted(found)
 
 
@@ -155,10 +174,10 @@ class ListingFilter:
         self.config = config or ListingFilterConfig()
         self.whitelist = whitelist or set()
         c = self.config
-        self._acc = _phrases(c.accessory_words)
-        self._parts = _phrases(c.part_words)
+        self._acc = _PhraseIndex(_phrases(c.accessory_words))
+        self._parts = _PhraseIndex(_phrases(c.part_words))
         self._wanted = {normalize(w) for w in c.wanted_words}
-        self._addon = _phrases(c.addon_markers)
+        self._addon = _PhraseIndex(_phrases(c.addon_markers))
         self._single = {normalize(w) for w in c.single_part_markers}
         self._phone_cat = [normalize(w) for w in c.phone_category_words]
         self._acc_cat = [normalize(w) for w in c.accessory_category_words]
@@ -196,7 +215,7 @@ class ListingFilter:
         after_text = " ".join(after)
         window_before = " ".join(before)
         # dodatek: „+ etui”, „z pudełkiem”, „etui gratis”, „w zestawie ładowarka”
-        addon = any(_find(before[-2:], [p]) for p in self._addon) or bool(re.search(r"\bgratis|\bw zestawie|\bw komplecie",
+        addon = bool(_find(before[-2:], self._addon)) or bool(re.search(r"\bgratis|\bw zestawie|\bw komplecie",
                                                                                     after_text))
         if kind == "part":
             if before and before[-1] == "na" and word.startswith("czesc"):

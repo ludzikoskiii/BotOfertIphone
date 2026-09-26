@@ -72,5 +72,25 @@ def phrase(regex: str, negatable: bool = True) -> Phrase:
     return Phrase(re.compile(regex), negatable)
 
 
+_COMBINED: dict[int, tuple[object, re.Pattern[str] | None]] = {}
+
+
+def _combined(phrases: list[Phrase] | tuple[Phrase, ...]) -> re.Pattern[str] | None:
+    """Jeden wzorzec „którakolwiek z fraz” — szybki test wstępny zamiast N osobnych wyszukiwań."""
+    entry = _COMBINED.get(id(phrases))
+    if entry is not None and entry[0] is phrases:
+        return entry[1]
+    sources = [p.pattern.pattern for p in phrases]
+    # flagi globalne „(?i)” i odwołania „\1” nie przeżyją sklejenia w alternatywę
+    safe = phrases and all(not src.startswith("(?") or src.startswith(("(?:", "(?=", "(?!", "(?<"))
+                           for src in sources) and not any(re.search(r"\\\d", src) for src in sources)
+    pattern = re.compile("|".join(f"(?:{src})" for src in sources)) if safe else None
+    _COMBINED[id(phrases)] = (phrases, pattern)
+    return pattern
+
+
 def any_match(phrases: list[Phrase] | tuple[Phrase, ...], text: str) -> bool:
+    combined = _combined(phrases)
+    if combined is not None and combined.search(text) is None:
+        return False  # żadna fraza nie występuje — typowy przypadek, bez sprawdzania zaprzeczeń
     return any(p.search(text) for p in phrases)
