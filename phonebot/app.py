@@ -48,6 +48,12 @@ def _self_test() -> str:
     from .ui.main_window import MainWindow
 
     ai = selftest.run()
+    from .core.secret_store import is_encrypted, protect, unprotect
+
+    stored = protect("123:SELFTEST")
+    if unprotect(stored) != "123:SELFTEST" or (is_encrypted() and not stored.startswith("dpapi:")):
+        raise RuntimeError("magazyn sekretów (DPAPI) nie działa")
+    secrets = "sekrety: DPAPI" if is_encrypted() else "sekrety: bez szyfrowania (nie Windows)"
 
     app = QApplication.instance() or QApplication(sys.argv)
     tmp = Path(tempfile.mkdtemp())
@@ -58,7 +64,7 @@ def _self_test() -> str:
     window.close()
     conn.close()
     app.processEvents()
-    return f"PhoneBot {__version__} self-test OK; portale: {', '.join(sorted(REGISTRY))}; {ai}"
+    return f"PhoneBot {__version__} self-test OK; portale: {', '.join(sorted(REGISTRY))}; {ai}; {secrets}"
 
 
 def diagnose_cli() -> int:
