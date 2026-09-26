@@ -35,3 +35,22 @@ def test_source_returns_offers(key):
     if not res.ok and res.stage.startswith("blokada portalu"):
         pytest.xfail(f"portal blokuje automatyczne pobieranie z tej sieci — {details}")
     assert res.ok, details
+
+
+@pytest.mark.live
+def test_refurbed_reference_prices(tmp_path):
+    """Ceny referencyjne Refurbed: strona modelu nadal ma ceny w danych strukturalnych."""
+    from phonebot.core.models import RawOffer
+    from phonebot.core.normalizer import parse_offer
+    from phonebot.services.reference_prices import ReferenceRepository, refresh
+    from phonebot.storage.db import open_database
+    from phonebot.storage.repositories import OfferRepository
+
+    conn = open_database(tmp_path / "ref.sqlite3")
+    raw = RawOffer("vinted", "1", "https://x", "iPhone 13 128GB", 1200, photos=["x"])
+    OfferRepository(conn).upsert(raw, parse_offer(raw))
+    found = asyncio.run(refresh(conn, Settings(), force=True))
+    prices = ReferenceRepository(conn).all()
+    conn.close()
+    assert found.get("iPhone 13", 0) >= 1, f"Refurbed nie zwrócił cen: {found}"
+    assert 300 < prices[("iPhone 13", 128)][0].price < 5000
