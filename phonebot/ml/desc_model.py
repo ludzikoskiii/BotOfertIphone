@@ -101,7 +101,7 @@ _FLAG_WORDS = {
     RedFlag.SIMLOCK.value: r"simlock|sim ?lock|siec|sieci|operator|orange|play|plus|t-?mobile|heyah|vodafone",
     RedFlag.NO_SIGNAL.value: r"zasieg|sieci|signal|modem|baseband",
     RedFlag.NON_ORIGINAL_PARTS.value: r"zamiennik|nieoryginal|nieznan\w* cz|oryginal|komunikat|non.?genuine",
-    RedFlag.UNTESTED.value: r"jak jest|nie sprawdz|nie testow|nie wiem|nieznan|niesprawdz|untested|as is",
+    RedFlag.UNTESTED.value: r"jak jest|nie sprawdz|nie testow|nie wiem|stan nieznany|niesprawdz|untested|as is",
 }
 _ABSENT = re.compile(r"^(bez|brak|nie ma)\b|\b(bez|brak) (blokad|simlock|icloud|mdm)")
 

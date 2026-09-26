@@ -624,3 +624,8 @@ def test_defects_and_flags_need_a_quote_from_the_listing():
                      title="iPhone XR", description="Face ID działa. Telefon z simlockiem na Orange.",
                      phone_model="iPhone XR")
     assert wrong.flags == [RedFlag.SIMLOCK]  # cytat przy fladze musi mówić o tej fladze
+    part = validate({"red_flags": [{"code": "untested", "quote": "komunikat o nieznanej części"},
+                                   {"code": "non_original_parts", "quote": "komunikat o nieznanej części"}]},
+                    title="iPhone X", description="Telefon pokazuje komunikat o nieznanej części.",
+                    phone_model="iPhone X")
+    assert part.flags == [RedFlag.NON_ORIGINAL_PARTS]  # przypadek z testu na prawdziwej Ollamie
