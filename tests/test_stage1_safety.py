@@ -8,6 +8,7 @@
 6. wiele niemal identycznych tanich ofert jednego sprzedawcy.
 """
 import asyncio
+import json
 import os
 
 import httpx
@@ -36,7 +37,13 @@ from phonebot.net.http import HostRateLimiter, HttpClient
 from phonebot.services.offer_guard import OfferGuard
 from phonebot.services.scanner import Scanner
 from phonebot.storage.db import open_database
-from phonebot.storage.repositories import OfferRepository, PartsRepository, RejectedRepository, SellerRepository
+from phonebot.storage.repositories import (
+    OfferRepository,
+    PartsRepository,
+    RejectedRepository,
+    SellerRepository,
+    SettingsRepository,
+)
 
 from .conftest import make_offer
 
@@ -268,7 +275,7 @@ def test_problem1_vinted_poland_only(conn):
     items = [_item(1, "iPhone 13 128GB", 1400, 11), _item(2, "iPhone 12 64GB", 900, 22),
              _item(3, "13 14 15 terakota skal obal", 83, 33), _item(4, "iPhone 11 64GB modrá", 600, 44)]
     calls: list[str] = []
-    report = _scan(conn, _vinted_settings(), _vinted(items, {"22": "CZ"}, calls))
+    report = _scan(conn, _vinted_settings(vinted_country_mode="pl"), _vinted(items, {"22": "CZ"}, calls))
     vinted = next(s for s in report.sources if s.key == "vinted")
     assert vinted.saved == 1 and vinted.foreign == 2
     rej = _rejected(conn)
@@ -279,7 +286,7 @@ def test_problem1_vinted_poland_only(conn):
     assert sorted(calls) == ["11", "22"]
     assert SellerRepository(conn).get_many("vinted", ["22"])["22"].country_code == "CZ"
     calls.clear()
-    _scan(conn, _vinted_settings(), _vinted(items, {"22": "CZ"}, calls))
+    _scan(conn, _vinted_settings(vinted_country_mode="pl"), _vinted(items, {"22": "CZ"}, calls))
     assert calls == []  # kraj zapamiętany — bez ponownych zapytań
 
 
@@ -289,6 +296,69 @@ def test_vinted_ship_to_poland_mode_flags_instead_of_rejecting(conn):
     offers = {o.raw.title: o for o in OfferRepository(conn).list() if o.raw.source == "vinted"}
     assert set(offers) == {"iPhone 12 64GB", "iPhone 11 64GB modrá"}
     assert all(RedFlag.FOREIGN_SELLER in o.parsed.flags for o in offers.values())
+
+
+# ------------------------------------------- zadanie 0: oferty z zagranicy widoczne ---
+
+def test_foreign_offers_shown_by_default(conn):
+    assert Settings().vinted_country_mode == "ship"
+    items = [_item(2, "iPhone 12 64GB", 900, 22), _item(4, "iPhone 11 64GB modrá", 600, 44)]
+    calls: list[str] = []
+    report = _scan(conn, _vinted_settings(), _vinted(items, {"22": "CZ"}, calls))
+    vinted = next(s for s in report.sources if s.key == "vinted")
+    assert vinted.saved == 2 and vinted.foreign == 0
+    offers = {o.raw.title: o for o in OfferRepository(conn).list() if o.raw.source == "vinted"}
+    assert all(RedFlag.FOREIGN_SELLER in o.parsed.flags for o in offers.values())
+    assert calls == ["22"]  # tytuł po czesku już rozstrzyga — profil sprawdzany tylko dla polskiego tytułu
+
+
+def test_saved_poland_only_setting_upgraded_once(conn):
+    repo = SettingsRepository(conn)
+    old = json.loads(Settings(vinted_country_mode="pl").to_json())
+    del old["settings_version"]  # zapis starszej wersji programu
+    repo.set_value(repo.KEY, json.dumps(old))
+    loaded = repo.load()
+    assert loaded.vinted_country_mode == "ship" and loaded.settings_version == 2
+    # wybór „tylko z Polski” po aktualizacji zostaje
+    repo.save(Settings(vinted_country_mode="pl"))
+    assert repo.load().vinted_country_mode == "pl"
+
+
+def test_country_rejected_offers_come_back_after_switch(conn):
+    items = [_item(1, "iPhone 13 128GB", 1400, 11), _item(2, "iPhone 12 64GB", 900, 22),
+             _item(4, "iPhone 11 64GB modrá", 600, 44), _item(5, "iPhone 13 128GB", 1450, 55)]
+    _scan(conn, _vinted_settings(vinted_country_mode="pl"), _vinted(items, {"22": "CZ", "55": "SK"}, []))
+    assert {r.title for r in RejectedRepository(conn).list() if r.stage == "country"} == {
+        "iPhone 12 64GB", "iPhone 11 64GB modrá", "iPhone 13 128GB"}
+    # oferta odrzucona kiedyś za kraj, która dziś nie przeszłaby filtra tekstu, nie wraca
+    RejectedRepository(conn).add(RawOffer("vinted", "99", "https://x", "Obal na iPhone 13 průhledný", 150),
+                                 "country", "tytuł w obcym języku (cs/sk: obal)", "cs/sk")
+    rejected_at = {r.source_id: r.rejected_at for r in RejectedRepository(conn).list()}
+
+    guard = OfferGuard(conn, Settings(vinted_country_mode="ship"))
+    assert guard.refilter_stored() == 0
+    assert guard.restored == 3
+    offers = {o.raw.source_id: o for o in OfferRepository(conn).list() if o.raw.source == "vinted"}
+    assert set(offers) == {"1", "2", "4", "5"}
+    assert all(RedFlag.FOREIGN_SELLER in offers[i].parsed.flags for i in ("2", "4", "5"))
+    assert RedFlag.FOREIGN_SELLER not in offers["1"].parsed.flags
+    # „ostatnio widziana” = chwila odrzucenia: oferty dawno niewidziane na portalu znikną same
+    assert offers["2"].last_seen == rejected_at["2"]
+    left = {r.source_id: r for r in RejectedRepository(conn).list()}
+    assert set(left) == {"99"} and left["99"].stage == "accessory"
+    assert not RejectedRepository(conn).whitelist()  # to zmiana ustawień, nie Twoja poprawka
+    # ponowne uruchomienie (reguły bez zmian) nic nie robi
+    again = OfferGuard(conn, Settings(vinted_country_mode="ship"))
+    assert again.refilter_stored() == 0 and again.restored == 0
+
+
+def test_poland_only_mode_does_not_restore(conn):
+    _scan(conn, _vinted_settings(vinted_country_mode="pl"),
+          _vinted([_item(2, "iPhone 12 64GB", 900, 22)], {"22": "CZ"}, []))
+    guard = OfferGuard(conn, Settings(vinted_country_mode="pl"))
+    guard.refilter_stored(force=True)
+    assert guard.restored == 0
+    assert [r.stage for r in RejectedRepository(conn).list()] == ["country"]
 
 
 def test_seller_lookups_are_limited_per_scan(conn):

@@ -94,9 +94,13 @@ def _default_categories() -> dict[str, dict[str, str]]:
 
 
 VINTED_COUNTRY_MODES = {
+    "ship": "Z Polski i z zagranicy z wysyłką do Polski (zagraniczne oznaczone flagą)",
     "pl": "Tylko oferty z Polski (język tytułu + kraj z profilu sprzedawcy)",
-    "ship": "Wszystkie z wysyłką do Polski (zagraniczne oznaczone flagą)",
 }
+
+# wersja domyślnych ustawień: zmiana domyślnej wartości, którą trzeba raz przenieść do zapisanych ustawień
+# 2 — oferty z zagranicy widoczne (Vinted: „pl” → „ship”)
+SETTINGS_VERSION = 2
 
 
 # kolumny tabeli ukryte domyślnie (nazwy z ui.table_model.Col, małymi literami)
@@ -127,6 +131,7 @@ class MlConfig:
 
 @dataclass
 class Settings:
+    settings_version: int = SETTINGS_VERSION  # do jednorazowych zmian zapisanych ustawień po aktualizacji
     # --- tryb i lokalizacja ---
     mode: str = Mode.REPAIR.value
     location_name: str = "Kacwin"
@@ -195,8 +200,8 @@ class Settings:
     source_categories: dict[str, dict[str, str]] = field(default_factory=_default_categories)
     # minimalna cena pobierania per portal — tanie akcesoria odpadają już na portalu (Vinted nie filtruje kategorii)
     source_min_price: dict[str, float] = field(default_factory=lambda: {"vinted": 150.0})
-    # Vinted: kraj sprzedawcy
-    vinted_country_mode: str = "pl"
+    # Vinted: kraj sprzedawcy — domyślnie także oferty z zagranicy (z flagą „Sprzedawca z zagranicy”)
+    vinted_country_mode: str = "ship"
     seller_lookups_per_scan: int = 20  # ilu sprzedawców sprawdzić na skan (profil = 1 zapytanie)
     price_min: float = 0.0
     price_max: float = 0.0  # 0 = bez limitu
@@ -287,6 +292,11 @@ def _from_dict(cls: type, data: Any) -> Any:
         if obj.hard_flags_force_skip:
             obj.sanity.hard_flag_cap = "ODPUŚĆ"
             obj.hard_flags_force_skip = False
+        # ustawienia zapisane przez starszą wersję: raz przenieś zmienione wartości domyślne
+        saved_version = data.get("settings_version", 1)
+        if isinstance(saved_version, int) and saved_version < 2 and obj.vinted_country_mode == "pl":
+            obj.vinted_country_mode = "ship"  # oferty z zagranicy widoczne (można wrócić w Ustawieniach)
+        obj.settings_version = SETTINGS_VERSION
         # listy słów zapisane przez starszą wersję: dopisz nowe słowa (np. akcesoria w innych językach)
         saved = data.get("listing_filter")
         if isinstance(saved, dict):

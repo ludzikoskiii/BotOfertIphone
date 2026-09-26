@@ -3,7 +3,7 @@
 Aplikacja desktopowa (Windows) do wyszukiwania ofert używanych iPhone'ów na
 Allegro Lokalnie, Vinted i Sprzedajemy.pl, wyceny ich opłacalności i podpowiadania, czy i za ile kupić.
 
-> **Status: wersja 1.4.0.** Trzy portale, wycena, werdykty i negocjacje, filtry, zabezpieczenia werdyktu,
+> **Status: wersja 1.4.1.** Trzy portale, wycena, werdykty i negocjacje, filtry, zabezpieczenia werdyktu,
 > **darmowe lokalne AI** (klasyfikator tytułów, analiza zdjęć, opcjonalnie model językowy w Ollamie),
 > szablony wiadomości do sprzedającego, automatyczne odświeżanie, powiadomienia Windows i Telegram
 > oraz gotowy plik `PhoneBot.exe`. Program nie korzysta z żadnych płatnych usług.
@@ -134,7 +134,7 @@ Zanim oferta trafi do tabeli, przechodzi przez kilka etapów:
    (czeski/słowacki: *obal, kryt, pouzdro*; niemiecki: *Hülle, Panzerglas*; litewski: *dėklas*;
    angielski: *case, cover, screen protector*; także francuski/hiszpański/włoski).
 5. **Model** — ogłoszenie bez rozpoznanego modelu iPhone'a odpada.
-6. **Kraj (Vinted)** — patrz „Oferty z zagranicy” niżej.
+6. **Kraj (Vinted)** — domyślnie widać też oferty z zagranicy (z flagą), patrz „Oferty z zagranicy” niżej.
 7. **Sprzedawca seryjny** — patrz niżej.
 8. **Test ceny** — cena poniżej 15% mediany rynkowej: jeśli opis wskazuje na akcesorium/atrapę,
    oferta odpada; w przeciwnym razie zostaje z czerwoną flagą „Cena nierealnie niska — sprawdź”.
@@ -170,15 +170,27 @@ do mediany. Wcześniej tanie etui zapisane jako „iPhone 13” obniżały wycen
 
 ### Oferty z zagranicy (Vinted)
 
-Vinted pokazuje też ogłoszenia z innych krajów (np. z Czech). W ustawieniach wybierasz:
+Vinted pokazuje też ogłoszenia z innych krajów (np. z Czech, Słowacji, Niemiec) z wysyłką do Polski.
+W Ustawieniach → Zabezpieczenia → „Oferty z Vinted” wybierasz:
 
-- **Tylko oferty z Polski** (domyślnie) — odpada tytuł w obcym języku (np. „obal”, „prodám”, „Hülle”)
-  oraz oferta sprzedawcy, którego profil podaje inny kraj niż Polska;
-- **Wszystkie z wysyłką do Polski** — oferty zostają, zagraniczne dostają flagę „Sprzedawca z zagranicy”.
+- **Z Polski i z zagranicy** (domyślnie od wersji 1.4.1) — oferty zagraniczne są na liście z flagą
+  „Sprzedawca z zagranicy” (kolumna „Flagi” i panel szczegółów). Flaga jest „łagodna”: najwyższy werdykt
+  to NEGOCJUJ (limit „przy łagodnej fladze” w Zabezpieczeniach), a w pytaniach do sprzedającego jest
+  pytanie o wysyłkę do Polski i jej koszt;
+- **Tylko oferty z Polski** — odpada tytuł w obcym języku (np. „obal”, „prodám”, „Hülle”) oraz oferta
+  sprzedawcy, którego profil podaje inny kraj niż Polska.
+
+Po aktualizacji do 1.4.1 zapisane ustawienie „tylko z Polski” zmienia się raz na „z Polski i z zagranicy”,
+a oferty odrzucone wcześniej za kraj (zakładka „Odrzucone”) wracają na listę — o ile przechodzą pozostałe
+reguły (filtr tekstu, sprzedawcy seryjni, test ceny). Wrócić do „tylko z Polski” możesz w każdej chwili.
 
 Wyniki wyszukiwania Vinted nie zawierają kraju sprzedawcy, więc aplikacja sprawdza go w profilu
-sprzedawcy — tylko dla ofert, które przeszły filtr tekstu, najwyżej 20 sprzedawców na odświeżenie
-(ustawienie), z pamięcią na 30 dni. Pozostali są sprawdzani przy kolejnych odświeżeniach.
+sprzedawcy — tylko dla ofert, które przeszły filtr tekstu i mają tytuł po polsku (obcy język już
+rozstrzyga), najwyżej 20 sprzedawców na odświeżenie (ustawienie), z pamięcią na 30 dni. Pozostali
+są sprawdzani przy kolejnych odświeżeniach.
+
+Uwaga: Vinted podaje ceny w walucie kraju, z którego łączy się komputer — z Polski wszystkie ceny są
+w złotych (także ofert zagranicznych). Ceny w innej walucie (np. z serwera testowego poza Polską) są pomijane.
 
 ### Sprzedawcy seryjni
 

@@ -41,6 +41,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..core.models import Mode, Offer, OfferStatus, RowColor, Valuation, Verdict
+from ..core.text import plural
 from ..core.view_filter import ViewFilter, matches
 from ..ml.desc_model import text_hash
 from ..ml.photo_model import model_ready
@@ -727,12 +728,19 @@ class MainWindow(QMainWindow):
     def _apply_filter_rules(self) -> int:
         """Nowe reguły filtra (aktualizacja programu lub zmiana ustawień) → sprawdź też zapisane oferty."""
         try:
-            moved = OfferGuard(self.conn, self.settings).refilter_stored()
+            guard = OfferGuard(self.conn, self.settings)
+            moved = guard.refilter_stored()
         except Exception:  # noqa: BLE001 — porządki nie mogą zablokować otwarcia okna
             log.exception("Ponowne sprawdzenie zapisanych ofert nie powiodło się")
             return 0
+        parts = []
         if moved:
-            self._status.setText(f"Nowe reguły filtra: {moved} zapisanych ofert przeniesiono do „Odrzucone”.")
+            parts.append(f"Nowe reguły filtra: {moved} zapisanych ofert przeniesiono do „Odrzucone”.")
+        if guard.restored:
+            parts.append("+" + plural(guard.restored, "oferta z zagranicy wróciła", "oferty z zagranicy wróciły",
+                                      "ofert z zagranicy wróciło") + " na listę.")
+        if parts:
+            self._status.setText(" ".join(parts))
         return moved
 
     def apply_settings(self, settings) -> None:

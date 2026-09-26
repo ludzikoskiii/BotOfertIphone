@@ -5,7 +5,8 @@ zapisanych w bazie, gdy zmienią się reguły (``refilter_stored``). Reguły:
 
 1. filtr tekstu (kategoria, „kupię”, kilka generacji, akcesoria/części, model) i minimalna cena,
 2. kraj i język (portale międzynarodowe, np. Vinted): tytuł w obcym języku albo sprzedawca
-   spoza Polski → odrzucenie (tryb „tylko z Polski”) albo flaga (tryb „z wysyłką do Polski”),
+   spoza Polski → flaga „Sprzedawca z zagranicy” (domyślnie) albo odrzucenie (tryb „tylko z Polski”);
+   po włączeniu ofert z zagranicy oferty odrzucone wcześniej za kraj wracają do wyników,
 3. sprzedawcy seryjni: jeden sprzedawca z wieloma tanimi „iPhone'ami” → ukrycie jego ofert,
 4. test ceny względem mediany rynkowej (``ListingFilter.check_price``).
 """
@@ -18,6 +19,7 @@ import sqlite3
 import statistics
 from collections import defaultdict
 from dataclasses import dataclass
+from datetime import datetime
 
 from ..core.language import detect_language
 from ..core.listing_filter import FilterDecision, ListingFilter
@@ -31,6 +33,7 @@ from ..storage.repositories import (
     SellerInfo,
     SellerRepository,
     SettingsRepository,
+    raw_from_json,
 )
 
 log = logging.getLogger(__name__)
@@ -70,6 +73,7 @@ class OfferGuard:
         self.whitelist = self.rejected.whitelist()
         self.listing_filter = ListingFilter(settings.listing_filter, self.whitelist)
         self._medians: dict[tuple[str, int | None], float | None] = {}
+        self.restored = 0  # ile ofert wróciło z odrzuconych przy ostatnim ``refilter_stored``
 
     # ------------------------------------------------------------ etapy ---
 
@@ -220,6 +224,8 @@ class OfferGuard:
                         if still_there:
                             self.rejected.reject_stored(offer, decision.stage, decision.reason, decision.keyword)
                             moved += 1
+            if self.settings.vinted_country_mode != "pl":
+                self.restored = self.restore_country_rejected()
             settings_repo.set_value(_SIGNATURE_KEY, sig)
             if not in_tx:
                 self.conn.execute("COMMIT")
@@ -229,4 +235,48 @@ class OfferGuard:
             raise
         if moved:
             log.info("Nowe reguły filtra: %d zapisanych ofert przeniesiono do odrzuconych", moved)
+        if self.restored:
+            log.info("Oferty z zagranicy: %d odrzuconych wcześniej ofert wróciło do wyników", self.restored)
         return moved
+
+    def restore_country_rejected(self) -> int:
+        """Oferty odrzucone wcześniej za kraj/język sprzedawcy → z powrotem do wyników (z flagą „z zagranicy”).
+
+        Każda przechodzi pozostałe reguły (filtr tekstu, sprzedawcy seryjni, test ceny) tak jak przy skanie.
+        Bez białej listy — to zmiana ustawień, nie Twoja poprawka. Ostatnie „widziano” = chwila odrzucenia,
+        więc oferty dawno niewidziane na portalu znikną same (``offer_stale_days``)."""
+        rows = self.conn.execute(
+            "SELECT raw_json, rejected_at FROM rejected_offers WHERE stage = 'country'").fetchall()
+        by_source: dict[str, list[tuple[Prepared, str]]] = defaultdict(list)
+        for row in rows:
+            raw = raw_from_json(row["raw_json"])
+            by_source[raw.source].append((self.prepare(raw), row["rejected_at"]))
+        offers = OfferRepository(self.conn)
+        restored = 0
+        for source, pairs in by_source.items():
+            serial = {sid: info.serial_reason or "oznaczony wcześniej"
+                      for (_, sid), info in self.sellers.serial_sellers(source).items()}
+            known = self.sellers.get_many(source, [str(p.raw.params.get("seller_id") or "") for p, _ in pairs])
+            for p, rejected_at in pairs:
+                decision = p.decision
+                if decision.accepted:
+                    decision = self.seller_decision(p, known, serial, is_international(source)) or decision
+                if decision.accepted:
+                    decision = self.price_decision(p)
+                if not decision.accepted:
+                    if decision.stage != "country":  # inny powód odrzucenia — zapisz go
+                        self.rejected.add(p.raw, decision.stage, decision.reason, decision.keyword)
+                    continue
+                if decision.suspicious:
+                    p.parsed.flags.append(RedFlag.PRICE_UNREALISTIC)
+                offers.upsert(p.raw, p.parsed, seen_at=_parse_time(rejected_at))
+                self.rejected.remove(p.raw.source, p.raw.source_id)
+                restored += 1
+        return restored
+
+
+def _parse_time(value: str | None) -> datetime | None:
+    try:
+        return datetime.fromisoformat(value) if value else None
+    except ValueError:
+        return None

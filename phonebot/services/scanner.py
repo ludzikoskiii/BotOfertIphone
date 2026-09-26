@@ -183,8 +183,8 @@ class Scanner:
             ids = []
             for raw in raw_offers:
                 sid = raw.params.get("seller_id")
-                if not sid or (s.vinted_country_mode == "pl" and detect_language(raw.title).foreign):
-                    continue  # kraj nieistotny: oferta i tak odpadnie
+                if not sid or detect_language(raw.title).foreign:
+                    continue  # tytuł w obcym języku już rozstrzyga (odrzucenie albo flaga) — bez zapytania o profil
                 if guard.prepare(raw).decision.accepted:
                     ids.append(str(sid))
             need = sellers.needs_country(adapter.key, ids)[:limit]

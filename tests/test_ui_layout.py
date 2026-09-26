@@ -246,3 +246,17 @@ def test_verify_verdict_shown_as_grey_label(window):
     assert index.data() == "DO WERYFIKACJI" and index.data(VERDICT_ROLE) == Verdict.VERIFY
     assert current().verdict_bg[Verdict.VERIFY] in ("#e9ecef", "#34363c")  # szara etykieta
     window.table.viewport().repaint()  # delegat rysuje nowy werdykt bez błędów
+
+
+def test_foreign_offers_restored_message(window):
+    from phonebot.storage.repositories import RejectedRepository
+
+    for i in (1, 2):
+        raw = RawOffer("vinted", f"cz{i}", "https://x", f"iPhone 13 128GB nr {i}", 1400, photos=["x"],
+                       params={"seller_id": f"9{i}"})
+        RejectedRepository(window.conn).add(raw, "country", "sprzedawca spoza Polski (kraj z profilu: CZ)", "CZ")
+    SettingsRepository(window.conn).set_value("filter_signature", "stara")  # np. po aktualizacji programu
+    window._apply_filter_rules()
+    assert window._status.text() == "+2 oferty z zagranicy wróciły na listę."
+    ids = {o.raw.source_id for o in OfferRepository(window.conn).list()}
+    assert {"cz1", "cz2"} <= ids
