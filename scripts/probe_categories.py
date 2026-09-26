@@ -1,4 +1,4 @@
-"""Jednorazowe rozpoznanie portali: ID kategorii telefonów, kraj i sprzedawca w danych Vinted.
+"""Jednorazowe rozpoznanie portali: czy filtr po ID kategorii działa, skąd wziąć kraj sprzedawcy Vinted.
 
 Uruchamiane w GitHub Actions (kontener deweloperski nie ma dostępu do portali).
 Kilkanaście zapytań z odstępami — bez obciążania serwisów.
@@ -14,9 +14,12 @@ from typing import Any
 
 import httpx
 
+from phonebot.sources.extract import offers_from_html
+
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
       "Chrome/126.0 Safari/537.36")
 OUT: list[str] = []
+ACCESSORY = re.compile(r"etui|case|obal|kryt|h[uü]lle|szk[lł]o|folia|cover|pokrowiec|glass|kabel|[lł]adowark", re.I)
 
 
 def say(*parts: Any) -> None:
@@ -29,13 +32,11 @@ def pause() -> None:
     time.sleep(3)
 
 
-def keys_union(items: list[dict], path: str | None = None) -> Counter:
-    c: Counter = Counter()
-    for it in items:
-        obj = it.get(path) if path else it
-        if isinstance(obj, dict):
-            c.update(obj.keys())
-    return c
+def summary(label: str, titles: list[str]) -> None:
+    acc = sum(1 for t in titles if ACCESSORY.search(t))
+    say(f"{label}: {len(titles)} ofert, z czego wyglądających na akcesoria: {acc}")
+    for t in titles[:10]:
+        say("    ", t)
 
 
 def contexts(text: str, pattern: str, width: int = 160, limit: int = 8) -> list[str]:
@@ -48,122 +49,84 @@ def contexts(text: str, pattern: str, width: int = 160, limit: int = 8) -> list[
     return out
 
 
-def walk_catalogs(nodes: Any, depth: int = 0, parents: str = "") -> None:
-    if isinstance(nodes, dict):
-        nodes = nodes.get("catalogs") or nodes.get("dtos") or [nodes]
-    for n in nodes or []:
-        if not isinstance(n, dict):
-            continue
-        title = str(n.get("title") or n.get("name") or "")
-        path = f"{parents} > {title}" if parents else title
-        if re.search(r"telefon|smartfon|phone|elektronik|electronic|akcesori|etui", title, re.I):
-            say(f"  CATALOG id={n.get('id')} code={n.get('code')} path={path}")
-        walk_catalogs(n.get("catalogs") or [], depth + 1, path)
-
-
 def probe_vinted(c: httpx.Client) -> None:
     say("\n===== VINTED =====")
-    r = c.head("https://www.vinted.pl/catalog")
+    c.head("https://www.vinted.pl/catalog")
     token = c.cookies.get("access_token_web")
-    say("session", r.status_code, "token" if token else "NO TOKEN")
     h = {"Accept": "application/json", "Authorization": f"Bearer {token}",
          "Referer": "https://www.vinted.pl/catalog", "Origin": "https://www.vinted.pl"}
-    pause()
-    r = c.get("https://api.vinted.pl/svc-catalogue/items",
-              params={"search_text": "iphone", "per_page": 40, "order": "newest_first"}, headers=h)
-    say("items", r.status_code)
-    items = r.json().get("items", []) if r.status_code == 200 else []
-    say("item keys:", dict(keys_union(items)))
-    say("user keys:", dict(keys_union(items, "user")))
-    say("item_box keys:", dict(keys_union(items, "item_box")))
-    say("currencies:", Counter((it.get("price") or {}).get("currency_code") for it in items))
-    for it in items[:3]:
-        say("ITEM", json.dumps(it, ensure_ascii=False)[:1800])
-    say("top-level keys:", list(r.json().keys()) if r.status_code == 200 else "-")
-    if r.status_code == 200:
-        say("search_tracking_params:", json.dumps(r.json().get("search_tracking_params"), ensure_ascii=False)[:600])
-    logins = Counter((it.get("user") or {}).get("login") for it in items)
-    say("sellers:", logins.most_common(8))
-
-    pause()
-    for url in ("https://www.vinted.pl/api/v2/catalogs", "https://api.vinted.pl/svc-catalogue/catalogs",
-                "https://www.vinted.pl/api/v2/catalog/initializers"):
-        r = c.get(url, headers=h)
-        say("catalogs", url, r.status_code, r.headers.get("content-type"))
-        if r.status_code == 200 and "json" in (r.headers.get("content-type") or ""):
-            data = r.json()
-            say("  keys:", list(data.keys())[:20] if isinstance(data, dict) else type(data))
-            walk_catalogs(data.get("catalogs") if isinstance(data, dict) and "catalogs" in data else data)
-            if isinstance(data, dict) and "dtos" in data:
-                walk_catalogs(data["dtos"])
+    url = "https://api.vinted.pl/svc-catalogue/items"
+    base = {"search_text": "iphone", "per_page": 40, "order": "newest_first"}
+    user_id = None
+    for label, extra in (("bez kategorii", {}), ("catalog_ids=3661", {"catalog_ids": 3661}),
+                         ("catalog_ids[]=3661", {"catalog_ids[]": 3661}), ("catalog[]=3661", {"catalog[]": 3661}),
+                         ("catalog_ids=3662 (akcesoria)", {"catalog_ids": 3662})):
         pause()
-
-    r = c.get("https://www.vinted.pl/catalog", params={"search_text": "iphone"})
-    say("catalog html", r.status_code, len(r.text))
-    for ctx in contexts(r.text, r"Telefony kom[oó]rkowe|Smartfony|Mobile phones", limit=6):
-        say("  CTX", ctx)
-    for ctx in contexts(r.text, r"catalog\[\]=\d+|catalog_ids?\W{1,4}\d+", 60, 10):
-        say("  CAT", ctx)
-
-    if items:
-        iid = items[0]["id"]
-        for url in (f"https://www.vinted.pl/api/v2/items/{iid}/details", f"https://www.vinted.pl/api/v2/items/{iid}",
-                    f"https://api.vinted.pl/svc-catalogue/items/{iid}"):
+        r = c.get(url, params={**base, **extra}, headers=h)
+        items = r.json().get("items", []) if r.status_code == 200 else []
+        say(f"[{label}] HTTP {r.status_code}")
+        summary("  " + label, [it.get("title", "") for it in items])
+        if items and user_id is None:
+            user_id = (items[0].get("user") or {}).get("id")
+    if user_id:
+        for u in (f"https://www.vinted.pl/api/v2/users/{user_id}", f"https://api.vinted.pl/svc-users/users/{user_id}"):
             pause()
-            r = c.get(url, headers=h)
-            say("item detail", url, r.status_code)
+            r = c.get(u, headers=h)
+            say("user", u, r.status_code, r.headers.get("content-type"))
             if r.status_code == 200 and "json" in (r.headers.get("content-type") or ""):
                 txt = json.dumps(r.json(), ensure_ascii=False)
-                for ctx in contexts(txt, r"country|catalog_id|city|language|iso_code", 80, 12):
-                    say("  D", ctx)
-        pause()
-        r = c.get(f"https://www.vinted.pl/items/{iid}")
-        say("item html", r.status_code, len(r.text))
-        for ctx in contexts(r.text, r"country_(?:code|iso|title|id)|countryCode|catalog_id", 80, 12):
-            say("  H", ctx)
-
-
-def probe_vinted_filtered(c: httpx.Client, catalog_ids: list[str]) -> None:
-    r = c.head("https://www.vinted.pl/catalog")
-    token = c.cookies.get("access_token_web")
-    h = {"Accept": "application/json", "Authorization": f"Bearer {token}",
-         "Referer": "https://www.vinted.pl/catalog", "Origin": "https://www.vinted.pl"}
-    for cid in catalog_ids:
-        pause()
-        r = c.get("https://api.vinted.pl/svc-catalogue/items",
-                  params={"search_text": "iphone", "per_page": 20, "catalog_ids": cid}, headers=h)
-        items = r.json().get("items", []) if r.status_code == 200 else []
-        say(f"catalog_ids={cid}: HTTP {r.status_code}, {len(items)} items:",
-            [it.get("title") for it in items[:8]])
+                for ctx in contexts(txt, r"country|city|locale|language", 60, 12):
+                    say("  U", ctx)
 
 
 def probe_allegro(c: httpx.Client) -> None:
     say("\n===== ALLEGRO LOKALNIE =====")
-    r = c.get("https://allegrolokalnie.pl/oferty/q/iphone")
-    say("search", r.status_code, len(r.text))
-    links = Counter(re.findall(r'href="(/oferty/[a-z0-9-]+(?:/[a-z0-9-]+)*)', r.text))
-    for link, n in links.most_common(40):
-        if re.search(r"telefon|smartfon|gsm|iphone|apple", link):
-            say("  LINK", link, n)
-    for ctx in contexts(r.text, r'"category(?:Id|_id|Path)?"\s*:', 100, 10):
-        say("  CTX", ctx)
+    r = c.get("https://allegrolokalnie.pl/oferty/elektronika/telefony-i-akcesoria-4")
+    say("kategoria telefony-i-akcesoria-4", r.status_code, len(r.text))
+    links = Counter(re.findall(r'href="(/oferty/elektronika/telefony-i-akcesoria-4/[a-z0-9-]+)', r.text))
+    for link, n in links.most_common(30):
+        say("  SUB", link, n)
+    subs = [link for link in links if re.search(r"smartfon|telefony-komorkowe", link)]
     pause()
-    r = c.get("https://allegrolokalnie.pl/oferty/telefony-i-akcesoria")
-    say("category guess telefony-i-akcesoria", r.status_code, r.url)
-    for link, n in Counter(re.findall(r'href="(/oferty/[a-z0-9-]+(?:/[a-z0-9-]+)*)', r.text)).most_common(60):
-        if re.search(r"telefon|smartfon|gsm|iphone|apple", link):
-            say("  LINK", link, n)
+    r = c.get("https://allegrolokalnie.pl/oferty/q/iphone")
+    summary("  bez kategorii /oferty/q/iphone", [o.title for o in offers_from_html(r.text, "https://allegrolokalnie.pl")])
+    for sub in subs[:2]:
+        for path in (f"{sub}/q/iphone", f"{sub}?q=iphone"):
+            pause()
+            r = c.get("https://allegrolokalnie.pl" + path)
+            say(f"[{path}] HTTP {r.status_code} -> {r.url}")
+            if r.status_code == 200:
+                summary("  " + path, [o.title for o in offers_from_html(r.text, "https://allegrolokalnie.pl")])
+                for ctx in contexts(r.text, r'"category(?:Id|_id)?"\s*:\s*"?\d+', 40, 4):
+                    say("  CAT", ctx)
+    if subs:
+        pause()
+        r = c.get("https://allegrolokalnie.pl" + subs[0])
+        deeper = Counter(re.findall(r'href="(' + re.escape(subs[0]) + r'/[a-z0-9-]+)', r.text))
+        for link, n in deeper.most_common(20):
+            say("  SUB2", link, n)
 
 
 def probe_sprzedajemy(c: httpx.Client) -> None:
     say("\n===== SPRZEDAJEMY.PL =====")
+    r = c.get("https://sprzedajemy.pl/elektronika/telefony-i-akcesoria/telefony-komorkowe/apple-iphone")
+    say("kategoria apple-iphone", r.status_code, len(r.text))
+    catid = re.search(r'"catid":"([^"]+)"', r.text)
+    say("  catid:", catid.group(1) if catid else None)
+    for ctx in contexts(r.text, r"inp_category_id=\d+", 40, 4):
+        say("  ATOM", ctx)
+    ids = re.findall(r"inp_category_id=(\d+)", r.text)
+    pause()
     r = c.get("https://sprzedajemy.pl/wszystkie-ogloszenia", params={"inp_text": "iphone"})
-    say("search", r.status_code, len(r.text))
-    for link, n in Counter(re.findall(r'href="(https://sprzedajemy\.pl/[a-z0-9/-]*telefon[a-z0-9/-]*)', r.text)
-                           ).most_common(20):
-        say("  LINK", link, n)
-    for ctx in contexts(r.text, r'name="inp_category[^"]*"|category_id|catId|"category"', 120, 8):
-        say("  CTX", ctx)
+    summary("  bez kategorii", [o.title for o in offers_from_html(r.text, "https://sprzedajemy.pl")])
+    for cid in list(dict.fromkeys(ids))[:2]:
+        pause()
+        r = c.get("https://sprzedajemy.pl/wszystkie-ogloszenia", params={"inp_text": "iphone", "inp_category_id": cid})
+        say(f"[inp_category_id={cid}] HTTP {r.status_code} -> {r.url}")
+        if r.status_code == 200:
+            summary(f"  inp_category_id={cid}", [o.title for o in offers_from_html(r.text, "https://sprzedajemy.pl")])
+            c2 = re.search(r'"catid":"([^"]+)"', r.text)
+            say("  catid na stronie wyników:", c2.group(1) if c2 else None)
 
 
 def main() -> int:
@@ -175,12 +138,6 @@ def main() -> int:
             except Exception as e:  # noqa: BLE001
                 say("ERROR", fn.__name__, repr(e))
             pause()
-        ids = re.findall(r"CATALOG id=(\d+)[^\n]*(?:telefon|smartfon|phone)", "\n".join(OUT), re.I)
-        if ids:
-            try:
-                probe_vinted_filtered(c, list(dict.fromkeys(ids))[:4])
-            except Exception as e:  # noqa: BLE001
-                say("ERROR filtered", repr(e))
     with open(sys.argv[1] if len(sys.argv) > 1 else "probe.txt", "w", encoding="utf-8") as f:
         f.write("\n".join(OUT))
     return 0
