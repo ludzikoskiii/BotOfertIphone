@@ -92,6 +92,17 @@ _HEALTHY = re.compile(r"\b(caly|cala|cale|dziala|dzialaja|sprawn\w*|idealn\w*|be
 _DAMAGED = re.compile(r"\b(nie dziala\w*|niesprawn\w*|nie laduje|nie wlacza|uszkodz\w*|zbit\w*|pekni\w*|peka\w*|"
                       r"rozbit\w*|zalan\w*|trzeszcz\w*|nie trzyma|slab\w*|wymiany|do wymiany|zamiennik\w*|"
                       r"nieoryginaln\w*|broken|cracked|not working|dead)\b")
+# Cytat przy fladze musi mówić o tej fladze (model potrafi dopisać flagę z niepasującym cytatem).
+_FLAG_WORDS = {
+    RedFlag.ICLOUD_LOCK.value: r"icloud|apple ?id|aktywac|konto|hasl|blokad|lock",
+    RedFlag.IMEI_BLOCKED.value: r"imei|czarn\w* list|kradzion|zastrzez|blacklist|zablokowan",
+    RedFlag.MDM.value: r"mdm|firmow|profil|zarzadz",
+    RedFlag.REPLICA.value: r"podrob|replik|kopi|fake|chinsk|klon",
+    RedFlag.SIMLOCK.value: r"simlock|sim ?lock|siec|sieci|operator|orange|play|plus|t-?mobile|heyah|vodafone",
+    RedFlag.NO_SIGNAL.value: r"zasieg|sieci|signal|modem|baseband",
+    RedFlag.NON_ORIGINAL_PARTS.value: r"zamiennik|nieoryginal|nieznan\w* cz|oryginal|komunikat|non.?genuine",
+    RedFlag.UNTESTED.value: r"jak jest|nie sprawdz|nie testow|nie wiem|nieznan|niesprawdz|untested|as is",
+}
 _ABSENT = re.compile(r"^(bez|brak|nie ma)\b|\b(bez|brak) (blokad|simlock|icloud|mdm)")
 
 
@@ -203,6 +214,9 @@ def _supported(items: Any, known: set[str], text: str, out: DescFindings, *, fla
                 continue
             if flag and _ABSENT.search(q):
                 out.rejected.append(f"{code}: „{quote}” mówi, że blokady nie ma")
+                continue
+            if flag and code in _FLAG_WORDS and not re.search(_FLAG_WORDS[code], q):
+                out.rejected.append(f"{code}: cytat „{quote}” nie mówi o tej fladze")
                 continue
             if not flag and _HEALTHY.search(q) and not _DAMAGED.search(q):
                 out.rejected.append(f"{code}: „{quote}” mówi, że wszystko działa")

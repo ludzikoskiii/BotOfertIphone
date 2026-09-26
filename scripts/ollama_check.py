@@ -64,8 +64,9 @@ def main() -> int:
         if not status.has_model(MODEL):
             print(f"BRAK MODELU {MODEL}")
             return 1
-        results = [run(client, think) for think in (False, True)]
-    for think, (ok, total, times) in zip((False, True), results, strict=True):
+        modes = (False, True) if os.environ.get("OLLAMA_THINK") == "1" else (False,)
+        results = [run(client, think) for think in modes]
+    for think, (ok, total, times) in zip(modes, results, strict=True):
         print(f"PODSUMOWANIE {'z myśleniem ' if think else 'bez myślenia'}: zgodność pól {ok}/{total} = "
               f"{ok / total:.0%}, czas na opis (CPU serwera CI): mediana {sorted(times)[len(times) // 2]:.1f} s")
     return 0

@@ -619,3 +619,8 @@ def test_defects_and_flags_need_a_quote_from_the_listing():
     damaged = validate({"defects": [{"code": "screen", "quote": "Zbity ekran, dotyk działa"}]},
                        title="iPhone 11", description="Zbity ekran, dotyk działa.", phone_model="iPhone 11")
     assert damaged.defects == [Defect.SCREEN]  # „działa” obok uszkodzenia nie przeczy usterce
+    wrong = validate({"red_flags": [{"code": "untested", "quote": "Face ID działa"},
+                                    {"code": "simlock", "quote": "simlockiem na Orange"}]},
+                     title="iPhone XR", description="Face ID działa. Telefon z simlockiem na Orange.",
+                     phone_model="iPhone XR")
+    assert wrong.flags == [RedFlag.SIMLOCK]  # cytat przy fladze musi mówić o tej fladze

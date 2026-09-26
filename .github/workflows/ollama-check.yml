@@ -10,6 +10,11 @@ on:
       - "scripts/ollama_check.py"
       - ".github/workflows/ollama-check.yml"
   workflow_dispatch:
+    inputs:
+      myslenie:
+        description: "Porównaj też tryb „myślenia” (na procesorze CI ok. 40 minut)"
+        type: boolean
+        default: false
 
 jobs:
   check:
@@ -31,3 +36,4 @@ jobs:
         env:
           PYTHONPATH: .
           PYTHONIOENCODING: utf-8
+          OLLAMA_THINK: ${{ inputs.myslenie && '1' || '0' }}

@@ -278,9 +278,16 @@ wysyłania danych. Bez Ollamy program działa normalnie — domyślnie ta funkcj
 | Czas na jeden opis | — | ok. 2–6 s (bez karty graficznej: kilkadziesiąt sekund) |
 
 **Model:** `qwen3:8b` (ok. 5,2 GB, domyślny) — najlepszy w tej wielkości do wyciągania danych
-w ustalonym formacie, dobrze rozumie polski; działa bez „trybu myślenia” (szybciej). Lżejsza alternatywa:
-`qwen2.5:7b` (4,7 GB). Modele 12–14B i większe nie mieszczą się w 8 GB pamięci karty i działają kilka
-razy wolniej. Ollama zwalnia kartę graficzną po 5 minutach bezczynności.
+w ustalonym formacie, dobrze rozumie polski. Lżejsza alternatywa: `qwen2.5:7b` (4,7 GB). Modele 12–14B
+i większe nie mieszczą się w 8 GB pamięci karty i działają kilka razy wolniej. Ollama zwalnia kartę
+graficzną po 5 minutach bezczynności.
+
+**Sprawdzone na prawdziwej Ollamie** (workflow **ollama-check**: kod programu, `qwen3:8b`, 16 opisów
+z pułapkami — zaprzeczenia „ekran cały”, „Face ID działa”, „bez blokad”, ogłoszenia „kupię”/„zamienię”,
+samo etui i pudełko): **95% zgodności pól** (41 z 43). Pierwsza wersja promptu miała 79% — model dopisywał
+usterki mimo zaprzeczeń; stąd zasada cytatów (niżej). Tryb „myślenia” Qwen3 dał 93% przy ok. 5× dłuższym
+czasie, więc jest domyślnie wyłączony (można go włączyć w ustawieniach). Na procesorze serwera testowego
+opis trwał ok. 25 s; na karcie graficznej — kilka sekund.
 
 **Uruchomienie:**
 
@@ -296,7 +303,9 @@ razy wolniej. Ollama zwalnia kartę graficzną po 5 minutach bezczynności.
   gdy sprzedawca go zmieni. Postęp widać na pasku stanu („AI: czytanie opisów 3/12 (Ollama)…”).
 - Program **sprawdza każdą odpowiedź modelu**: pamięć i kondycję baterii przyjmuje tylko wtedy, gdy ta
   liczba naprawdę występuje w ogłoszeniu (a pamięć pasuje do modelu iPhone'a), „na części” — tylko gdy
-  ogłoszenie tak mówi. Usterki i flagi AI może dodać, nigdy nie usuwa wyniku reguł.
+  ogłoszenie tak mówi. Przy każdej usterce i fladze model musi podać **cytat z ogłoszenia**; program
+  odrzuca cytat, którego w ogłoszeniu nie ma, zaprzeczenie („ekran cały”, „bez blokad”) i cytat niepasujący
+  do flagi. Usterki i flagi AI może dodać, nigdy nie usuwa wyniku reguł.
 - Wynik wpływa na wycenę: np. pamięć znaleziona w opisie usuwa flagę „Nieznana pamięć” i werdykt może
   wrócić do KUPUJ/NEGOCJUJ; blokada iCloud z opisu obniża werdykt; „to nie telefon” → DO WERYFIKACJI.
   W panelu szczegółów: warstwa **„Opis (Ollama)”** w „Ocenie warstw” i dopiski **„(AI z opisu)”**.
