@@ -264,9 +264,13 @@ class MainWindow(QMainWindow):
         bold.setBold(True)
         fm = QFontMetrics(bold)
         self._min_widths = {c: fm.horizontalAdvance(HEADERS[c]) + 28 for c in Col}  # tekst + odstępy + strzałka
+        # etykieta werdyktu (kropka + tekst) musi się zmieścić w całości, także „DO WERYFIKACJI”
+        self._min_widths[Col.VERDICT] = max(self._min_widths[Col.VERDICT],
+                                            max(fm.horizontalAdvance(v.value) for v in Verdict) + 34 + 16)
         for col in Col:
             default = max(DEFAULT_WIDTHS[col], self._min_widths[col])
-            view.setColumnWidth(col, self.settings.column_widths.get(col_key(col), default))
+            width = self.settings.column_widths.get(col_key(col), default)
+            view.setColumnWidth(col, max(width, self._min_widths[col]) if col is Col.VERDICT else width)
         hidden = {c for c in map(col_from_key, self.settings.hidden_columns) if c is not None} - ALWAYS_VISIBLE
         for col in Col:
             view.setColumnHidden(col, col in hidden)

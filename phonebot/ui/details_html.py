@@ -98,12 +98,13 @@ def build_details_html(
         f'<p class="muted">{portal} · {location} · {shipping[raw.shipping_available]} · '
         f"dodano {_fmt_dt(raw.created_at or offer.first_seen)}</p>"
     )
+    # werdykt w osobnej linii — „DO WERYFIKACJI” nie łamie się w wąskim panelu
     parts.append(
         f'<table width="100%" cellpadding="10" style="background:{pal.verdict_bg[val.verdict]}; '
-        f'color:{pal.verdict_fg[val.verdict]};"><tr>'
-        f'<td nowrap><span style="font-size:15pt; font-weight:bold;">{val.verdict.value}</span></td>'
-        f'<td class="num">Cena: <b>{zl(raw.price)}</b><br>Ocena: <b>{val.score}/100</b> '
-        f"({COLOR_LABEL[val.color]})</td></tr></table>"
+        f'color:{pal.verdict_fg[val.verdict]};"><tr><td>'
+        f'<span style="font-size:15pt; font-weight:bold; white-space:nowrap;">{val.verdict.value}</span><br>'
+        f'Cena: <b>{zl(raw.price)}</b> · Ocena: <b>{val.score}/100</b> ({COLOR_LABEL[val.color]})'
+        f"</td></tr></table>"
     )
     parts.append("<p>" + "<br>".join(escape(r) for r in val.reasons if not r.startswith("⚑")) + "</p>")
 

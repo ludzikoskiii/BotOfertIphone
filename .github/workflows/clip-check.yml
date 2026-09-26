@@ -2,12 +2,12 @@ name: clip-check
 
 # Analiza zdjęć w kodzie programu na prawdziwym modelu CLIP: pobranie z kontrolą SHA-256, skuteczność
 # na zdjęciach z Vinted i czas analizy jednego zdjęcia na procesorze (Linux i Windows). Wynik w logu.
+# Uruchamiany tylko po zmianie modułu zdjęć albo ręcznie (Actions → clip-check → Run workflow),
+# żeby nie pobierać zdjęć z Vinted bez potrzeby.
 on:
   push:
     paths:
       - "phonebot/ml/photo_model.py"
-      - "scripts/clip_check_app.py"
-      - ".github/workflows/clip-check.yml"
   workflow_dispatch:
 
 jobs:

@@ -240,9 +240,15 @@ def evaluate(offer: Offer, market: MarketEstimate, parts: PartsCatalog, settings
     )
 
 
+def _lower_first(text: str) -> str:
+    """Mała litera na początku, ale skróty zostają („AI: …”, „IMEI …”)."""
+    word = text.split(" ", 1)[0].rstrip(":")
+    return text if len(word) > 1 and word.isupper() else text[:1].lower() + text[1:]
+
+
 def _capped_negotiation(cap: Verdict, original: Negotiation, limiting: list[RedFlag], price: float,
                         max_buy: float) -> Negotiation:
-    why = ", ".join(f.label.lower() for f in limiting)
+    why = ", ".join(_lower_first(f.label) for f in limiting)
     if cap is Verdict.NEGOTIATE:
         return Negotiation(True, original.opening_price, original.max_price,
                            f"Cena mieści się w maksymalnej ({max_buy:.0f} zł), ale oferta ma ostrzeżenie ({why}). "

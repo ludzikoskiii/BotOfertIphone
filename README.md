@@ -3,9 +3,9 @@
 Aplikacja desktopowa (Windows) do wyszukiwania ofert używanych iPhone'ów na
 Allegro Lokalnie, Vinted i Sprzedajemy.pl, wyceny ich opłacalności i podpowiadania, czy i za ile kupić.
 
-> **Status: wszystkie 5 etapów gotowe.** Trzy portale, wycena, werdykty i negocjacje, filtry,
-> ustawienia, automatyczne odświeżanie, powiadomienia Windows i Telegram, opcjonalna analiza AI
-> oraz gotowy plik `PhoneBot.exe`.
+> **Status: wersja 1.3.0.** Trzy portale, wycena, werdykty i negocjacje, filtry, zabezpieczenia werdyktu,
+> **darmowe lokalne AI** (klasyfikator tytułów i analiza zdjęć na Twoim komputerze), automatyczne
+> odświeżanie, powiadomienia Windows i Telegram oraz gotowy plik `PhoneBot.exe`.
 
 ![Okno główne](docs/screenshots/okno.png)
 ![Szczegóły oferty](docs/screenshots/szczegoly.png)
@@ -22,6 +22,8 @@ Allegro Lokalnie, Vinted i Sprzedajemy.pl, wyceny ich opłacalności i podpowiad
    - sprawdź miejscowość w panelu filtrów (domyślnie Kacwin),
    - przejrzyj **⚙ Ustawienia** (zysk, prowizje) i **🔧 Tabelę części**,
    - kliknij **⟳ Odśwież oferty** (F5).
+   - W tle program trenuje klasyfikator tytułów (kilka sekund) i **jednorazowo pobiera model zdjęć**
+     (176 MB z Hugging Face). Postęp widać na pasku stanu („AI: …”). Potem działa bez internetu.
 
 Pierwsze pobranie nie wysyła powiadomień, bo wszystkie oferty są wtedy „nowe”.
 Powiadomienia przychodzą od kolejnych odświeżeń.
@@ -31,7 +33,7 @@ Powiadomienia przychodzą od kolejnych odświeżeń.
 ```powershell
 pip install -r requirements.txt pyinstaller
 pyinstaller --noconfirm phonebot.spec     # wynik: dist\PhoneBot.exe
-dist\PhoneBot.exe --self-test             # sprawdzenie, czy plik ma wszystkie moduły
+dist\PhoneBot.exe --self-test             # moduły, lokalne AI (bez pobierania modelu) i okno
 ```
 
 ## Uruchomienie na Windows (tryb deweloperski)
@@ -209,6 +211,69 @@ Allegro Lokalnie i Sprzedajemy.pl go nie udostępniają, a zgadywanie po samym t
 
 ID, adresy kategorii i minimalne ceny edytujesz w **Ustawienia → Zabezpieczenia**.
 
+### Lokalne AI (darmowe, na Twoim komputerze)
+
+Reguły z poprzedniego punktu decydują, co trafia do tabeli. Dwie warstwy AI mogą to **potwierdzić
+albo podważyć**. Wszystko działa lokalnie, na procesorze, bez płatnych usług i bez wysyłania danych.
+Internet jest potrzebny tylko do jednorazowego pobrania modelu zdjęć i do pobrania zdjęcia oferty
+(z tego samego serwera co miniatury).
+
+**1. Klasyfikator tytułów** (scikit-learn: TF-IDF na fragmentach słów + regresja logistyczna) rozpoznaje
+4 klasy: telefon / akcesorium / część / kupię. Odporny na literówki i obce języki (obal, kryt, Hülle, dėklas…).
+Uczy się na:
+
+- zbiorze startowym — 783 tytuły po polsku i w językach sąsiednich (działa od pierwszego uruchomienia),
+- ofertach odrzuconych przez reguły (etap → klasa),
+- Twoich oznaczeniach: **„✖ To nie jest telefon”** w panelu szczegółów (oferta idzie do „Odrzucone”)
+  i „To jest telefon” w oknie „Odrzucone” — te ważą najwięcej,
+- ofertach ukrytych ręcznie, jako słaba wskazówka. Ukrytą ofertę, którą model i tak uważa za telefon,
+  pomija, bo mogła zostać ukryta np. przez cenę. Można to wyłączyć.
+
+Skuteczność (widoczna w **Ustawienia → AI lokalne**, liczona przy każdym treningu):
+**97%** na 20% danych odłożonych przed treningiem i **98% (54/55)** na zestawie kontrolnym prawdziwych
+tytułów z portali, których model nigdy nie widzi. Przycisk **„🎓 Douczyć model”** uczy go od nowa
+(kilka sekund, w tle). Automatycznie douczy się po 50 nowych oznaczeniach (ustawienie) albo po 500 nowych
+ofertach odrzuconych przez reguły.
+
+**2. Analiza zdjęcia** (CLIP ViT-B/32 w onnxruntime, bez karty graficznej): główne zdjęcie oferty
+jest porównywane z opisami „smartfon”, „etui”, „szkło ochronne”, „pudełko”. Model (176 MB) pobiera się raz,
+z kontrolą sumy SHA-256. Analizowane są tylko oferty z werdyktem KUPUJ, NEGOCJUJ lub DO WERYFIKACJI —
+najlepsze najpierw, **każda raz** (wynik, także błąd pobrania, zostaje w bazie). Zdjęcia z jednego serwera
+pobierane są nie częściej niż co 1 s. Analiza jednego zdjęcia trwa ok. **70 ms** (zmierzone kodem programu
+na 2 rdzeniach w GitHub Actions, Linux i Windows) — dłużej trwa samo, celowo powolne, pobieranie zdjęć.
+
+Sprawdzone kodem programu na 80 prawdziwych zdjęciach z Vinted (po 20 każdego rodzaju) — uczciwie
+o ograniczeniach:
+
+| Co na zdjęciu | Rozpoznane | Obniża werdykt (pewność ≥ 80%) |
+|---|---|---|
+| telefon | 10/20 jako „smartfon” | **0/20** — żadnego fałszywego alarmu |
+| etui | 19/20 | 19/20 |
+| szkło ochronne | 15/20 | 11/20 |
+| puste pudełko | **0/20** — na pudełku jest zdjęcie telefonu | 1/20 |
+
+Dlatego zdjęcie jest warstwą dodatkową: niepewne zdjęcie nie obniża werdyktu, gdy tytuł potwierdza telefon,
+a puste pudełka łapią klasyfikator tytułów i reguły. Sprawdzenie można powtórzyć: workflow **clip-check**
+w zakładce Actions.
+
+**Łączenie warstw** (panel szczegółów → „Ocena warstw”, każda warstwa z pewnością):
+
+| Sytuacja | Skutek |
+|---|---|
+| tytuł albo zdjęcie potwierdza telefon, żadna warstwa nie przeczy | bez zmian |
+| tytuł wygląda na akcesorium / część / „kupię” (≥ 60%) | najwyżej **DO WERYFIKACJI** |
+| zdjęcie pokazuje etui / szkło / pudełko (≥ 80%) | najwyżej **DO WERYFIKACJI** |
+| ani tytuł, ani zdjęcie nie potwierdza telefonu (niska pewność) | najwyżej **DO WERYFIKACJI** |
+| brak wyników AI (np. analiza wyłączona) | decydują same reguły |
+
+AI nigdy samo nie odrzuca oferty — tylko ogranicza werdykt i opisuje powód. Progi, włączanie warstw
+i douczanie: **Ustawienia → AI lokalne**.
+
+Zasoby: model zdjęć zajmuje ok. **450 MB RAM** przez cały czas działania programu (wczytywany raz, przy
+starcie), analiza używa połowy rdzeni procesora, żeby okno działało płynnie. Klasyfikator tytułów to kilka MB
+i ok. 3 s treningu. Karta graficzna nie jest potrzebna. Plik `PhoneBot.exe` ma teraz ok. 123 MB
+(wcześniej ok. 60 MB) — doszły scikit-learn i onnxruntime.
+
 ### Okno główne
 
 Układ: **filtry po lewej, tabela ofert w środku, szczegóły zaznaczonej oferty po prawej**,
@@ -361,6 +426,9 @@ phonebot/
   core/sanity.py  zabezpieczenia werdyktu (DO WERYFIKACJI, limity przy flagach)
   core/language.py  rozpoznawanie języka tytułu (oferty z zagranicy na Vinted)
   services/offer_guard.py  reguły odrzucania w jednym miejscu (kraj, sprzedawcy seryjni, ponowne filtrowanie)
+  ml/            lokalne AI: seed_data.py (zbiór startowy), text_model.py (klasyfikator tytułów),
+                 photo_model.py (CLIP w onnxruntime), combine.py (łączenie warstw), selftest.py
+  services/ai_service.py  dane do nauki z bazy, douczanie, analiza zdjęć;  ui/ai_worker.py  wątek AI
   net/http.py    klient HTTP: limit zapytań na host, ponawianie (tenacity), cache odpowiedzi
   services/      evaluator.py (baza + wycena), scanner.py (równoległe pobieranie z izolacją błędów),
                  post_scan.py (AI + powiadomienia po skanie), ai_analysis.py (Claude),
@@ -374,6 +442,8 @@ phonebot/
                  settings_dialog.py, parts_editor.py, location_dialog.py
 tests/           testy jednostkowe (+ fixtures z przykładowymi odpowiedziami portali)
 tools/           screenshot.py — zrzut okna na danych testowych
+scripts/         clip_prepare.py (wektory opisów klas CLIP), clip_check_app.py (test analizy zdjęć na
+                 prawdziwym modelu) — uruchamiane w GitHub Actions
 phonebot.spec    konfiguracja PyInstaller (PhoneBot.exe); run_phonebot.py — punkt wejścia
 assets/          ikona aplikacji
 ```
@@ -395,6 +465,10 @@ Awaria jednego adaptera jest izolowana i nie zatrzymuje pozostałych.
 7. ✅ Zabezpieczenia regułowe: werdykt DO WERYFIKACJI, testy sensowności ceny i zysku, limity werdyktu
    przy flagach, kilka generacji w tytule, słowa w językach sąsiednich, kraj ofert Vinted, sprzedawcy
    seryjni, kategorie portali po ID, czysta wycena rynkowa.
+8. ✅ Darmowe lokalne AI: klasyfikator tytułów (scikit-learn) z douczaniem na Twoich oznaczeniach,
+   analiza zdjęć (CLIP), łączenie warstw z werdyktem, przycisk „To nie jest telefon”.
+9. ⏳ Planowane: opcjonalny lokalny model językowy (Ollama) do opisów ofert „DO WERYFIKACJI”
+   oraz szablony wiadomości do negocjacji z przyciskiem „Skopiuj wiadomość”.
 
 ### Wydajność
 
@@ -449,6 +523,10 @@ Adaptery będą korzystać z danych, które strony same ładują w przeglądarce
 - ma limit zapytań (domyślnie jedno zapytanie na 4 s na portal),
 - korzysta z cache,
 - przy błędach ponawia próby z rosnącym opóźnieniem.
+
+Analiza zdjęć przez lokalne AI pobiera **jedno** (główne) zdjęcie oferty, tylko dla ofert z werdyktem innym
+niż ODPUŚĆ, każde tylko raz i nie częściej niż co 1 s z jednego serwera — to te same zdjęcia, które program
+pokazuje jako miniatury.
 
 Automatyczne pobieranie może naruszać regulaminy portali. Używaj aplikacji
 na własną odpowiedzialność, wyłącznie do użytku osobistego i z umiarkowaną
