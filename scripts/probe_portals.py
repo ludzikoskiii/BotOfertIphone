@@ -209,10 +209,66 @@ def probe_round2(c: httpx.Client) -> None:
     get(c, "https://swappie.com/pl-pl/iphone/iphone-13/")
 
 
+def probe_round3(c: httpx.Client) -> None:
+    say("\n===== LENTO — Apple =====")
+    r = get(c, "https://www.lento.pl/telefony-komorkowe/telefony-i-akcesoria/elektronika/apple.html")
+    if r is not None and r.status_code == 200:
+        tree = HTMLParser(r.text)
+        items = tree.css("a.title-list-item")
+        say(f"  ogłoszeń: {len(items)}")
+        for a in items[:2]:
+            box = a
+            for _ in range(3):
+                if box.parent is not None:
+                    box = box.parent
+            say("  OFERTA HTML:", re.sub(r"\s+", " ", box.html or "")[:1800])
+        if items:
+            item = get(c, items[0].attributes.get("href"))
+            if item is not None and item.status_code == 200:
+                ti = HTMLParser(item.text)
+                for node in ti.css('script[type="application/ld+json"]'):
+                    if "Product" in node.text():
+                        say("  JSON-LD Product:", re.sub(r"\s+", " ", node.text())[:1500])
+                for sel in ("[itemprop=price]", ".breadcrumb", "[itemprop=addressLocality]", ".localization",
+                            ".map-address", "time", ".date"):
+                    n = ti.css_first(sel)
+                    if n is not None:
+                        say(f"  {sel}:", re.sub(r"\s+", " ", n.text(strip=True))[:200])
+
+    say("\n===== REFURBED — pole ceny wariantu =====")
+    time.sleep(8)
+    r = get(c, "https://www.refurbed.pl/p/iphone-12/")
+    if r is not None and r.status_code == 200:
+        for node in HTMLParser(r.text).css('script[type="application/ld+json"]'):
+            try:
+                data = json.loads(node.text())
+            except json.JSONDecodeError:
+                continue
+            for g in data if isinstance(data, list) else [data]:
+                if isinstance(g, dict) and g.get("@type") == "ProductGroup":
+                    for v in (g.get("hasVariant") or [])[:3]:
+                        say("   offers:", json.dumps(v.get("offers"), ensure_ascii=False)[:600])
+        for m in re.finditer(r'"(?:grade|condition|quality)[A-Za-z]*"\s*:\s*"[^"]{1,40}"', r.text):
+            say("  pole stanu:", m.group(0))
+            break
+
+    say("\n===== BACK MARKET PL =====")
+    for url in ("https://www.backmarket.pl/pl-pl/search?q=iphone%2013",
+                "https://www.backmarket.pl/pl-pl/l/smartfony/6c290010-c0c2-47a4-b68a-ac2ec2b64dca"):
+        r = get(c, url, headers={"Accept-Language": "pl-PL"})
+        if r is not None and r.status_code == 200:
+            tree = HTMLParser(r.text)
+            say("  <title>:", tree.css_first("title").text(strip=True)[:120] if tree.css_first("title") else "—")
+            say("  __NUXT__/data:", bool(re.search(r"__NUXT__|__NUXT_DATA__", r.text)))
+            for m in re.finditer(r"(\d[\d\s ]{2,6},\d{2})\s?zł", r.text):
+                say("  cena:", r.text[max(0, m.start() - 200):m.end()].replace("\n", " ")[:260])
+                break
+
+
 def main(out: str) -> int:
     with httpx.Client(headers={"User-Agent": UA, "Accept-Language": "pl-PL,pl;q=0.9"}, timeout=20,
                       follow_redirects=True) as c:
-        for step in (probe_round2,):
+        for step in (probe_round3,):
             try:
                 step(c)
             except Exception as e:  # noqa: BLE001 — sonda ma zebrać jak najwięcej informacji
