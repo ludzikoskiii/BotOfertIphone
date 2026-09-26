@@ -74,7 +74,50 @@ def describe_page(label: str, r: httpx.Response) -> None:
             break
 
 
-def probe_html_portal(c: httpx.Client, name: str, search_url: str, params: dict[str, Any], base: str) -> None:
+def json_strings(node: Any, path: str = "") -> list[tuple[str, str]]:
+    """Wszystkie napisy z osadzonego JSON z ich ścieżką (do znalezienia pola z opisem)."""
+    out: list[tuple[str, str]] = []
+    if isinstance(node, dict):
+        for k, v in node.items():
+            out += json_strings(v, f"{path}.{k}")
+    elif isinstance(node, list):
+        for i, v in enumerate(node[:50]):
+            out += json_strings(v, f"{path}[{i}]")
+    elif isinstance(node, str):
+        out.append((path, node))
+    return out
+
+
+def deep_dive(label: str, page: str, raw: bytes, title: str) -> None:
+    """Gdzie dokładnie jest opis: długie napisy w JSON (ze ścieżką), długie teksty w HTML, pozycja w bajtach."""
+    say(f"  >>> szczegóły strony ({label})")
+    blocks = embedded_json(page)
+    say(f"    bloki JSON: {len(blocks)}")
+    longest = sorted((x for b in blocks for x in json_strings(b)), key=lambda x: -len(x[1]))
+    shown = 0
+    for path, txt in longest:
+        if len(txt) < 60 or txt.startswith("http") or "{" in txt[:5]:
+            continue
+        say(f"    json{path[:90]} ({len(txt)} zn.): {short(html_lib.unescape(txt), 120)}")
+        shown += 1
+        if shown >= 8:
+            break
+    tree = HTMLParser(page)
+    texts = []
+    for node in tree.css("div, p, section, article, span"):
+        own = node.text(deep=False, strip=True)
+        if len(own) >= 60:
+            cls = node.attributes.get("class") or ""
+            texts.append((len(own), node.tag, cls[:60], node.attributes.get("data-testid") or "", own))
+    for n, tag, cls, tid, own in sorted(texts, reverse=True)[:8]:
+        say(f"    html <{tag} class='{cls}' data-testid='{tid}'> ({n} zn.): {short(own, 120)}")
+    for needle in ("description", "opis", "Opis"):
+        pos = raw.find(needle.encode())
+        say(f"    pierwsze „{needle}” w bajcie: {pos} z {len(raw)}")
+
+
+def probe_html_portal(c: httpx.Client, name: str, search_url: str, params: dict[str, Any], base: str,
+                      deep: bool = False) -> None:
     say(f"\n===== {name} =====")
     r = c.get(search_url, params=params)
     offers = offers_from_html(r.text, base) if r.status_code == 200 else []
@@ -82,13 +125,16 @@ def probe_html_portal(c: httpx.Client, name: str, search_url: str, params: dict[
     say(f"wyszukiwanie: HTTP {r.status_code}, ofert {len(offers)}, z opisem w wynikach: {len(with_desc)}")
     for o in with_desc[:2]:
         say(f"  opis w wynikach: {short(o.description)}")
-    for o in offers[:3]:
+    for o in offers[:2 if deep else 3]:
         pause()
         say(f"- {short(o.title, 70)} → {o.url}")
-        describe_page("strona oferty", c.get(o.url))
+        page = c.get(o.url)
+        describe_page("strona oferty", page)
+        if deep and page.status_code == 200:
+            deep_dive(name, page.text, page.content, o.title)
 
 
-def probe_vinted(c: httpx.Client) -> None:
+def probe_vinted(c: httpx.Client, limit: int = 3) -> None:
     say("\n===== VINTED =====")
     c.get("https://www.vinted.pl/catalog")
     token = c.cookies.get("access_token_web")
@@ -101,13 +147,10 @@ def probe_vinted(c: httpx.Client) -> None:
     say(f"katalog: HTTP {r.status_code}, przedmiotów {len(items)}")
     if items:
         say("  pola przedmiotu w katalogu:", sorted(items[0].keys()))
-    for it in items[:3]:
+    for it in items[:limit]:
         iid = it["id"]
         say(f"- {short(str(it.get('title')), 70)} (id {iid}), opis w katalogu: {len(str(it.get('description') or ''))} zn.")
-        for label, url, headers in (
-            ("api/v2/items/{id}", f"https://www.vinted.pl/api/v2/items/{iid}", h),
-            ("api/v2/items/{id}/details", f"https://www.vinted.pl/api/v2/items/{iid}/details", h),
-        ):
+        for label, url, headers in ():  # API przedmiotu: 404 / 403 (ochrona antybotowa) — nie używamy
             pause()
             rr = c.get(url, headers=headers)
             desc = ""
@@ -119,7 +162,12 @@ def probe_vinted(c: httpx.Client) -> None:
             say(f"  {label}: HTTP {rr.status_code}, blokada: {looks_blocked(rr)}, opis {len(desc)} zn.: {short(desc)}")
         pause()
         path = it.get("url") or it.get("path") or f"/items/{iid}"
-        describe_page("strona HTML", c.get(path if path.startswith("http") else "https://www.vinted.pl" + path))
+        page = c.get(path if path.startswith("http") else "https://www.vinted.pl" + path)
+        describe_page("strona HTML", page)
+        if page.status_code == 200:
+            raw = page.content
+            for needle in (b'"description"', b'og:description', b'<script id="__NEXT_DATA__"', b"self.__next_f"):
+                say(f"    pozycja {needle.decode()}: {raw.find(needle)} z {len(raw)} B")
 
 
 def main() -> int:
@@ -127,13 +175,9 @@ def main() -> int:
     with httpx.Client(headers=DEFAULT_HEADERS, follow_redirects=True, timeout=30) as c:
         probe_html_portal(c, "ALLEGRO LOKALNIE",
                           "https://allegrolokalnie.pl/oferty/elektronika/telefony-i-akcesoria-4/q/iphone%2013",
-                          {"sort": "startingTime-desc"}, "https://allegrolokalnie.pl")
+                          {"sort": "startingTime-desc"}, "https://allegrolokalnie.pl", deep=True)
         pause()
-        probe_html_portal(c, "SPRZEDAJEMY.PL",
-                          "https://sprzedajemy.pl/elektronika/telefony-i-akcesoria/telefony-komorkowe/apple-iphone",
-                          {"inp_text": "iphone 13"}, "https://sprzedajemy.pl")
-        pause()
-        probe_vinted(c)
+        probe_vinted(c, limit=1)
     with open(out_path, "w", encoding="utf-8") as f:
         f.write("\n".join(OUT) + "\n")
     return 0
