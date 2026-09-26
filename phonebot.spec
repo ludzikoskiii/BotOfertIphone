@@ -5,6 +5,10 @@ import sys
 from PyInstaller.utils.hooks import collect_submodules
 
 hiddenimports = collect_submodules("phonebot.sources") + ["anthropic", "httpx2", "selectolax.parser"]
+# lokalne AI: model tytułów zapisany przez joblib odwołuje się do tych klas przy wczytywaniu
+hiddenimports += ["sklearn.pipeline", "sklearn.feature_extraction.text", "sklearn.linear_model._logistic",
+                  "phonebot.ml.text_model", "onnxruntime", "PIL.JpegImagePlugin", "PIL.PngImagePlugin",
+                  "PIL.WebPImagePlugin"]
 
 a = Analysis(
     ["run_phonebot.py"],
@@ -12,7 +16,7 @@ a = Analysis(
     binaries=[],
     datas=[],
     hiddenimports=hiddenimports,
-    excludes=["tkinter", "cryptography", "PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets", "PySide6.Qt3DCore",
+    excludes=["tkinter", "cryptography", "matplotlib", "pandas", "torch", "IPython", "pytest", "PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets", "PySide6.Qt3DCore",
               "PySide6.QtQuick", "PySide6.QtQml", "PySide6.QtMultimedia", "PySide6.QtCharts",
               "PySide6.QtDataVisualization", "PySide6.QtPdf"],
     noarchive=False,

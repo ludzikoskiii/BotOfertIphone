@@ -12,6 +12,7 @@ Maksymalna cena zakupu B to największa P, dla której Zysk ≥ wymagany zysk.
 """
 from __future__ import annotations
 
+from ..ml.combine import combine as combine_layers
 from .models import (
     Condition,
     CostItem,
@@ -201,6 +202,9 @@ def evaluate(offer: Offer, market: MarketEstimate, parts: PartsCatalog, settings
         verdict = Verdict.SKIP
         negotiation = Negotiation(False, None, None, "Tryb szybkiego resellu: telefon wymaga naprawy.")
         reasons.append("Telefon ma usterki wymagające naprawy — nie pasuje do trybu „Szybki resell”.")
+
+    # lokalne AI (tytuł + zdjęcie): sprzeczność albo niska pewność → flaga (najwyżej DO WERYFIKACJI)
+    flags.extend(f for f in combine_layers(offer.layers, settings.ml).flags if f not in flags)
 
     # każda flaga ogranicza najlepszy możliwy werdykt
     cap, limiting = verdict_cap(flags, sanity, hard_force_skip=settings.hard_flags_force_skip)

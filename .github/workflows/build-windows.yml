@@ -24,7 +24,12 @@ jobs:
       - name: Self-test pliku exe
         shell: pwsh
         run: |
-          $p = Start-Process -FilePath dist\PhoneBot.exe -ArgumentList '--self-test' -Wait -PassThru
+          $exe = Get-Item dist\PhoneBot.exe
+          "Rozmiar PhoneBot.exe: {0:N1} MB" -f ($exe.Length / 1MB)
+          $env:PHONEBOT_SELFTEST_LOG = "$env:RUNNER_TEMP\selftest.log"
+          $t = Measure-Command { $script:p = Start-Process -FilePath dist\PhoneBot.exe -ArgumentList '--self-test' -Wait -PassThru }
+          "Czas self-testu (start + AI + okno): {0:N1} s" -f $t.TotalSeconds
+          if (Test-Path $env:PHONEBOT_SELFTEST_LOG) { Get-Content $env:PHONEBOT_SELFTEST_LOG }
           if ($p.ExitCode -ne 0) { throw "self-test nie powiódł się (kod $($p.ExitCode))" }
       - uses: actions/upload-artifact@v4
         with:

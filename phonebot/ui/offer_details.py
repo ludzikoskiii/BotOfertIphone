@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QHBoxLayout,
     QLabel,
+    QMenu,
     QPushButton,
     QStackedWidget,
     QTextBrowser,
@@ -29,9 +30,17 @@ PHOTO_SIZE = QSize(320, 240)
 PANEL_PHOTO_SIZE = QSize(272, 204)  # w panelu bocznym zdjęcie jest pomniejszane
 
 
+NOT_PHONE_CHOICES = (
+    ("accessory", "Akcesorium (etui, szkło, ładowarka, pudełko…)"),
+    ("part", "Część (wyświetlacz, płyta, bateria…)"),
+    ("wanted", "Ogłoszenie kupna / zamiany"),
+)
+
+
 class OfferDetailsView(QWidget):
     status_changed = Signal(int, str)  # offer_id, OfferStatus.value
     full_view_requested = Signal()
+    not_phone = Signal(int, str)  # offer_id, klasa (accessory | part | wanted)
 
     def __init__(self, settings: Settings, repo: OfferRepository, photos: ThumbnailCache, parent=None, *,
                  compact: bool = True):
@@ -75,17 +84,31 @@ class OfferDetailsView(QWidget):
         self.watch_btn.clicked.connect(self._toggle_watch)
         self.hide_btn = QPushButton()
         self.hide_btn.clicked.connect(self._toggle_hidden)
+        self.not_phone_btn = QPushButton("✖ Nie telefon" if compact else "✖ To nie jest telefon")
+        self.not_phone_btn.setToolTip("Przenosi ofertę do „Odrzucone” i uczy klasyfikator tytułów, "
+                                      "że takie ogłoszenia to nie telefony")
+        menu = QMenu(self.not_phone_btn)
+        for label, text in NOT_PHONE_CHOICES:
+            menu.addAction(text, lambda label=label: self._mark_not_phone(label))
+        self.not_phone_btn.setMenu(menu)
         buttons = QHBoxLayout()
         buttons.setSpacing(SPACING)
         buttons.addWidget(self.open_btn)
         buttons.addWidget(self.watch_btn)
-        buttons.addWidget(self.hide_btn)
+        if not compact:
+            buttons.addWidget(self.hide_btn)
+            buttons.addWidget(self.not_phone_btn)
         buttons.addStretch(1)
+        second = QHBoxLayout()  # w wąskim panelu druga linia przycisków
+        second.setSpacing(SPACING)
         if compact:
             full = QPushButton("⤢")
             full.setToolTip("Pełne okno szczegółów (Enter / podwójne kliknięcie)")
             full.clicked.connect(self.full_view_requested.emit)
             buttons.addWidget(full)
+            second.addWidget(self.hide_btn)
+            second.addWidget(self.not_phone_btn)
+            second.addStretch(1)
 
         content = QWidget()
         if compact:
@@ -106,6 +129,8 @@ class OfferDetailsView(QWidget):
         body_wrap.setSpacing(SPACING)
         body_wrap.addWidget(content, 1)
         body_wrap.addLayout(buttons)
+        if compact:
+            body_wrap.addLayout(second)
         page = QWidget()
         page.setLayout(body_wrap)
 
@@ -176,6 +201,10 @@ class OfferDetailsView(QWidget):
         self._refresh_buttons()
         self.status_changed.emit(self.offer.id, status.value)
 
+    def _mark_not_phone(self, label: str) -> None:
+        if self.offer is not None and self.offer.id is not None:
+            self.not_phone.emit(self.offer.id, label)
+
     def _toggle_watch(self) -> None:
         watched = self.offer is not None and self.offer.status is OfferStatus.WATCHED
         self._set_status(OfferStatus.NEW if watched else OfferStatus.WATCHED)
@@ -201,6 +230,7 @@ class OfferDetailsDialog(QDialog):
     """Pełne okno szczegółów (podwójne kliknięcie / Enter w tabeli)."""
 
     status_changed = Signal(int, str)
+    not_phone = Signal(int, str)
 
     def __init__(self, offer: Offer, val: Valuation, settings: Settings, repo: OfferRepository,
                  photos: ThumbnailCache, parent=None):
@@ -210,6 +240,8 @@ class OfferDetailsDialog(QDialog):
         self.view = OfferDetailsView(settings, repo, photos, self, compact=False)
         self.view.set_offer(offer, val)
         self.view.status_changed.connect(self.status_changed.emit)
+        self.view.not_phone.connect(self.not_phone.emit)
+        self.view.not_phone.connect(lambda *_: self.accept())  # oferta znika z tabeli — okno też
         self.view.open_btn.setDefault(True)
         self.browser, self.watch_btn, self.hide_btn = self.view.browser, self.view.watch_btn, self.view.hide_btn
         self._toggle_watch, self._toggle_hidden = self.view._toggle_watch, self.view._toggle_hidden

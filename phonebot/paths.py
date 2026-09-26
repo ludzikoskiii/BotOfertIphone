@@ -36,3 +36,10 @@ def thumbnails_dir() -> Path:
     path = data_dir() / "thumbnails"
     path.mkdir(exist_ok=True)
     return path
+
+
+def models_dir() -> Path:
+    """Modele AI działające lokalnie (klasyfikator tytułów, CLIP do zdjęć)."""
+    path = data_dir() / "models"
+    path.mkdir(exist_ok=True)
+    return path

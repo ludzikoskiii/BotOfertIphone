@@ -12,6 +12,15 @@ from phonebot.storage.db import open_database
 _ids = itertools.count(1)
 
 
+@pytest.fixture(autouse=True, scope="session")
+def _isolated_data_dir(tmp_path_factory):
+    """Testy nie mogą pisać do prawdziwego katalogu danych (modele AI, baza, miniatury)."""
+    import os
+
+    os.environ["PHONEBOT_HOME"] = str(tmp_path_factory.mktemp("phonebot_home"))
+    yield
+
+
 def make_raw(title: str, price: float = 1000.0, description: str = "", **kw) -> RawOffer:
     kw.setdefault("photos", ["https://example.com/1.jpg"])
     kw.setdefault("shipping_available", True)

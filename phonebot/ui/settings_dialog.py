@@ -176,15 +176,38 @@ VERDICT = [
 ]
 
 
+AI_TEXT = [
+    Field("ml.text_enabled", "Klasyfikator tytułów (telefon / akcesorium / część / kupię)", "bool"),
+    Field("ml.text_phone_conf", "Tytuł potwierdza telefon od pewności", "pct", 30, 99, 5),
+    Field("ml.text_conflict_conf", "Tytuł przeczy regułom od pewności", "pct", 30, 99, 5,
+          tip="Gdy klasyfikator jest tak pewny, że to akcesorium/część/kupię — werdykt najwyżej DO WERYFIKACJI"),
+    Field("ml.retrain_after_labels", "Douczaj automatycznie po nowych oznaczeniach", "int", 5, 1000, 5),
+    Field("ml.learn_from_hidden", "Ucz się też z ofert ukrytych ręcznie (jako „nie telefon”)", "bool",
+          tip="Słaba wskazówka. Ukryte oferty, które model uważa za telefony (ukryte np. przez cenę), są "
+              "pomijane. Pewną informację daje przycisk „To nie jest telefon”."),
+]
+AI_PHOTO = [
+    Field("ml.photo_enabled", "Analiza głównego zdjęcia (CLIP, na procesorze)", "bool"),
+    Field("ml.photo_phone_conf", "Zdjęcie potwierdza telefon od pewności", "pct", 30, 99, 5),
+    Field("ml.photo_conflict_conf", "Zdjęcie przeczy regułom (etui, szkło, pudełko) od pewności", "pct", 50, 99, 5,
+          tip="Test na 80 prawdziwych zdjęciach: przy 80% żadne zdjęcie telefonu nie zostało uznane za akcesorium"),
+]
+
+
 class SettingsDialog(QDialog):
     parts_editor_requested = Signal()
+    retrain_requested = Signal()
 
-    def __init__(self, settings: Settings, parent=None, false_positives: list[tuple[str, int]] | None = None):
+    def __init__(self, settings: Settings, parent=None, false_positives: list[tuple[str, int]] | None = None, *,
+                 model_info=None, photo_model_ready: bool = False, labels: int = 0):
         super().__init__(parent)
         self.setWindowTitle("Ustawienia")
         self.resize(900, 700)
         self.settings = copy.deepcopy(settings)
         self.false_positives = false_positives or []
+        self.model_info = model_info
+        self.photo_model_ready = photo_model_ready
+        self.labels = labels
         self._readers: list[Callable[[Settings], None]] = []
 
         tabs = QTabWidget()
@@ -195,6 +218,7 @@ class SettingsDialog(QDialog):
         tabs.addTab(self._verdict_tab(), "Werdykt i flagi")
         tabs.addTab(self._filter_tab(), "Filtr ogłoszeń")
         tabs.addTab(self._safety_tab(), "Zabezpieczenia")
+        tabs.addTab(self._ai_tab(), "AI lokalne")
         tabs.addTab(self._notify_tab(), "Powiadomienia i AI")
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
@@ -465,6 +489,71 @@ class SettingsDialog(QDialog):
         grid.addRow(note)
         self._readers.append(self._read_portals)
         return self._page(intro, verdict, filt, serial, country, portals)
+
+    def _ai_tab(self) -> QWidget:
+        intro = QLabel("Darmowe AI działające na Twoim komputerze — bez płatnych usług i bez wysyłania danych. "
+                       "Reguły decydują, co trafia do tabeli; AI może to potwierdzić albo podważyć. Gdy tytuł "
+                       "lub zdjęcie przeczy regułom albo pewność jest niska, werdykt to <b>DO WERYFIKACJI</b>.")
+        intro.setWordWrap(True)
+        text = QGroupBox("Klasyfikator tytułów (scikit-learn)")
+        tl = QVBoxLayout(text)
+        self.model_label = QLabel()
+        self.model_label.setWordWrap(True)
+        self.model_label.setTextFormat(Qt.TextFormat.RichText)
+        tl.addWidget(self.model_label)
+        row = QHBoxLayout()
+        self.retrain_btn = QPushButton("🎓 Douczyć model")
+        self.retrain_btn.setToolTip("Uczy klasyfikator od nowa na zbiorze startowym, odrzuconych ofertach "
+                                    "i Twoich oznaczeniach (kilka sekund, w tle)")
+        self.retrain_btn.clicked.connect(self.retrain_requested.emit)
+        self.training_label = QLabel()
+        self.training_label.setObjectName("muted")
+        row.addWidget(self.retrain_btn)
+        row.addWidget(self.training_label, 1)
+        tl.addLayout(row)
+        tl.addLayout(self._form(AI_TEXT))
+        photo = QGroupBox("Analiza zdjęć (CLIP)")
+        pl = QVBoxLayout(photo)
+        from ..ml.photo_model import MODEL_SIZE_MB
+
+        status = ("✔ model pobrany — działa bez internetu" if self.photo_model_ready else
+                  f"model zostanie pobrany raz przy starcie programu ({MODEL_SIZE_MB} MB, z Hugging Face)")
+        pinfo = QLabel(f"Stan: {status}.<br>Analizowane są tylko oferty z werdyktem KUPUJ, NEGOCJUJ lub "
+                       "DO WERYFIKACJI; każda raz (wynik zapisany w bazie). Dobrze rozpoznaje etui i szkła, "
+                       "słabo puste pudełka (na pudełku jest zdjęcie telefonu).")
+        pinfo.setWordWrap(True)
+        pinfo.setObjectName("muted")
+        pl.addWidget(pinfo)
+        pl.addLayout(self._form(AI_PHOTO))
+        self.set_model_info(self.model_info)
+        return self._page(intro, text, photo)
+
+    def set_model_info(self, info) -> None:
+        """Skuteczność modelu na danych testowych (też po douczeniu w tle, gdy okno jest otwarte)."""
+        self.model_info = info
+        if info is None:
+            self.model_label.setText("Model nie jest jeszcze wytrenowany — powstanie automatycznie przy starcie "
+                                     "programu (kilka sekund).")
+            return
+        names = {"phone": "telefon", "accessory": "akcesorium", "part": "część", "wanted": "kupię"}
+        per = " · ".join(f"{names.get(c, c)} {v['recall']:.0%}" for c, v in info.per_class.items())
+        src = {"seed": "startowe", "rejected": "odrzucone przez reguły", "user": "Twoje oznaczenia",
+               "hidden": "ukryte"}
+        sources = ", ".join(f"{src.get(k, k)}: {v}" for k, v in info.sources.items())
+        if info.hidden_skipped:
+            sources += (f"; pominięte ukryte: {info.hidden_skipped} — model uznał je za telefony, więc pewnie "
+                        "zostały ukryte z innego powodu")
+        new = max(0, self.labels - info.labels_seen)
+        self.model_label.setText(
+            f"<b>Skuteczność na danych testowych: {info.accuracy:.0%}</b> ({info.n_test} tytułów odłożonych przed "
+            f"treningiem) · <b>na prawdziwych tytułach z portali: {info.benchmark_accuracy:.0%}</b> "
+            f"({info.benchmark_n}, model ich nie widział)<br>Trafność wg klasy: {per}<br>"
+            f"Dane: {info.n_train} przykładów ({sources}) · wytrenowano {info.trained_at[:16].replace('T', ' ')} "
+            f"UTC · nowych oznaczeń od treningu: {new}")
+        self.training_label.setText("")
+
+    def set_training_state(self, text: str) -> None:
+        self.training_label.setText(text)
 
     def _read_portals(self, s: Settings) -> None:
         s.source_categories = {k: {"id": cid.text().strip(), "path": path.text().strip().strip("/")}

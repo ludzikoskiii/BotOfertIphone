@@ -8,8 +8,11 @@ from datetime import datetime
 from html import escape
 
 from ..core.catalog import format_storage
-from ..core.models import Offer, OfferStatus, Severity, Valuation
+from ..core.models import Offer, OfferStatus, RedFlag, Severity, Valuation
+from ..core.sanity import SANITY_FLAGS
 from ..core.settings import Settings
+from ..ml.combine import AGREE, CONFLICT, MISSING, UNSURE
+from ..ml.combine import combine as combine_layers
 from ..sources import SOURCE_NAMES
 from .theme import COLOR_LABEL, Palette, current
 
@@ -45,6 +48,30 @@ def _row(label: str, value: str, cls: str = "") -> str:
 
 def _fmt_dt(dt: datetime | None) -> str:
     return dt.astimezone().strftime("%d.%m.%Y %H:%M") if dt else "—"
+
+
+_AI_FLAGS = {RedFlag.AI_TEXT_CONFLICT, RedFlag.AI_PHOTO_CONFLICT, RedFlag.AI_LOW_CONFIDENCE}
+
+
+def _layers_html(offer: Offer, val: Valuation, settings: Settings, pal: Palette) -> str:
+    combo = combine_layers(offer.layers, settings.ml)
+    colors = {AGREE: pal.positive, CONFLICT: pal.negative, UNSURE: pal.warning, MISSING: pal.muted,
+              "niska pewność": pal.warning, "brak danych": pal.muted}
+    icons = {AGREE: "✔", CONFLICT: "✖", UNSURE: "?", MISSING: "–", "niska pewność": "?", "brak danych": "–"}
+
+    def state(name: str, text: str) -> str:
+        return (f'<span style="color:{colors.get(name, pal.text)}"><b>{icons.get(name, "")} {escape(name)}</b></span>'
+                f" · {escape(text)}")
+
+    sanity = [f.label for f in dict.fromkeys(val.flags) if f in SANITY_FLAGS and f not in _AI_FLAGS]
+    rules_text = "przeszła filtr tytułu, kraju i sprzedawcy"
+    if sanity:
+        rules_text += "; testy sensowności: " + ", ".join(sanity)
+    rows = [f'<tr><td width="34%">Reguły (etap 1)</td><td>{state(CONFLICT if sanity else AGREE, rules_text)}</td></tr>']
+    for layer in combo.layers:
+        rows.append(f'<tr><td width="34%">{escape(layer.name)}</td><td>{state(layer.state, layer.summary)}</td></tr>')
+    rows.append(f'<tr class="total"><td>Łącznie</td><td>{state(combo.state, combo.note)}</td></tr>')
+    return "<h3>Ocena warstw (reguły + lokalne AI)</h3><table class='calc'>" + "".join(rows) + "</table>"
 
 
 def build_details_html(
@@ -117,6 +144,9 @@ def build_details_html(
                           zl(val.required_profit)))
         parts.append(_row("Maksymalna cena zakupu", f"<b>{zl(val.max_buy_price)}</b>"))
     parts.append("</table>")
+
+    # --- warstwy oceny: reguły + lokalne AI ---
+    parts.append(_layers_html(offer, val, settings, pal))
 
     # --- flagi ---
     if val.flags:

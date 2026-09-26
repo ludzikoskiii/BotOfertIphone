@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from ..core.models import (
+    AiLayers,
     Condition,
     Defect,
     MarketObservation,
@@ -106,20 +107,20 @@ class OfferRepository:
         )
 
     def get(self, offer_id: int) -> Offer | None:
-        row = self.conn.execute("SELECT * FROM offers WHERE id = ?", (offer_id,)).fetchone()
+        row = self.conn.execute(f"{_OFFER_SELECT} WHERE o.id = ?", (offer_id,)).fetchone()
         return _row_to_offer(row) if row else None
 
     def by_seller(self, source: str, seller_id: str, *, active_only: bool = True) -> list[Offer]:
-        sql = "SELECT * FROM offers WHERE source = ? AND seller_id = ?" + (" AND is_active = 1" if active_only else "")
+        sql = f"{_OFFER_SELECT} WHERE o.source = ? AND o.seller_id = ?" + (" AND o.is_active = 1" if active_only else "")
         return [_row_to_offer(r) for r in self.conn.execute(sql, (source, seller_id))]
 
     def list(self, *, include_hidden: bool = False, active_only: bool = True) -> list[Offer]:
         where = []
         if not include_hidden:
-            where.append("status != 'hidden'")
+            where.append("o.status != 'hidden'")
         if active_only:
-            where.append("is_active = 1")
-        sql = "SELECT * FROM offers" + (f" WHERE {' AND '.join(where)}" if where else "") + " ORDER BY id"
+            where.append("o.is_active = 1")
+        sql = _OFFER_SELECT + (f" WHERE {' AND '.join(where)}" if where else "") + " ORDER BY o.id"
         return [_row_to_offer(r) for r in self.conn.execute(sql)]
 
     def set_status(self, offer_id: int, status: OfferStatus) -> None:
@@ -193,6 +194,28 @@ class OfferRepository:
         ]
 
 
+# oferty razem z wynikami lokalnego AI (po ID ogłoszenia)
+_OFFER_SELECT = """
+    SELECT o.*, a.text_label AS ai_text_label, a.text_conf AS ai_text_conf, a.text_probs AS ai_text_probs,
+           a.photo_label AS ai_photo_label, a.photo_conf AS ai_photo_conf, a.photo_probs AS ai_photo_probs,
+           a.photo_at AS ai_photo_at, a.photo_error AS ai_photo_error
+    FROM offers o LEFT JOIN ai_results a ON a.source = o.source AND a.source_id = o.source_id"""
+
+
+def _row_to_layers(row: sqlite3.Row) -> AiLayers | None:
+    if "ai_text_label" not in row.keys():
+        return None
+    if row["ai_text_label"] is None and row["ai_photo_label"] is None and row["ai_photo_error"] is None:
+        return None
+    return AiLayers(
+        text_label=row["ai_text_label"], text_conf=row["ai_text_conf"],
+        text_probs=json.loads(row["ai_text_probs"] or "{}"),
+        photo_label=row["ai_photo_label"], photo_conf=row["ai_photo_conf"],
+        photo_probs=json.loads(row["ai_photo_probs"] or "{}"), photo_at=_dt(row["ai_photo_at"]),
+        photo_error=row["ai_photo_error"],
+    )
+
+
 def _row_to_offer(row: sqlite3.Row) -> Offer:
     raw = RawOffer(
         source=row["source"], source_id=row["source_id"], url=row["url"], title=row["title"],
@@ -211,6 +234,7 @@ def _row_to_offer(row: sqlite3.Row) -> Offer:
     offer = Offer(
         raw=raw, parsed=parsed, id=int(row["id"]), status=OfferStatus(row["status"]),
         first_seen=_dt(row["first_seen"]), last_seen=_dt(row["last_seen"]), dedup_key=row["dedup_key"],
+        layers=_row_to_layers(row),
     )
     if row["ai_checked_at"]:
         ai_defects = [Defect(d) for d in json.loads(row["ai_defects"] or "[]") if d in Defect._value2member_map_]
@@ -404,6 +428,7 @@ class RejectedRepository:
         )
         offer_id = OfferRepository(self.conn).upsert(raw, parse_offer(raw)).offer_id
         self.remove(raw.source, raw.source_id)
+        LabelRepository(self.conn).add(raw, "phone", "user")  # Twoja poprawka uczy klasyfikator
         return offer_id
 
 
@@ -479,3 +504,83 @@ class SellerRepository:
 def _row_to_seller(r: sqlite3.Row) -> SellerInfo:
     return SellerInfo(r["source"], r["seller_id"], r["login"], r["country_code"], _bool(r["business"]),
                       _dt(r["checked_at"]), bool(r["serial"]), r["serial_reason"])
+
+
+class LabelRepository:
+    """Twoje oznaczenia ofert — dane do nauki klasyfikatora tytułów."""
+
+    def __init__(self, conn: sqlite3.Connection):
+        self.conn = conn
+
+    def add(self, raw: RawOffer, label: str, origin: str = "user") -> None:
+        """Zapisuje oznaczenie. Ukrycie oferty (słaba wskazówka) nie nadpisuje Twojego wyraźnego oznaczenia."""
+        self.conn.execute(
+            """
+            INSERT INTO ml_labels (source, source_id, title, label, origin, created_at) VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT (source, source_id) DO UPDATE SET
+                title = excluded.title, label = excluded.label, origin = excluded.origin,
+                created_at = excluded.created_at
+            WHERE ml_labels.origin != 'user' OR excluded.origin = 'user'
+            """, (raw.source, raw.source_id, raw.title, label, origin, _iso(utcnow())))
+
+    def remove(self, source: str, source_id: str, origin: str | None = None) -> None:
+        sql = "DELETE FROM ml_labels WHERE source = ? AND source_id = ?" + (" AND origin = ?" if origin else "")
+        self.conn.execute(sql, (source, source_id, origin) if origin else (source, source_id))
+
+    def all(self) -> list[tuple[str, str, str]]:
+        """(tytuł, etykieta, pochodzenie)."""
+        return [(r["title"], r["label"], r["origin"])
+                for r in self.conn.execute("SELECT title, label, origin FROM ml_labels ORDER BY id")]
+
+    def count(self, origin: str | None = None) -> int:
+        sql = "SELECT COUNT(*) FROM ml_labels" + (" WHERE origin = ?" if origin else "")
+        return int(self.conn.execute(sql, (origin,) if origin else ()).fetchone()[0])
+
+
+class AiRepository:
+    """Wyniki warstw lokalnego AI po ID ogłoszenia (żeby nie analizować tej samej oferty dwa razy)."""
+
+    def __init__(self, conn: sqlite3.Connection):
+        self.conn = conn
+
+    def save_text(self, source: str, source_id: str, probs: dict[str, float], model: str) -> None:
+        label = max(probs, key=probs.get) if probs else None
+        self.conn.execute(
+            """
+            INSERT INTO ai_results (source, source_id, text_label, text_conf, text_probs, text_model)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT (source, source_id) DO UPDATE SET
+                text_label = excluded.text_label, text_conf = excluded.text_conf,
+                text_probs = excluded.text_probs, text_model = excluded.text_model
+            """, (source, source_id, label, probs.get(label) if label else None,
+                  json.dumps({k: round(v, 4) for k, v in probs.items()}), model))
+
+    def save_photo(self, source: str, source_id: str, url: str, probs: dict[str, float] | None, model: str,
+                   error: str | None = None) -> None:
+        label = max(probs, key=probs.get) if probs else None
+        self.conn.execute(
+            """
+            INSERT INTO ai_results (source, source_id, photo_url, photo_label, photo_conf, photo_probs, photo_model,
+                                    photo_at, photo_error)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (source, source_id) DO UPDATE SET
+                photo_url = excluded.photo_url, photo_label = excluded.photo_label, photo_conf = excluded.photo_conf,
+                photo_probs = excluded.photo_probs, photo_model = excluded.photo_model, photo_at = excluded.photo_at,
+                photo_error = excluded.photo_error
+            """, (source, source_id, url, label, probs.get(label) if label else None,
+                  json.dumps({k: round(v, 4) for k, v in (probs or {}).items()}), model, _iso(utcnow()), error))
+
+    def text_model_of(self, source: str, source_id: str) -> str | None:
+        row = self.conn.execute("SELECT text_model FROM ai_results WHERE source = ? AND source_id = ?",
+                                (source, source_id)).fetchone()
+        return row["text_model"] if row else None
+
+    def missing_text(self, model: str) -> list[tuple[str, str, str]]:
+        """Aktywne oferty bez wyniku bieżącego modelu tytułów: (source, source_id, tytuł)."""
+        rows = self.conn.execute(
+            """
+            SELECT o.source, o.source_id, o.title FROM offers o
+            LEFT JOIN ai_results a ON a.source = o.source AND a.source_id = o.source_id
+            WHERE o.is_active = 1 AND (a.text_model IS NULL OR a.text_model != ?)
+            """, (model,))
+        return [(r["source"], r["source_id"], r["title"]) for r in rows]

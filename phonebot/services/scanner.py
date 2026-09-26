@@ -21,6 +21,7 @@ from ..net.http import HostRateLimiter, HttpClient, ResponseCache
 from ..sources import REGISTRY, SearchQuery, SourceAdapter, search_phrases
 from ..sources.base import SellerProfile
 from ..storage.repositories import FetchRunRepository, OfferRepository, SellerRepository, utcnow
+from .ai_service import AiService
 from .offer_guard import OfferGuard
 
 log = logging.getLogger(__name__)
@@ -219,6 +220,7 @@ class Scanner:
         guard = OfferGuard(self.conn, self.settings)
         rejected = guard.rejected
         source = raw_offers[0].source
+        saved: list[tuple[str, str, str]] = []
         self.conn.execute("BEGIN")
         try:
             items = [guard.prepare(raw) for raw in raw_offers]
@@ -241,6 +243,7 @@ class Scanner:
                     rep.suspicious += 1
                 rejected.remove(raw.source, raw.source_id)
                 res = repo.upsert(raw, parsed)
+                saved.append((raw.source, raw.source_id, raw.title))
                 rep.saved += 1
                 if res.is_new:
                     rep.new += 1
@@ -252,6 +255,16 @@ class Scanner:
         except Exception:
             self.conn.execute("ROLLBACK")
             raise
+        self._classify_titles(saved)
+
+    def _classify_titles(self, items: list[tuple[str, str, str]]) -> None:
+        """Warstwa AI (tytuł) dla zapisanych ofert — błąd AI nie może zepsuć pobierania."""
+        if not items or not self.settings.ml.text_enabled:
+            return
+        try:
+            AiService(self.conn, self.settings).predict_titles(items)
+        except Exception:  # noqa: BLE001
+            log.exception("Klasyfikator tytułów nie zadziałał")
 
 
 def default_adapters(http: HttpClient, settings: Settings) -> list[SourceAdapter]:

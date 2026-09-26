@@ -17,7 +17,26 @@ log = logging.getLogger(__name__)
 
 
 def self_test() -> int:
-    """Sprawdza, czy spakowana aplikacja ma wszystkie moduły i potrafi otworzyć okno."""
+    """Sprawdza, czy spakowana aplikacja ma wszystkie moduły, lokalne AI działa, a okno się otwiera.
+
+    Program okienkowy nie ma konsoli — wynik (albo błąd) trafia też do pliku z ``PHONEBOT_SELFTEST_LOG``.
+    """
+    import os
+
+    try:
+        summary, code = _self_test(), 0
+    except Exception:  # noqa: BLE001 — kod wyjścia zamiast okna błędu (budowanie w CI czeka na wynik)
+        import traceback
+
+        summary, code = traceback.format_exc(), 1
+    print(summary)
+    if log_path := os.environ.get("PHONEBOT_SELFTEST_LOG"):
+        with open(log_path, "w", encoding="utf-8") as f:
+            f.write(summary + "\n")
+    return code
+
+
+def _self_test() -> str:
     import os
     import tempfile
     from pathlib import Path
@@ -25,8 +44,11 @@ def self_test() -> int:
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     import anthropic  # noqa: F401  (ładowane leniwie w analizie AI)
 
+    from .ml import selftest
     from .sources import REGISTRY
     from .ui.main_window import MainWindow
+
+    ai = selftest.run()
 
     app = QApplication.instance() or QApplication(sys.argv)
     tmp = Path(tempfile.mkdtemp())
@@ -37,8 +59,7 @@ def self_test() -> int:
     window.close()
     conn.close()
     app.processEvents()
-    print(f"PhoneBot {__version__} self-test OK; portale: {', '.join(sorted(REGISTRY))}")
-    return 0
+    return f"PhoneBot {__version__} self-test OK; portale: {', '.join(sorted(REGISTRY))}; {ai}"
 
 
 def diagnose_cli() -> int:
@@ -87,6 +108,7 @@ def main() -> int:
     window = MainWindow(conn, path)
     window.quit_on_close = True
     window.show()
+    window.start_ai()  # lokalne AI w osobnym wątku: modele ładowane raz, analiza w tle
     code = app.exec()
     try:
         conn.execute("PRAGMA optimize")  # aktualizuje statystyki zapytań SQLite (szybkie, raz przy wyjściu)

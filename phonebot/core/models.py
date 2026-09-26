@@ -110,6 +110,9 @@ class RedFlag(StrEnum):
     STORAGE_UNKNOWN = "storage_unknown"
     SERIAL_SELLER = "serial_seller"
     FOREIGN_SELLER = "foreign_seller"
+    AI_TEXT_CONFLICT = "ai_text_conflict"
+    AI_PHOTO_CONFLICT = "ai_photo_conflict"
+    AI_LOW_CONFIDENCE = "ai_low_confidence"
 
     @property
     def label(self) -> str:
@@ -138,6 +141,9 @@ _FLAG_INFO = {
     RedFlag.STORAGE_UNKNOWN: ("Nieznana pamięć — wycena przybliżona", Severity.SOFT),
     RedFlag.SERIAL_SELLER: ("Sprzedawca seryjny (wiele tanich „iPhone'ów”)", Severity.HARD),
     RedFlag.FOREIGN_SELLER: ("Sprzedawca z zagranicy", Severity.SOFT),
+    RedFlag.AI_TEXT_CONFLICT: ("AI: tytuł nie wygląda na telefon", Severity.HARD),
+    RedFlag.AI_PHOTO_CONFLICT: ("AI: zdjęcie nie pokazuje telefonu", Severity.HARD),
+    RedFlag.AI_LOW_CONFIDENCE: ("AI: niska pewność, że to telefon", Severity.SOFT),
 }
 
 
@@ -204,6 +210,24 @@ class ParsedInfo:
 
 
 @dataclass
+class AiLayers:
+    """Wyniki lokalnego AI dla oferty: klasyfikator tytułu i analiza zdjęcia (prawdopodobieństwa klas)."""
+
+    text_label: str | None = None
+    text_conf: float | None = None
+    text_probs: dict[str, float] = field(default_factory=dict)
+    photo_label: str | None = None
+    photo_conf: float | None = None
+    photo_probs: dict[str, float] = field(default_factory=dict)
+    photo_at: datetime | None = None
+    photo_error: str | None = None
+
+    @property
+    def has_photo(self) -> bool:
+        return self.photo_label is not None
+
+
+@dataclass
 class Offer:
     raw: RawOffer
     parsed: ParsedInfo
@@ -216,6 +240,7 @@ class Offer:
     ai_defects: list[Defect] = field(default_factory=list)  # znalezione tylko przez AI
     ai_flags: list[RedFlag] = field(default_factory=list)
     ai_note: str | None = None
+    layers: AiLayers | None = None  # lokalne AI (tekst + zdjęcie)
 
     @property
     def price(self) -> float:

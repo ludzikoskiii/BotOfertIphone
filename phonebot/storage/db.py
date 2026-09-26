@@ -139,6 +139,40 @@ MIGRATIONS: list[str] = [
         PRIMARY KEY (source, seller_id)
     );
     """,
+    # v6 — lokalne AI: Twoje oznaczenia do nauki klasyfikatora i wyniki warstw (tekst, zdjęcie) po ID ogłoszenia
+    """
+    CREATE TABLE ml_labels (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        source      TEXT NOT NULL,
+        source_id   TEXT NOT NULL,
+        title       TEXT NOT NULL,
+        label       TEXT NOT NULL,
+        origin      TEXT NOT NULL,
+        created_at  TEXT NOT NULL,
+        UNIQUE (source, source_id)
+    );
+    INSERT OR IGNORE INTO ml_labels (source, source_id, title, label, origin, created_at)
+        SELECT source, source_id, title, 'phone', 'user', restored_at FROM filter_whitelist;
+    INSERT OR IGNORE INTO ml_labels (source, source_id, title, label, origin, created_at)
+        SELECT source, source_id, title, 'accessory', 'hidden', last_seen FROM offers WHERE status = 'hidden';
+
+    CREATE TABLE ai_results (
+        source       TEXT NOT NULL,
+        source_id    TEXT NOT NULL,
+        text_label   TEXT,
+        text_conf    REAL,
+        text_probs   TEXT,
+        text_model   TEXT,
+        photo_url    TEXT,
+        photo_label  TEXT,
+        photo_conf   REAL,
+        photo_probs  TEXT,
+        photo_model  TEXT,
+        photo_at     TEXT,
+        photo_error  TEXT,
+        PRIMARY KEY (source, source_id)
+    );
+    """,
 ]
 
 

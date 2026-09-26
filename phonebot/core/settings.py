@@ -73,6 +73,9 @@ def _default_penalties() -> dict[str, int]:
         RedFlag.STORAGE_UNKNOWN.value: 5,
         RedFlag.SERIAL_SELLER.value: 50,
         RedFlag.FOREIGN_SELLER.value: 5,
+        RedFlag.AI_TEXT_CONFLICT.value: 20,
+        RedFlag.AI_PHOTO_CONFLICT.value: 20,
+        RedFlag.AI_LOW_CONFIDENCE.value: 10,
     }
 
 
@@ -96,6 +99,22 @@ VINTED_COUNTRY_MODES = {
 
 # kolumny tabeli ukryte domyślnie (nazwy z ui.table_model.Col, małymi literami)
 DEFAULT_HIDDEN_COLUMNS = ("photo", "condition", "battery", "market", "score", "flags", "location", "added", "link")
+
+
+@dataclass
+class MlConfig:
+    """Lokalne AI (darmowe, na Twoim komputerze): klasyfikator tytułów i analiza zdjęć."""
+
+    text_enabled: bool = True
+    photo_enabled: bool = True
+    # tytuł: „telefon” od tej pewności = zgodne z regułami; inna klasa od tej pewności = sprzeczność
+    text_phone_conf: float = 0.60
+    text_conflict_conf: float = 0.60
+    # zdjęcie: „smartfon” od tej pewności = zgodne; akcesorium/pudełko od tej pewności = sprzeczność
+    photo_phone_conf: float = 0.50
+    photo_conflict_conf: float = 0.80  # test na 80 zdjęciach: przy 80% zero telefonów uznanych za etui
+    retrain_after_labels: int = 50  # automatyczne douczanie po tylu nowych oznaczeniach
+    learn_from_hidden: bool = True  # ukryte oferty = słaba wskazówka „to nie telefon”
 
 
 @dataclass
@@ -178,6 +197,8 @@ class Settings:
     listing_filter: ListingFilterConfig = field(default_factory=ListingFilterConfig)
     # --- zabezpieczenia werdyktu (testy sensowności, limity przy flagach, sprzedawcy seryjni) ---
     sanity: SanityConfig = field(default_factory=SanityConfig)
+    # --- lokalne AI (etap 2) ---
+    ml: MlConfig = field(default_factory=MlConfig)
 
     # --- filtry widoku (zapamiętywane) ---
     view_filter: ViewFilter = field(default_factory=ViewFilter)

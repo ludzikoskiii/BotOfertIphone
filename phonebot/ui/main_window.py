@@ -6,7 +6,18 @@ import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from PySide6.QtCore import QModelIndex, QPoint, QSize, QSortFilterProxyModel, Qt, QThread, QTimer, QUrl
+from PySide6.QtCore import (
+    QModelIndex,
+    QPoint,
+    QSize,
+    QSortFilterProxyModel,
+    Qt,
+    QThread,
+    QTimer,
+    QUrl,
+    Signal,
+    Slot,
+)
 from PySide6.QtGui import QAction, QDesktopServices, QFont, QFontMetrics, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -29,21 +40,27 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..core.models import Mode, Offer, OfferStatus, RowColor, Valuation
+from ..core.models import Mode, Offer, OfferStatus, RowColor, Valuation, Verdict
 from ..core.view_filter import ViewFilter, matches
+from ..ml.photo_model import model_ready
+from ..ml.seed_data import LABEL_NAMES
+from ..ml.text_model import current_classifier
 from ..net.http import HostRateLimiter, ResponseCache
-from ..paths import thumbnails_dir
+from ..paths import models_dir, thumbnails_dir
+from ..services.ai_service import PhotoJob, labels_count
 from ..services.evaluator import Evaluator
 from ..services.offer_guard import OfferGuard
 from ..services.scanner import ScanReport
 from ..sources import SOURCE_NAMES
 from ..storage.repositories import (
     FetchRunRepository,
+    LabelRepository,
     OfferRepository,
     PartsRepository,
     RejectedRepository,
     SettingsRepository,
 )
+from .ai_worker import AiWorker
 from .filters_panel import FiltersPanel
 from .icons import app_icon
 from .images import THUMB_SIZE, ThumbnailCache
@@ -95,6 +112,12 @@ class OfferFilterProxy(QSortFilterProxyModel):
 
 
 class MainWindow(QMainWindow):
+    # żądania do wątku lokalnego AI (połączenia kolejkowane: sloty wykonują się w wątku AI)
+    ai_start_requested = Signal()
+    ai_photos_requested = Signal(list)
+    ai_retrain_requested = Signal()
+    ai_auto_retrain_requested = Signal()
+
     def __init__(self, conn: sqlite3.Connection, db_path: Path, thumbs_dir: Path | None = None):
         super().__init__()
         self.conn = conn
@@ -105,6 +128,10 @@ class MainWindow(QMainWindow):
         self.cache = ResponseCache()
         self._thread: QThread | None = None
         self._worker: ScanWorker | None = None  # referencja chroni przed usunięciem przez GC
+        self.ai_worker: AiWorker | None = None  # lokalne AI (start_ai) — w osobnym wątku
+        self._ai_thread: QThread | None = None
+        self._photo_queued: set[tuple[str, str]] = set()
+        self._settings_dialog: SettingsDialog | None = None
 
         self.palette_ = apply_theme(self.settings.ui_theme, self.settings.ui_font_pt)
         self.setWindowTitle("PhoneBot — opłacalne iPhone'y")
@@ -313,6 +340,7 @@ class MainWindow(QMainWindow):
         self.details.setMinimumWidth(PANEL_PHOTO_SIZE.width() + 2 * MARGIN + 24)
         self.details.status_changed.connect(self._status_changed)
         self.details.full_view_requested.connect(self._details_for_current)
+        self.details.not_phone.connect(self.mark_not_phone)
         self.table.selectionModel().currentRowChanged.connect(self._current_changed)
 
     def _build_layout(self) -> None:
@@ -381,8 +409,11 @@ class MainWindow(QMainWindow):
         self.source_status.diagnose_requested.connect(self.run_diagnosis)
         self.auto_label = QLabel()
         self.auto_label.setObjectName("muted")
+        self.ai_label = QLabel("AI: wyłączone")
+        self.ai_label.setObjectName("muted")
+        self.ai_label.setToolTip("Lokalne AI: klasyfikator tytułów i analiza zdjęć (działa na Twoim komputerze)")
         for w in (self.count_label, self._sep(), self.refresh_label, self._sep(), self.source_status, self._sep(),
-                  self.auto_label):
+                  self.ai_label, self._sep(), self.auto_label):
             bar.addPermanentWidget(w)
         self.refresh_source_status()
 
@@ -437,10 +468,13 @@ class MainWindow(QMainWindow):
 
         worker = FuncWorker(job)
         worker.finished.connect(self._show_diagnosis)
-        worker.failed.connect(lambda msg: self._status.setText(f"Diagnostyka nie powiodła się: {msg}"))
+        worker.failed.connect(self._diagnosis_failed)  # metoda okna — wykona się w wątku okna
         self._diag_worker = worker
         thread = start_in_thread(worker, self)
         thread.finished.connect(lambda: setattr(self, "_diag_worker", None))
+
+    def _diagnosis_failed(self, message: str) -> None:
+        self._status.setText(f"Diagnostyka nie powiodła się: {message}")
 
     def _show_diagnosis(self, report: str) -> None:
         from ..paths import data_dir
@@ -534,6 +568,90 @@ class MainWindow(QMainWindow):
         self._select_offer(selected)
         self._update_count()
         self._update_rejected_count()
+        self._queue_photo_analysis()
+
+    # ------------------------------------------------------- lokalne AI ---
+
+    def start_ai(self) -> None:
+        """Uruchamia wątek lokalnego AI: modele ładowane raz, potem analiza w tle (wołane z app.py)."""
+        if self.ai_worker is not None:
+            return
+        worker = AiWorker(self.db_path, self.settings)
+        thread = QThread(self)
+        worker.moveToThread(thread)
+        self.ai_start_requested.connect(worker.start)
+        self.ai_photos_requested.connect(worker.analyze)
+        self.ai_retrain_requested.connect(worker.retrain)
+        self.ai_auto_retrain_requested.connect(worker.retrain_if_needed)
+        worker.status.connect(self.ai_label.setText)
+        # metody okna (nie lambdy): Qt wywoła je w wątku okna — lambda wykonałaby się w wątku AI
+        worker.photos_done.connect(self._ai_results_ready)
+        worker.text_updated.connect(self._ai_results_ready)
+        worker.photo_model_ready.connect(self._photo_model_state)
+        worker.retrained.connect(self._model_retrained)
+        thread.finished.connect(worker.close)  # sygnał z wątku AI — połączenie z bazą zamyka ten sam wątek
+        thread.finished.connect(worker.deleteLater)
+        self.ai_worker, self._ai_thread = worker, thread
+        thread.start()
+        self.ai_start_requested.emit()
+
+    @Slot(int)
+    def _ai_results_ready(self, count: int) -> None:
+        if count:
+            self._schedule_reload()
+
+    def _schedule_reload(self) -> None:
+        """Wyniki AI napływają partiami — przeładuj tabelę najwyżej raz na 1,5 s."""
+        if not hasattr(self, "_reload_timer"):
+            self._reload_timer = QTimer(self, singleShot=True, interval=1500)
+            self._reload_timer.timeout.connect(self.reload)
+        if not self._reload_timer.isActive():
+            self._reload_timer.start()
+
+    def _queue_photo_analysis(self) -> None:
+        """Zdjęcia analizujemy tylko dla ofert KUPUJ / NEGOCJUJ / DO WERYFIKACJI, każdą raz — najlepsze najpierw."""
+        if self.ai_worker is None or not self.settings.ml.photo_enabled:
+            return
+        candidates = []
+        for offer, val in self.model.rows():
+            key = (offer.raw.source, offer.raw.source_id)
+            if val.verdict is Verdict.SKIP or not offer.raw.photos or key in self._photo_queued:
+                continue
+            if offer.layers is not None and (offer.layers.photo_at is not None or offer.layers.photo_error):
+                continue
+            self._photo_queued.add(key)
+            candidates.append((val.verdict.rank, val.score, offer))
+        candidates.sort(key=lambda c: (c[0], c[1]), reverse=True)
+        jobs = [PhotoJob(o.raw.source, o.raw.source_id, o.raw.photos[0], o.id) for _, _, o in candidates]
+        if jobs:
+            self.ai_photos_requested.emit(jobs)
+
+    def _photo_model_state(self, ready: bool) -> None:
+        if ready:
+            self._queue_photo_analysis()
+        else:  # model niedostępny (np. brak internetu przy pierwszym pobraniu) — zlecimy te zdjęcia później
+            self._photo_queued.clear()
+
+    def _model_retrained(self, info) -> None:
+        if self._settings_dialog is not None:
+            self._settings_dialog.set_model_info(info)
+
+    def _maybe_retrain(self) -> None:
+        """Automatyczne douczanie po uzbieraniu N nowych oznaczeń — wątek AI sprawdza, czy już czas."""
+        if self.ai_worker is not None and self.settings.ml.text_enabled:
+            self.ai_auto_retrain_requested.emit()
+
+    def mark_not_phone(self, offer_id: int, label: str) -> None:
+        """„To nie jest telefon”: oferta do „Odrzucone”, a tytuł do nauki klasyfikatora."""
+        row = self.model.row_of(offer_id)
+        if row is None:
+            return
+        offer = self.model.row_at(row)[0]
+        LabelRepository(self.conn).add(offer.raw, label, "user")
+        RejectedRepository(self.conn).reject_stored(offer, "manual", f"oznaczone ręcznie: {LABEL_NAMES[label]}")
+        self._status.setText(f"„{offer.raw.title[:40]}” przeniesiono do „Odrzucone” ({LABEL_NAMES[label]}).")
+        self.reload()
+        self._maybe_retrain()
 
     def current_offer_id(self) -> int | None:
         index = self.table.currentIndex()
@@ -582,6 +700,10 @@ class MainWindow(QMainWindow):
             setattr(settings, name, getattr(old, name))
         self.settings = settings
         self.details.settings = settings
+        if self.ai_worker is not None:
+            self.ai_worker.settings = settings  # działa od razu, także w trakcie analizy zdjęć
+        if settings.ml.photo_enabled and not old.ml.photo_enabled:
+            self._photo_queued.clear()
         if (settings.ui_theme, settings.ui_font_pt) != (old.ui_theme, old.ui_font_pt):
             self.apply_appearance()
         self.settings_repo.save(settings)
@@ -612,8 +734,15 @@ class MainWindow(QMainWindow):
 
     def open_settings(self) -> SettingsDialog:
         fp = RejectedRepository(self.conn).false_positives_by_keyword()
-        dialog = SettingsDialog(self.settings, self, false_positives=fp)
+        clf = current_classifier()
+        dialog = SettingsDialog(self.settings, self, false_positives=fp, model_info=clf.info if clf else None,
+                                photo_model_ready=model_ready(models_dir()),
+                                labels=labels_count(self.conn, self.settings))
         dialog.parts_editor_requested.connect(self.open_parts_editor)
+        dialog.retrain_requested.connect(self.ai_retrain_requested.emit)
+        dialog.retrain_requested.connect(lambda: dialog.set_training_state("Douczanie w tle…"))
+        self._settings_dialog = dialog
+        dialog.finished.connect(lambda _r: setattr(self, "_settings_dialog", None))
         dialog.accepted.connect(lambda: self.apply_settings(dialog.result_settings()))
         dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         dialog.open()
@@ -622,7 +751,7 @@ class MainWindow(QMainWindow):
     def open_rejected(self) -> RejectedDialog:
         dialog = RejectedDialog(RejectedRepository(self.conn), self)
         dialog.restored.connect(lambda _oid: self.reload())
-        dialog.finished.connect(lambda _r: self._update_rejected_count())
+        dialog.finished.connect(lambda _r: (self._update_rejected_count(), self._maybe_retrain()))
         dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         dialog.open()
         return dialog
@@ -750,6 +879,7 @@ class MainWindow(QMainWindow):
         offer, val = self._row_at(index)
         dialog = OfferDetailsDialog(offer, val, self.settings, OfferRepository(self.conn), self.photos, self)
         dialog.status_changed.connect(self._status_changed)
+        dialog.not_phone.connect(self.mark_not_phone)
         dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         dialog.show()
         return dialog
@@ -760,6 +890,15 @@ class MainWindow(QMainWindow):
 
     def _status_changed(self, offer_id: int, status: str) -> None:
         st = OfferStatus(status)
+        row = self.model.row_of(offer_id)
+        if row is not None:  # ukrycie = słaba wskazówka dla klasyfikatora, że to nie telefon
+            raw = self.model.row_at(row)[0].raw
+            labels = LabelRepository(self.conn)
+            if st is OfferStatus.HIDDEN and self.settings.ml.learn_from_hidden:
+                labels.add(raw, "accessory", "hidden")
+                self._maybe_retrain()
+            elif st is not OfferStatus.HIDDEN:
+                labels.remove(raw.source, raw.source_id, origin="hidden")
         if st is OfferStatus.HIDDEN and not self.show_hidden_action.isChecked():
             self.reload()
         else:
@@ -808,4 +947,8 @@ class MainWindow(QMainWindow):
         if self._thread is not None:
             self._thread.quit()
             self._thread.wait(3000)
+        if self.ai_worker is not None and self._ai_thread is not None:
+            self.ai_worker.stop()  # przerwij analizę zdjęć po bieżącym zdjęciu i pobieranie modelu
+            self._ai_thread.quit()
+            self._ai_thread.wait(5000)
         super().closeEvent(event)
