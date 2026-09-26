@@ -32,7 +32,7 @@ def _checks(values: list[tuple[str, str]], selected: list[str], on_change) -> tu
     box = QWidget()
     lay = QVBoxLayout(box)
     lay.setContentsMargins(0, 0, 0, 0)
-    lay.setSpacing(2)
+    lay.setSpacing(6)
     checks = {}
     for value, label in values:
         cb = QCheckBox(label)
@@ -50,13 +50,16 @@ class FiltersPanel(QScrollArea):
     def __init__(self, f: ViewFilter, location_name: str, parent=None):
         super().__init__(parent)
         self.setWidgetResizable(True)
-        self.setMinimumWidth(250)
+        self.setMinimumWidth(240)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._loading = True
         self._timer = QTimer(self, singleShot=True, interval=250)
         self._timer.timeout.connect(self._emit)
 
         inner = QWidget()
         lay = QVBoxLayout(inner)
+        lay.setContentsMargins(0, 0, 6, 0)
+        lay.setSpacing(10)
 
         # --- lokalizacja ---
         loc = QGroupBox("Lokalizacja")

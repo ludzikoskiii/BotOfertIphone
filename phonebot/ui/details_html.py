@@ -10,20 +10,23 @@ from html import escape
 from ..core.catalog import format_storage
 from ..core.models import Offer, OfferStatus, Severity, Valuation
 from ..core.settings import Settings
-from .theme import ACCENT, COLOR_LABEL, VERDICT_COLOR
+from ..sources import SOURCE_NAMES
+from .theme import COLOR_LABEL, Palette, current
 
-_CSS = """
-body { font-family: 'Segoe UI', sans-serif; font-size: 10pt; color: #212529; }
-h2 { margin: 0 0 4px 0; font-size: 14pt; }
-h3 { margin: 14px 0 4px 0; font-size: 11pt; color: #343a40; border-bottom: 1px solid #dee2e6; }
-table.calc { border-collapse: collapse; width: 100%; }
-table.calc td { padding: 2px 6px; }
-td.num { text-align: right; white-space: nowrap; }
-tr.total td { border-top: 1px solid #adb5bd; font-weight: bold; }
-.muted { color: #868e96; }
-.flag-hard { color: #c92a2a; font-weight: bold; }
-.flag-soft { color: #e67700; }
-.desc { white-space: pre-wrap; background: #f8f9fa; padding: 6px; }
+
+def _css(pal: Palette) -> str:
+    return f"""
+body {{ font-family: 'Segoe UI', sans-serif; font-size: 10pt; color: {pal.text}; }}
+h2 {{ margin: 0 0 4px 0; font-size: 13pt; }}
+h3 {{ margin: 16px 0 6px 0; font-size: 11pt; color: {pal.text}; border-bottom: 1px solid {pal.border}; }}
+table.calc {{ border-collapse: collapse; width: 100%; }}
+table.calc td {{ padding: 3px 6px; }}
+td.num {{ text-align: right; white-space: nowrap; }}
+tr.total td {{ border-top: 1px solid {pal.border}; font-weight: bold; }}
+.muted {{ color: {pal.muted}; }}
+.flag-hard {{ color: {pal.negative}; font-weight: bold; }}
+.flag-soft {{ color: {pal.warning}; }}
+.desc {{ white-space: pre-wrap; background: {pal.surface_alt}; padding: 8px; }}
 """
 
 
@@ -37,7 +40,7 @@ def zl(value: float | None, sign: bool = False) -> str:
 
 
 def _row(label: str, value: str, cls: str = "") -> str:
-    return f'<tr class="{cls}"><td>{escape(label)}</td><td class="num">{value}</td></tr>'
+    return f'<tr class="{cls}"><td width="68%">{escape(label)}</td><td class="num">{value}</td></tr>'
 
 
 def _fmt_dt(dt: datetime | None) -> str:
@@ -49,10 +52,11 @@ def build_details_html(
     val: Valuation,
     settings: Settings,
     price_history: list[tuple[datetime, float]] | None = None,
+    palette: Palette | None = None,
 ) -> str:
     p, raw = offer.parsed, offer.raw
-    verdict_color = VERDICT_COLOR[val.verdict]
-    parts: list[str] = [f"<html><head><style>{_CSS}</style></head><body>"]
+    pal = palette or current()
+    parts: list[str] = [f"<html><head><style>{_css(pal)}</style></head><body>"]
 
     # --- nagłówek i werdykt ---
     status = " ★ obserwowana" if offer.status is OfferStatus.WATCHED else (
@@ -62,13 +66,15 @@ def build_details_html(
     if offer.distance_km is not None:
         location += f" ({offer.distance_km:.0f} km od: {escape(settings.location_name)})"
     shipping = {True: "wysyłka dostępna", False: "tylko odbiór osobisty", None: "wysyłka: brak danych"}
+    portal = escape(SOURCE_NAMES.get(raw.source, raw.source))
     parts.append(
-        f'<p class="muted">{escape(raw.source.upper())} · {location} · {shipping[raw.shipping_available]} · '
+        f'<p class="muted">{portal} · {location} · {shipping[raw.shipping_available]} · '
         f"dodano {_fmt_dt(raw.created_at or offer.first_seen)}</p>"
     )
     parts.append(
-        f'<table width="100%" cellpadding="8" style="background:{verdict_color}; color:white;"><tr>'
-        f'<td><span style="font-size:18pt; font-weight:bold;">{val.verdict.value}</span></td>'
+        f'<table width="100%" cellpadding="10" style="background:{pal.verdict_bg[val.verdict]}; '
+        f'color:{pal.verdict_fg[val.verdict]};"><tr>'
+        f'<td nowrap><span style="font-size:15pt; font-weight:bold;">{val.verdict.value}</span></td>'
         f'<td class="num">Cena: <b>{zl(raw.price)}</b><br>Ocena: <b>{val.score}/100</b> '
         f"({COLOR_LABEL[val.color]})</td></tr></table>"
     )
@@ -90,19 +96,19 @@ def build_details_html(
     mode = val.mode
     parts.append(f"<h3>Wyliczenie opłacalności — tryb „{escape(mode.label)}”</h3>")
     m = val.market
-    market_txt = zl(m.value)
+    source_txt = f"{escape(m.method)}, pewność: {escape(m.confidence)}"
     if m.raw_median is not None and m.value is not None and abs(m.raw_median - m.value) > 1:
-        market_txt += f' <span class="muted">(mediana {zl(m.raw_median)} × korekta)</span>'
+        source_txt += f" · mediana {zl(m.raw_median)} × korekta"
     parts.append('<table class="calc">')
-    parts.append(_row("Wartość rynkowa (sprzedaż)", f"<b>{market_txt}</b>"))
-    parts.append(_row("  źródło wyceny", f'<span class="muted">{escape(m.method)}, pewność: {escape(m.confidence)}</span>'))
+    parts.append(_row("Wartość rynkowa (sprzedaż)", f"<b>{zl(m.value)}</b>"))
+    parts.append(f'<tr><td colspan="2" class="muted">&nbsp;&nbsp;{source_txt}</td></tr>')
     parts.append(_row("Cena zakupu", zl(-raw.price)))
     for item in val.repair_items:
         parts.append(_row(f"Naprawa: {item.label}", zl(-item.amount)))
     for item in val.cost_items:
         parts.append(_row(item.label, zl(-item.amount)))
     if val.expected_profit is not None:
-        color = ACCENT[val.color]
+        color = pal.positive if val.expected_profit > 0 else pal.negative
         roi = f" ({val.roi_pct:.0f}%)" if val.roi_pct is not None else ""
         parts.append(_row("Przewidywany zysk", f'<span style="color:{color}">{zl(val.expected_profit, True)}{roi}</span>',
                           "total"))

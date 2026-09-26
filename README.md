@@ -153,36 +153,48 @@ fałszywe odrzucenia.
 
 ### Okno główne
 
-- Tabela ma kolumny: zdjęcie, model, pamięć, stan, cena, wartość rynkowa,
-  szacowany zysk, max cena zakupu, werdykt, portal, lokalizacja (z odległością
-  od Kacwina), data dodania i link.
-- Każdą kolumnę można sortować kliknięciem nagłówka. Domyślnie tabela jest
-  posortowana po szacowanym zysku, malejąco.
-- Kolor wiersza zależy od oceny 0–100:
-  - zielony (≥ 65 pkt) — oferta warta uwagi,
-  - żółty (≥ 40 pkt) — przeciętna,
-  - czerwony — nieatrakcyjna.
+Układ: **filtry po lewej, tabela ofert w środku, szczegóły zaznaczonej oferty po prawej**,
+pasek statusu na dole. Panele włączasz i wyłączasz przyciskami „☰ Filtry” (Ctrl+F)
+i „▤ Szczegóły” (Ctrl+D). Ich szerokość zmienisz, przeciągając krawędź. Układ jest zapamiętywany.
 
-  Kolumna „Werdykt” pokazuje KUPUJ / NEGOCJUJ / ODPUŚĆ razem z oceną.
+- **Kolumny domyślne:** model, pamięć, cena, szacowany zysk, max cena zakupu, werdykt, portal.
+  Pozostałe (zdjęcie, stan, bateria, wartość rynkowa, ocena, czerwone flagi, lokalizacja, data dodania,
+  link) włączasz w menu **„▦ Kolumny”** albo prawym przyciskiem na nagłówku. Kolumny można przeciągać
+  i poszerzać; „Przywróć domyślne kolumny” cofa zmiany. Nagłówek jest zawsze widoczny przy przewijaniu.
+- Każdą kolumnę można sortować kliknięciem nagłówka. Domyślnie tabela jest posortowana
+  po szacowanym zysku, malejąco.
+- **Werdykt** to kolorowa etykieta z tekstem: 🟢 KUPUJ, 🟡 NEGOCJUJ, 🔴 ODPUŚĆ.
+  Ocena 0–100 jest w podpowiedzi i w kolumnie „Ocena”. Tło wierszy jest neutralne,
+  a oferty obserwowane są lekko wyróżnione.
+- Ceny mają format „1 250 zł” i są wyrównane do prawej. **Zysk dodatni jest zielony, ujemny czerwony.**
 - Oznaczenia przy modelu:
   - **⚑N** — liczba czerwonych flag; najedź myszą, aby zobaczyć listę. Przy poważnej fladze
     (iCloud, IMEI, MDM, podróbka) nazwa modelu jest czerwona;
   - **★** — oferta obserwowana.
-- **Podwójne kliknięcie** wiersza albo Enter otwiera okno szczegółów. Znajdziesz w nim:
-  - zdjęcia oferty,
+- **Panel szczegółów** pokazuje zaznaczoną ofertę od razu po kliknięciu:
+  - zdjęcia,
   - werdykt z uzasadnieniem,
   - rekomendację negocjacji (cena otwierająca i maksymalna),
   - pełne wyliczenie: wartość rynkową i jej źródło, każdą pozycję kosztów, zysk, wymagany zysk i max cenę,
   - czerwone flagi z karą punktową,
-  - dane rozpoznane z ogłoszenia, historię ceny i opis ogłoszenia.
+  - dane rozpoznane z ogłoszenia, historię ceny i opis.
 
-  Z tego okna możesz też otworzyć ogłoszenie w przeglądarce, obserwować je albo ukryć.
-- Kliknięcie „Otwórz ↗” od razu otwiera ogłoszenie w przeglądarce.
+  Przyciski: „↗ Otwórz”, „★ Obserwuj”, „Ukryj”. **Podwójne kliknięcie**, Enter albo „⤢”
+  otwiera to samo w dużym oknie.
+- **Pasek statusu** (na dole): liczba ofert (widoczne po filtrach / wszystkie, w tym zielone),
+  godzina ostatniego odświeżenia, status każdego portalu (najedź myszą, aby zobaczyć błąd i podpowiedź),
+  przycisk diagnostyki 🩺 i czas następnego automatycznego odświeżenia.
+- **Motyw jasny / ciemny / systemowy** i rozmiar czcionki ustawisz w
+  „⚙ Ustawienia → Ogólne i pobieranie → Wygląd”. Zmiana działa od razu, bez restartu.
+- Kliknięcie „Otwórz ↗” w kolumnie „Link” od razu otwiera ogłoszenie w przeglądarce.
+
+![Okno główne — motyw ciemny](docs/screenshots/okno_ciemny.png)
+
 - **Prawy przycisk myszy** na wierszu otwiera menu: szczegóły, otwórz, obserwuj, ukryj.
   Ukryte oferty znikają z listy. Przycisk „Pokaż ukryte” pozwala je przywrócić.
 - Przełącznik trybu (Naprawa → sprzedaż / Szybki resell) od razu przelicza wyceny.
 - Pobieranie działa w osobnym wątku, więc okno nie zawiesza się w trakcie.
-  Błąd portalu widać w pasku stanu; szczegóły są w podpowiedzi po najechaniu myszą
+  Błąd portalu widać w pasku statusu; szczegóły są w podpowiedzi po najechaniu myszą
   i w logu `%LOCALAPPDATA%\PhoneBot\logs\phonebot.log`.
 - **Panel filtrów** po lewej działa natychmiast, bez ponownego pobierania ofert,
   i zapamiętuje ustawienia. Możesz filtrować po:
@@ -208,9 +220,11 @@ fałszywe odrzucenia.
   z filtrem po modelu. Możesz dodawać i usuwać pozycje.
 - Pobierane są frazy „iphone”, w trybie naprawy dodatkowo „iphone uszkodzony / zbity / na części”,
   oraz frazy dopisane w ustawieniach. Z każdej frazy pobierane są maksymalnie 3 strony wyników. Aplikacja pomija:
-  - akcesoria i części (etui, szkła, wyświetlacze…),
+  - akcesoria i pojedyncze części (etui, szkła, wyświetlacze…),
   - ogłoszenia „kupię / skup / zamienię”,
-  - oferty z nierozpoznanym modelem.
+  - oferty z nierozpoznanym modelem
+
+  (szczegóły w sekcji „Filtr ogłoszeń i »Odrzucone«”).
 - Ceny wszystkich zebranych ofert zasilają bazę do liczenia wartości rynkowej.
   Im dłużej aplikacja działa, tym dokładniejsze są wyceny.
 

@@ -6,54 +6,78 @@ from datetime import datetime
 from enum import IntEnum
 from typing import Any
 
-from PySide6.QtCore import QAbstractTableModel, QModelIndex, QPersistentModelIndex, Qt
-from PySide6.QtGui import QBrush, QColor, QFont
+from PySide6.QtCore import QAbstractTableModel, QModelIndex, QPersistentModelIndex, QRectF, Qt
+from PySide6.QtGui import QBrush, QColor, QFont, QPainter
+from PySide6.QtWidgets import QStyle, QStyledItemDelegate, QStyleOptionViewItem
 
 from ..core.catalog import format_storage
 from ..core.models import Offer, OfferStatus, Severity, Valuation, Verdict
 from ..sources import SOURCE_NAMES
 from .images import ThumbnailCache
-from .theme import FLAG_MARK, ROW_BACKGROUND, VERDICT_COLOR, WATCHED_MARK
+from .theme import FLAG_MARK, WATCHED_MARK, Palette, current
 
 SORT_ROLE = Qt.ItemDataRole.UserRole + 1
 OFFER_ROLE = Qt.ItemDataRole.UserRole + 2
+VERDICT_ROLE = Qt.ItemDataRole.UserRole + 3
 
 _VERDICT_ORDER = {Verdict.BUY: 2, Verdict.NEGOTIATE: 1, Verdict.SKIP: 0}
 _NO_VALUE = float("-inf")
+_RIGHT = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+_CENTER = Qt.AlignmentFlag.AlignCenter
+_LEFT = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
 
 
 class Col(IntEnum):
     PHOTO = 0
     MODEL = 1
     STORAGE = 2
-    CONDITION = 3
-    PRICE = 4
-    MARKET = 5
-    PROFIT = 6
-    MAX_BUY = 7
-    VERDICT = 8
-    SOURCE = 9
-    LOCATION = 10
-    ADDED = 11
-    LINK = 12
+    PRICE = 3
+    PROFIT = 4
+    MAX_BUY = 5
+    VERDICT = 6
+    SOURCE = 7
+    CONDITION = 8
+    BATTERY = 9
+    MARKET = 10
+    SCORE = 11
+    FLAGS = 12
+    LOCATION = 13
+    ADDED = 14
+    LINK = 15
 
 
 HEADERS = {
     Col.PHOTO: "Zdjęcie",
     Col.MODEL: "Model",
     Col.STORAGE: "Pamięć",
-    Col.CONDITION: "Stan",
     Col.PRICE: "Cena",
-    Col.MARKET: "Wartość rynkowa",
     Col.PROFIT: "Szac. zysk",
     Col.MAX_BUY: "Max cena zakupu",
     Col.VERDICT: "Werdykt",
     Col.SOURCE: "Portal",
+    Col.CONDITION: "Stan",
+    Col.BATTERY: "Bateria",
+    Col.MARKET: "Wartość rynkowa",
+    Col.SCORE: "Ocena",
+    Col.FLAGS: "Czerwone flagi",
     Col.LOCATION: "Lokalizacja",
     Col.ADDED: "Dodano",
     Col.LINK: "Link",
 }
-NUMERIC = {Col.PRICE, Col.MARKET, Col.PROFIT, Col.MAX_BUY}
+NUMERIC = {Col.PRICE, Col.MARKET, Col.PROFIT, Col.MAX_BUY, Col.BATTERY, Col.SCORE}
+ALWAYS_VISIBLE = {Col.MODEL}
+DEFAULT_WIDTHS = {Col.PHOTO: 84, Col.MODEL: 150, Col.STORAGE: 80, Col.PRICE: 95, Col.PROFIT: 110,
+                  Col.MAX_BUY: 140, Col.VERDICT: 115, Col.SOURCE: 130, Col.CONDITION: 125, Col.BATTERY: 85,
+                  Col.MARKET: 140, Col.SCORE: 75, Col.FLAGS: 220, Col.LOCATION: 170, Col.ADDED: 110, Col.LINK: 80}
+
+
+def col_key(col: Col) -> str:
+    """Nazwa kolumny zapisywana w ustawieniach."""
+    return col.name.lower()
+
+
+def col_from_key(key: str) -> Col | None:
+    return Col.__members__.get(key.upper())
 
 
 def money(value: float | None) -> str:
@@ -78,13 +102,22 @@ class OffersTableModel(QAbstractTableModel):
         self._rows: list[tuple[Offer, Valuation]] = []
         self._thumbs = thumbs
         self._rows_by_photo: dict[str, list[int]] = defaultdict(list)
+        self._row_by_id: dict[int, int] = {}
         self._sort_cache: dict[tuple[int, int], Any] = {}
         thumbs.ready.connect(self._thumb_ready)
-        self._bg = {c: QBrush(QColor(v)) for c, v in ROW_BACKGROUND.items()}
-        self._verdict_fg = {v: QBrush(QColor(c)) for v, c in VERDICT_COLOR.items()}
-        self._flag_fg = QBrush(QColor("#c92a2a"))
         self._bold = QFont()
         self._bold.setBold(True)
+        self.set_palette(current())
+
+    def set_palette(self, palette: Palette) -> None:
+        """Kolory zależne od motywu (odświeża widoczne komórki)."""
+        self.palette = palette
+        self._positive = QBrush(QColor(palette.positive))
+        self._negative = QBrush(QColor(palette.negative))
+        self._muted = QBrush(QColor(palette.muted))
+        self._watched_bg = QBrush(QColor(palette.watched))
+        if self._rows:
+            self.dataChanged.emit(self.index(0, 0), self.index(len(self._rows) - 1, len(Col) - 1))
 
     # --- dane ---
 
@@ -93,6 +126,7 @@ class OffersTableModel(QAbstractTableModel):
         self._rows = rows
         self._sort_cache.clear()
         self._rows_by_photo.clear()
+        self._row_by_id = {offer.id: i for i, (offer, _) in enumerate(rows) if offer.id is not None}
         for i, (offer, _) in enumerate(rows):
             if offer.raw.photos:
                 self._rows_by_photo[offer.raw.photos[0]].append(i)
@@ -102,10 +136,7 @@ class OffersTableModel(QAbstractTableModel):
         return self._rows[row]
 
     def row_of(self, offer_id: int) -> int | None:
-        for i, (offer, _) in enumerate(self._rows):
-            if offer.id == offer_id:
-                return i
-        return None
+        return self._row_by_id.get(offer_id)
 
     def update_status(self, offer_id: int, status: OfferStatus) -> None:
         row = self.row_of(offer_id)
@@ -132,8 +163,12 @@ class OffersTableModel(QAbstractTableModel):
         return 0 if parent.isValid() else len(Col)
 
     def headerData(self, section: int, orientation: Qt.Orientation, role: int = Qt.ItemDataRole.DisplayRole) -> Any:
-        if orientation == Qt.Orientation.Horizontal and role == Qt.ItemDataRole.DisplayRole:
+        if orientation != Qt.Orientation.Horizontal:
+            return None
+        if role == Qt.ItemDataRole.DisplayRole:
             return HEADERS[Col(section)]
+        if role == Qt.ItemDataRole.TextAlignmentRole:
+            return _RIGHT if Col(section) in NUMERIC else _LEFT
         return None
 
     def data(self, index: QModelIndex | QPersistentModelIndex, role: int = Qt.ItemDataRole.DisplayRole) -> Any:
@@ -150,34 +185,50 @@ class OffersTableModel(QAbstractTableModel):
             return self._sort_cache[key]
         if role == OFFER_ROLE:
             return offer.id
+        if role == VERDICT_ROLE:
+            return val.verdict
         if role == Qt.ItemDataRole.BackgroundRole:
-            return self._bg[val.color]
+            return self._watched_bg if offer.status is OfferStatus.WATCHED else None
         if role == Qt.ItemDataRole.ForegroundRole:
-            if col is Col.VERDICT:
-                return self._verdict_fg[val.verdict]
-            if col is Col.MODEL and val.has_hard_flag:
-                return self._flag_fg
-            return None
+            return self._foreground(col, offer, val)
         if role == Qt.ItemDataRole.FontRole:
-            if col in (Col.VERDICT, Col.PROFIT) or (col is Col.MODEL and offer.status is OfferStatus.WATCHED):
+            if col is Col.PROFIT or (col is Col.MODEL and offer.status is OfferStatus.WATCHED):
                 return self._bold
             return None
         if role == Qt.ItemDataRole.DecorationRole and col is Col.PHOTO:
             return self._thumbs.get(offer.raw.photos[0] if offer.raw.photos else None)
         if role == Qt.ItemDataRole.TextAlignmentRole:
             if col in NUMERIC:
-                return int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            if col in (Col.VERDICT, Col.STORAGE, Col.PHOTO):
-                return int(Qt.AlignmentFlag.AlignCenter)
+                return _RIGHT
+            if col in (Col.VERDICT, Col.PHOTO):
+                return _CENTER
+            return _LEFT
         if role == Qt.ItemDataRole.ToolTipRole:
-            if col is Col.MODEL:
-                flags = "".join(f"\n{FLAG_MARK} {f.label}" + (" (poważna)" if f.severity is Severity.HARD else "")
-                                for f in dict.fromkeys(val.flags))
-                return offer.raw.title + flags
-            if col is Col.LINK:
-                return offer.raw.url
-            return "\n".join(val.reasons) if val.reasons else None
+            return self._tooltip(col, offer, val)
         return None
+
+    def _foreground(self, col: Col, offer: Offer, val: Valuation) -> QBrush | None:
+        if col is Col.PROFIT:
+            if val.expected_profit is None:
+                return self._muted
+            return self._positive if val.expected_profit > 0 else self._negative
+        if col in (Col.MODEL, Col.FLAGS) and val.has_hard_flag:
+            return self._negative
+        if col in (Col.SOURCE, Col.ADDED, Col.LOCATION):
+            return self._muted
+        return None
+
+    @staticmethod
+    def _tooltip(col: Col, offer: Offer, val: Valuation) -> str | None:
+        if col in (Col.MODEL, Col.FLAGS):
+            flags = "".join(f"\n{FLAG_MARK} {f.label}" + (" (poważna)" if f.severity is Severity.HARD else "")
+                            for f in dict.fromkeys(val.flags))
+            return offer.raw.title + flags
+        if col is Col.LINK:
+            return offer.raw.url
+        if col is Col.VERDICT:
+            return f"Ocena {val.score}/100\n" + "\n".join(val.reasons)
+        return "\n".join(val.reasons) if val.reasons else None
 
     def _display(self, col: Col, offer: Offer, val: Valuation) -> str:
         p = offer.parsed
@@ -192,6 +243,8 @@ class OffersTableModel(QAbstractTableModel):
                 return format_storage(p.storage_gb)
             case Col.CONDITION:
                 return p.condition.label
+            case Col.BATTERY:
+                return f"{p.battery_health} %" if p.battery_health else "—"
             case Col.PRICE:
                 return money(offer.price)
             case Col.MARKET:
@@ -201,7 +254,11 @@ class OffersTableModel(QAbstractTableModel):
             case Col.MAX_BUY:
                 return money(val.max_buy_price)
             case Col.VERDICT:
-                return f"{val.verdict.value} · {val.score}"
+                return val.verdict.value
+            case Col.SCORE:
+                return str(val.score)
+            case Col.FLAGS:
+                return ", ".join(f.label for f in dict.fromkeys(val.flags)) or "—"
             case Col.SOURCE:
                 return SOURCE_NAMES.get(offer.raw.source, offer.raw.source)
             case Col.LOCATION:
@@ -226,6 +283,8 @@ class OffersTableModel(QAbstractTableModel):
                 return p.storage_gb or 0
             case Col.CONDITION:
                 return p.condition.label
+            case Col.BATTERY:
+                return p.battery_health or 0
             case Col.PRICE:
                 return offer.price
             case Col.MARKET:
@@ -236,6 +295,10 @@ class OffersTableModel(QAbstractTableModel):
                 return val.max_buy_price if val.max_buy_price is not None else _NO_VALUE
             case Col.VERDICT:
                 return _VERDICT_ORDER[val.verdict] * 1000 + val.score
+            case Col.SCORE:
+                return val.score
+            case Col.FLAGS:
+                return len(set(val.flags)) + (100 if val.has_hard_flag else 0)
             case Col.SOURCE:
                 return offer.raw.source
             case Col.LOCATION:
@@ -246,3 +309,41 @@ class OffersTableModel(QAbstractTableModel):
             case Col.LINK:
                 return offer.raw.url
         return None
+
+
+class VerdictDelegate(QStyledItemDelegate):
+    """Werdykt jako kolorowa etykieta (kropka + tekst) — kolor nie jest jedynym nośnikiem informacji."""
+
+    def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex) -> None:
+        value = index.data(VERDICT_ROLE)  # PySide oddaje enum jako str
+        if value is None:
+            super().paint(painter, option, index)
+            return
+        verdict = Verdict(value)
+        opt = QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+        text = opt.text
+        opt.text = ""
+        style = opt.widget.style() if opt.widget else None
+        if style is not None:
+            style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt, painter, opt.widget)
+        pal = current()
+        font = QFont(opt.font)
+        font.setBold(True)
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setFont(font)
+        fm = painter.fontMetrics()
+        h = min(fm.height() + 8, opt.rect.height() - 4)
+        w = min(fm.horizontalAdvance(text) + 34, opt.rect.width() - 8)
+        rect = QRectF(opt.rect.center().x() - w / 2, opt.rect.center().y() - h / 2 + 0.5, w, h)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(pal.verdict_bg[verdict]))
+        painter.drawRoundedRect(rect, h / 2, h / 2)
+        fg = QColor(pal.verdict_fg[verdict])
+        painter.setBrush(fg)
+        dot = 8
+        painter.drawEllipse(QRectF(rect.left() + 10, rect.center().y() - dot / 2, dot, dot))
+        painter.setPen(fg)
+        painter.drawText(rect.adjusted(22, 0, -8, 0), Qt.AlignmentFlag.AlignCenter, text)
+        painter.restore()

@@ -113,21 +113,44 @@ def find_row(win, text_in_title, exact=False):
     raise AssertionError(text_in_title)
 
 
-def test_row_colors_and_flag_markers(window):
+def test_verdict_label_profit_colors_and_flag_markers(window):
     from PySide6.QtCore import Qt
 
     from phonebot.core.models import RowColor
-    from phonebot.ui.theme import ROW_BACKGROUND
+    from phonebot.ui.table_model import VERDICT_ROLE
+    from phonebot.ui.theme import current
 
+    pal = current()
     r, offer, val = find_row(window, "zbity ekran")
-    bg = window.proxy.index(r, Col.PRICE).data(Qt.ItemDataRole.BackgroundRole).color().name()
-    assert bg == ROW_BACKGROUND[val.color]
+    # tło wiersza neutralne, werdykt jako etykieta (rola dla delegata) z tekstem
+    assert window.proxy.index(r, Col.PRICE).data(Qt.ItemDataRole.BackgroundRole) is None
+    assert window.proxy.index(r, Col.VERDICT).data(VERDICT_ROLE) == val.verdict
+    assert cell(window, r, Col.VERDICT) == val.verdict.value
     assert val.color is RowColor.GREEN
+    # zysk dodatni na zielono, liczby do prawej
+    assert val.expected_profit > 0
+    fg = window.proxy.index(r, Col.PROFIT).data(Qt.ItemDataRole.ForegroundRole).color().name()
+    assert fg == pal.positive
+    align = window.proxy.index(r, Col.PRICE).data(Qt.ItemDataRole.TextAlignmentRole)
+    assert align & Qt.AlignmentFlag.AlignRight
+    losers = [(o, v) for o, v in window.model.rows() if v.expected_profit is not None and v.expected_profit < 0]
+    assert losers
+    row = window.proxy.mapFromSource(window.model.index(window.model.row_of(losers[0][0].id), Col.PROFIT)).row()
+    fg = window.proxy.index(row, Col.PROFIT).data(Qt.ItemDataRole.ForegroundRole).color().name()
+    assert fg == pal.negative
     r, offer, val = find_row(window, "iPhone 12 Pro 256GB", exact=True)  # blokada iCloud, brak zdjęć
     assert val.has_hard_flag
     assert "⚑" in cell(window, r, Col.MODEL)
     tooltip = window.proxy.index(r, Col.MODEL).data(Qt.ItemDataRole.ToolTipRole)
     assert "Blokada iCloud" in tooltip and "Brak zdjęć" in tooltip
+
+
+def test_money_format():
+    from phonebot.ui.table_model import money
+
+    assert money(1250) == "1 250 zł"
+    assert money(-80.4) == "-80 zł"
+    assert money(None) == "—"
 
 
 def test_watch_and_hide(window):

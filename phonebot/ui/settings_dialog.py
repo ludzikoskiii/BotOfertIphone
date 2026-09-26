@@ -36,6 +36,7 @@ from ..core.places import Place
 from ..core.settings import MIN_PROFIT_MODE_LABELS, SalesChannel, Settings
 from .location_dialog import LocationDialog
 from .table_model import SOURCE_NAMES
+from .theme import THEME_LABELS
 
 
 @dataclass
@@ -251,7 +252,20 @@ class SettingsDialog(QDialog):
         form.addRow("Dodatkowe frazy/modele do wyszukiwania:", self.watched)
         self._readers.append(lambda st: setattr(
             st, "watched_models", [m.strip() for m in self.watched.text().split(",") if m.strip()]))
-        return self._page(loc, sources, form)
+        look = QGroupBox("Wygląd")
+        ll = QFormLayout(look)
+        self.theme_combo = QComboBox()
+        for key, label in THEME_LABELS.items():
+            self.theme_combo.addItem(label, key)
+        self.theme_combo.setCurrentIndex(max(0, self.theme_combo.findData(s.ui_theme)))
+        self.theme_combo.setToolTip("Systemowy = taki jak w ustawieniach Windows")
+        ll.addRow("Motyw:", self.theme_combo)
+        self.font_spin = QSpinBox(minimum=8, maximum=16, suffix=" pt")
+        self.font_spin.setValue(s.ui_font_pt)
+        ll.addRow("Rozmiar czcionki:", self.font_spin)
+        self._readers.append(lambda st: (setattr(st, "ui_theme", self.theme_combo.currentData()),
+                                         setattr(st, "ui_font_pt", self.font_spin.value())))
+        return self._page(loc, look, sources, form)
 
     def _update_location_label(self) -> None:
         s = self.settings

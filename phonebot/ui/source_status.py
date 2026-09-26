@@ -4,7 +4,10 @@ from __future__ import annotations
 from datetime import datetime
 
 from PySide6.QtCore import Signal
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QWidget
+
+from .theme import current
 
 # kind → (ikona, tekst, kolor tła, kolor tekstu, podpowiedź co robić)
 STATUS_STYLE: dict[str, tuple[str, str, str, str, str]] = {
@@ -27,6 +30,16 @@ STATUS_STYLE: dict[str, tuple[str, str, str, str, str]] = {
 }
 
 
+def chip_style(kind: str) -> str:
+    """Styl etykiety statusu dopasowany do motywu (w ciemnym: jaśniejszy tekst na przygaszonym tle)."""
+    _, _, bg, fg, _ = STATUS_STYLE.get(kind, STATUS_STYLE["error"])
+    if current().dark:
+        c = QColor(fg).lighter(170)
+        fg = c.name()
+        bg = f"rgba({c.red()}, {c.green()}, {c.blue()}, 40)"
+    return f"background:{bg}; color:{fg}; border-radius:9px; padding:2px 8px; font-weight:bold;"
+
+
 def status_text(name: str, kind: str, found: int | None = None) -> str:
     icon, label, *_ = STATUS_STYLE.get(kind, STATUS_STYLE["error"])
     count = f" ({found})" if kind == "ok" and found is not None else ""
@@ -43,18 +56,17 @@ class SourceStatusBar(QWidget):
         lay = QHBoxLayout(self)
         lay.setContentsMargins(4, 0, 4, 0)
         lay.setSpacing(6)
-        lay.addWidget(QLabel("Źródła:"))
         for key, name in sources.items():
             lbl = QLabel()
             lbl.setObjectName(f"status_{key}")
             self._labels[key] = lbl
             lay.addWidget(lbl)
             self.set_status(key, name, "never")
-        btn = QPushButton("🩺 Diagnostyka")
-        btn.setToolTip("Sprawdza każdy portal osobno i pokazuje, na którym etapie jest problem")
+        btn = QPushButton("🩺")
+        btn.setObjectName("diagnose")
+        btn.setToolTip("Diagnostyka: sprawdza każdy portal osobno i pokazuje, na którym etapie jest problem")
         btn.clicked.connect(self.diagnose_requested.emit)
         lay.addWidget(btn)
-        lay.addStretch(1)
 
     def set_status(self, key: str, name: str, kind: str, *, found: int | None = None, error: str | None = None,
                    when: datetime | None = None) -> None:
@@ -62,9 +74,9 @@ class SourceStatusBar(QWidget):
         if lbl is None:
             return
         self.kinds[key] = kind
-        _, _, bg, fg, hint = STATUS_STYLE.get(kind, STATUS_STYLE["error"])
+        hint = STATUS_STYLE.get(kind, STATUS_STYLE["error"])[4]
         lbl.setText(status_text(name, kind, found))
-        lbl.setStyleSheet(f"background:{bg}; color:{fg}; border-radius:4px; padding:1px 6px; font-weight:bold;")
+        lbl.setStyleSheet(chip_style(kind))
         tip = []
         if when:
             tip.append(f"Ostatnie sprawdzenie: {when.astimezone():%d.%m %H:%M}")
@@ -75,6 +87,11 @@ class SourceStatusBar(QWidget):
         if hint:
             tip.append(hint)
         lbl.setToolTip("\n".join(tip))
+
+    def restyle(self) -> None:
+        """Po zmianie motywu."""
+        for key, lbl in self._labels.items():
+            lbl.setStyleSheet(chip_style(self.kinds.get(key, "never")))
 
     def text_of(self, key: str) -> str:
         return self._labels[key].text()

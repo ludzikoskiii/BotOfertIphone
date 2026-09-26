@@ -1,4 +1,4 @@
-"""Główne okno: pasek narzędzi, tabela ofert, status pobierania."""
+"""Główne okno: filtry po lewej, tabela ofert w środku, szczegóły po prawej, status na dole."""
 from __future__ import annotations
 
 import logging
@@ -7,23 +7,24 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from PySide6.QtCore import QModelIndex, QPoint, QSize, QSortFilterProxyModel, Qt, QThread, QTimer, QUrl
-from PySide6.QtGui import QAction, QDesktopServices, QKeySequence, QShortcut
+from PySide6.QtGui import QAction, QDesktopServices, QFont, QFontMetrics, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QComboBox,
     QDialog,
-    QDockWidget,
     QHeaderView,
     QLabel,
     QMainWindow,
     QMenu,
     QPlainTextEdit,
     QPushButton,
+    QSplitter,
     QStackedWidget,
     QSystemTrayIcon,
     QTableView,
     QToolBar,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -46,13 +47,23 @@ from .filters_panel import FiltersPanel
 from .icons import app_icon
 from .images import THUMB_SIZE, ThumbnailCache
 from .location_dialog import LocationDialog
-from .offer_details import PHOTO_SIZE, OfferDetailsDialog
+from .offer_details import PANEL_PHOTO_SIZE, PHOTO_SIZE, OfferDetailsDialog, OfferDetailsView
 from .parts_editor import PartsEditor
 from .rejected_dialog import RejectedDialog
 from .settings_dialog import SettingsDialog
 from .source_status import SourceStatusBar
-from .table_model import SORT_ROLE, Col, OffersTableModel
-from .theme import COLOR_LABEL, ROW_BACKGROUND
+from .style import MARGIN, apply_theme, system_prefers_dark
+from .table_model import (
+    ALWAYS_VISIBLE,
+    DEFAULT_WIDTHS,
+    HEADERS,
+    SORT_ROLE,
+    Col,
+    OffersTableModel,
+    VerdictDelegate,
+    col_from_key,
+    col_key,
+)
 from .workers import FuncWorker, ScanWorker, start_in_thread
 
 log = logging.getLogger(__name__)
@@ -91,6 +102,7 @@ class MainWindow(QMainWindow):
         self._thread: QThread | None = None
         self._worker: ScanWorker | None = None  # referencja chroni przed usunięciem przez GC
 
+        self.palette_ = apply_theme(self.settings.ui_theme, self.settings.ui_font_pt)
         self.setWindowTitle("PhoneBot — opłacalne iPhone'y")
         self.setWindowIcon(app_icon())
         self.resize(1400, 800)
@@ -108,15 +120,18 @@ class MainWindow(QMainWindow):
         self.proxy.setSortRole(SORT_ROLE)
         self.proxy.set_view_filter(self.settings.view_filter)
 
+        self._ui_save_timer = QTimer(self, singleShot=True, interval=600)
+        self._ui_save_timer.timeout.connect(self._save_ui_state)
         self._build_toolbar()
         self._build_table()
         self._build_filters()
-        self._build_source_status()
-        self._status = QLabel("Gotowy.")
-        self.statusBar().addWidget(self._status, 1)
-        self.auto_label = QLabel()
-        self.statusBar().addPermanentWidget(self.auto_label)
+        self._build_details()
+        self._build_layout()
+        self._build_status_bar()
         self._build_tray()
+        hints = QApplication.styleHints()
+        if hasattr(hints, "colorSchemeChanged"):
+            hints.colorSchemeChanged.connect(self._system_scheme_changed)
         self.refresh_timer = QTimer(self)
         self.refresh_timer.timeout.connect(self._auto_refresh)
         self._configure_timer()
@@ -141,13 +156,38 @@ class MainWindow(QMainWindow):
 
         self.refresh_action = QAction("⟳ Odśwież oferty", self)
         self.refresh_action.setShortcut("F5")
+        self.refresh_action.setToolTip("Pobierz nowe oferty ze wszystkich portali (F5)")
         self.refresh_action.triggered.connect(lambda: self.start_scan(force=True))
         tb.addAction(self.refresh_action)
         tb.addSeparator()
 
-        settings_action = QAction("⚙ Ustawienia", self)
-        settings_action.triggered.connect(self.open_settings)
-        tb.addAction(settings_action)
+        self.filters_action = QAction("☰ Filtry", self)
+        self.filters_action.setCheckable(True)
+        self.filters_action.setChecked(self.settings.filters_visible)
+        self.filters_action.setShortcut("Ctrl+F")
+        self.filters_action.toggled.connect(self._toggle_filters)
+        tb.addAction(self.filters_action)
+        self.details_action = QAction("▤ Szczegóły", self)
+        self.details_action.setCheckable(True)
+        self.details_action.setChecked(self.settings.details_visible)
+        self.details_action.setShortcut("Ctrl+D")
+        self.details_action.toggled.connect(self._toggle_details)
+        tb.addAction(self.details_action)
+        self.columns_menu = QMenu("Kolumny", self)
+        self.columns_menu.aboutToShow.connect(self._fill_columns_menu)
+        columns_btn = QToolButton(self)
+        columns_btn.setText("▦ Kolumny")
+        columns_btn.setToolTip("Wybierz kolumny tabeli (także prawy klik na nagłówku)")
+        columns_btn.setMenu(self.columns_menu)
+        columns_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        tb.addWidget(columns_btn)
+        self.show_hidden_action = QAction("Pokaż ukryte", self)
+        self.show_hidden_action.setCheckable(True)
+        self.show_hidden_action.setToolTip("Pokaż także oferty, które ukryłeś")
+        self.show_hidden_action.toggled.connect(lambda _checked: self.reload())
+        tb.addAction(self.show_hidden_action)
+        tb.addSeparator()
+
         self.rejected_action = QAction("🚫 Odrzucone", self)
         self.rejected_action.setToolTip("Ogłoszenia odrzucone przez filtr (akcesoria, części, „kupię”…)")
         self.rejected_action.triggered.connect(self.open_rejected)
@@ -155,26 +195,9 @@ class MainWindow(QMainWindow):
         parts_action = QAction("🔧 Tabela części", self)
         parts_action.triggered.connect(self.open_parts_editor)
         tb.addAction(parts_action)
-        tb.addSeparator()
-
-        self.show_hidden_action = QAction("Pokaż ukryte", self)
-        self.show_hidden_action.setCheckable(True)
-        self.show_hidden_action.toggled.connect(lambda _checked: self.reload())
-        tb.addAction(self.show_hidden_action)
-        tb.addSeparator()
-
-        legend = "  ".join(
-            f'<span style="background:{ROW_BACKGROUND[c]}">&nbsp;&nbsp;&nbsp;&nbsp;</span> {COLOR_LABEL[c]}'
-            for c in RowColor
-        )
-        tb.addWidget(QLabel(f"&nbsp;{legend}&nbsp;&nbsp;⚑ = czerwone flagi&nbsp;&nbsp;★ = obserwowana"))
-
-        self.count_label = QLabel()
-        spacer = QWidget()
-        spacer.setSizePolicy(spacer.sizePolicy().horizontalPolicy().Expanding,
-                             spacer.sizePolicy().verticalPolicy().Preferred)
-        tb.addWidget(spacer)
-        tb.addWidget(self.count_label)
+        settings_action = QAction("⚙ Ustawienia", self)
+        settings_action.triggered.connect(self.open_settings)
+        tb.addAction(settings_action)
 
     def _build_table(self) -> None:
         view = QTableView(self)
@@ -185,47 +208,185 @@ class MainWindow(QMainWindow):
         view.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         view.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         view.setAlternatingRowColors(False)
+        view.setShowGrid(False)
         view.setWordWrap(False)
+        view.setMouseTracking(False)
+        view.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         view.customContextMenuRequested.connect(self._context_menu)
-        view.setStyleSheet("QTableView::item:selected { background: #339af0; color: white; }")
+        view.setItemDelegateForColumn(Col.VERDICT, VerdictDelegate(view))
         view.setIconSize(THUMB_SIZE)
-        view.verticalHeader().setDefaultSectionSize(THUMB_SIZE.height() + 6)
-        view.verticalHeader().hide()
+        vh = view.verticalHeader()
+        vh.hide()
+        vh.setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
         header = view.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        header.setSectionsMovable(True)
+        header.setHighlightSections(False)
         header.setStretchLastSection(True)
-        widths = {Col.PHOTO: 84, Col.MODEL: 150, Col.STORAGE: 70, Col.CONDITION: 120, Col.PRICE: 90,
-                  Col.MARKET: 115, Col.PROFIT: 90, Col.MAX_BUY: 120, Col.VERDICT: 125, Col.SOURCE: 110,
-                  Col.LOCATION: 170, Col.ADDED: 95, Col.LINK: 75}
-        for col, w in widths.items():
-            view.setColumnWidth(col, w)
+        header.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        header.customContextMenuRequested.connect(
+            lambda pos: (self._fill_columns_menu(), self.columns_menu.exec(header.mapToGlobal(pos))))
+        bold = QFont(view.font())
+        bold.setBold(True)
+        fm = QFontMetrics(bold)
+        self._min_widths = {c: fm.horizontalAdvance(HEADERS[c]) + 28 for c in Col}  # tekst + odstępy + strzałka
+        for col in Col:
+            default = max(DEFAULT_WIDTHS[col], self._min_widths[col])
+            view.setColumnWidth(col, self.settings.column_widths.get(col_key(col), default))
+        hidden = {c for c in map(col_from_key, self.settings.hidden_columns) if c is not None} - ALWAYS_VISIBLE
+        for col in Col:
+            view.setColumnHidden(col, col in hidden)
+        header.sectionResized.connect(self._column_resized)
         view.doubleClicked.connect(self._double_clicked)
         view.clicked.connect(self._cell_clicked)
         QShortcut(QKeySequence(Qt.Key.Key_Return), view, activated=self._details_for_current)
         self.table = view
+        self._update_row_height()
 
         self.empty_label = QLabel("Brak ofert w bazie.\nKliknij „⟳ Odśwież oferty” (F5), aby pobrać ogłoszenia.")
+        self.empty_label.setObjectName("muted")
         self.empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.empty_label.setStyleSheet("color: #868e96; font-size: 15px;")
         self.stack = QStackedWidget(self)
         self.stack.addWidget(self.table)
         self.stack.addWidget(self.empty_label)
-        self.setCentralWidget(self.stack)
 
-    def _build_source_status(self) -> None:
-        self.addToolBarBreak()
-        tb = QToolBar("Źródła", self)
-        tb.setMovable(False)
+    def _update_row_height(self) -> None:
+        text_h = self.table.fontMetrics().height() + 16
+        photo = not self.table.isColumnHidden(Col.PHOTO)
+        self.table.verticalHeader().setDefaultSectionSize(max(text_h, THUMB_SIZE.height() + 8) if photo else text_h)
+
+    def visible_columns(self) -> list[Col]:
+        return [c for c in Col if not self.table.isColumnHidden(c)]
+
+    def _fill_columns_menu(self) -> None:
+        self.columns_menu.clear()
+        for col in Col:
+            act = self.columns_menu.addAction(HEADERS[col])
+            act.setCheckable(True)
+            act.setChecked(not self.table.isColumnHidden(col))
+            act.setEnabled(col not in ALWAYS_VISIBLE)
+            act.toggled.connect(lambda checked, c=col: self.set_column_visible(c, checked))
+        self.columns_menu.addSeparator()
+        self.columns_menu.addAction("Przywróć domyślne kolumny", self.reset_columns)
+
+    def set_column_visible(self, col: Col, visible: bool) -> None:
+        if col in ALWAYS_VISIBLE:
+            return
+        self.table.setColumnHidden(col, not visible)
+        if visible and self.table.columnWidth(col) < 30:
+            self.table.setColumnWidth(col, max(DEFAULT_WIDTHS[col], self._min_widths[col]))
+        self.settings.hidden_columns = [col_key(c) for c in Col if self.table.isColumnHidden(c)]
+        if col is Col.PHOTO:
+            self._update_row_height()
+        self.settings_repo.save(self.settings)
+
+    def reset_columns(self) -> None:
+        from ..core.settings import DEFAULT_HIDDEN_COLUMNS
+
+        header = self.table.horizontalHeader()
+        for col in Col:
+            header.moveSection(header.visualIndex(col), col)
+            self.table.setColumnWidth(col, max(DEFAULT_WIDTHS[col], self._min_widths[col]))
+            self.table.setColumnHidden(col, col_key(col) in DEFAULT_HIDDEN_COLUMNS)
+        self.settings.hidden_columns = list(DEFAULT_HIDDEN_COLUMNS)
+        self.settings.column_widths = {}
+        self._update_row_height()
+        self.settings_repo.save(self.settings)
+
+    def _column_resized(self, index: int, _old: int, new: int) -> None:
+        header = self.table.horizontalHeader()
+        last = next((header.logicalIndex(v) for v in range(header.count() - 1, -1, -1)
+                     if not header.isSectionHidden(header.logicalIndex(v))), None)
+        if new > 0 and index != last:  # ostatnia kolumna jest rozciągana — jej szerokość nie jest wyborem
+            self.settings.column_widths[col_key(Col(index))] = new
+            self._ui_save_timer.start()
+
+    def _build_details(self) -> None:
+        self.details = OfferDetailsView(self.settings, OfferRepository(self.conn), self.photos, self)
+        self.details.setMinimumWidth(PANEL_PHOTO_SIZE.width() + 2 * MARGIN + 24)
+        self.details.status_changed.connect(self._status_changed)
+        self.details.full_view_requested.connect(self._details_for_current)
+        self.table.selectionModel().currentRowChanged.connect(self._current_changed)
+
+    def _build_layout(self) -> None:
+        split = QSplitter(Qt.Orientation.Horizontal, self)
+        split.addWidget(self.filters)
+        split.addWidget(self.stack)
+        split.addWidget(self.details)
+        split.setStretchFactor(0, 0)
+        split.setStretchFactor(1, 1)
+        split.setStretchFactor(2, 0)
+        split.setChildrenCollapsible(False)
+        split.setHandleWidth(6)
+        sizes = self.settings.splitter_sizes
+        split.setSizes(sizes if len(sizes) == 3 and all(x > 0 for x in sizes) else [250, 850, 360])
+        split.splitterMoved.connect(lambda *_: self._ui_save_timer.start())
+        self.filters.setVisible(self.settings.filters_visible)
+        self.details.setVisible(self.settings.details_visible)
+        wrap = QWidget()
+        lay = QVBoxLayout(wrap)
+        lay.setContentsMargins(MARGIN // 2, MARGIN // 2, MARGIN // 2, 0)
+        lay.addWidget(split)
+        self.splitter = split
+        self.setCentralWidget(wrap)
+
+    def _toggle_filters(self, visible: bool) -> None:
+        self.filters.setVisible(visible)
+        self.settings.filters_visible = visible
+        self._ui_save_timer.start()
+
+    def _toggle_details(self, visible: bool) -> None:
+        self.details.setVisible(visible)
+        self.settings.details_visible = visible
+        if visible:
+            self._current_changed(self.table.currentIndex())
+        self._ui_save_timer.start()
+
+    def _save_ui_state(self) -> None:
+        sizes = self.splitter.sizes()
+        if all(x > 0 for x in sizes):  # ukryty panel ma rozmiar 0 — zapamiętaj ostatni widoczny układ
+            self.settings.splitter_sizes = sizes
+        self.settings_repo.save(self.settings)
+
+    def _current_changed(self, index: QModelIndex, _prev: QModelIndex | None = None) -> None:
+        if self.details.isHidden():  # panel wyłączony — nie buduj raportu na darmo
+            return
+        if index.isValid():
+            self.details.set_offer(*self._row_at(index))
+        else:
+            self.details.set_offer(None, None)
+
+    def _build_status_bar(self) -> None:
+        bar = self.statusBar()
+        bar.setSizeGripEnabled(False)
+        self._status = QLabel("Gotowy.")
+        self._status.setMinimumWidth(120)
+        bar.addWidget(self._status, 1)
+        self.count_label = QLabel()
+        self.count_label.setToolTip("Oferty widoczne po filtrach / wszystkie w bazie")
+        self.refresh_label = QLabel()
+        self.refresh_label.setObjectName("muted")
         self.source_status = SourceStatusBar(SOURCE_NAMES, self)
         self.source_status.diagnose_requested.connect(self.run_diagnosis)
-        tb.addWidget(self.source_status)
-        self.addToolBar(tb)
+        self.auto_label = QLabel()
+        self.auto_label.setObjectName("muted")
+        for w in (self.count_label, self._sep(), self.refresh_label, self._sep(), self.source_status, self._sep(),
+                  self.auto_label):
+            bar.addPermanentWidget(w)
         self.refresh_source_status()
+
+    @staticmethod
+    def _sep() -> QLabel:
+        lbl = QLabel("·")
+        lbl.setObjectName("muted")
+        return lbl
 
     def refresh_source_status(self) -> None:
         """Status źródeł z ostatnich przebiegów zapisanych w bazie."""
         runs = FetchRunRepository(self.conn).latest_by_source()
+        finished = [datetime.fromisoformat(r["finished_at"]) for r in runs.values() if r["finished_at"]]
+        self.set_last_refresh(max(finished) if finished else None)
         for key, name in SOURCE_NAMES.items():
             if not self.settings.enabled_sources.get(key, True):
                 self.source_status.set_status(key, name, "disabled")
@@ -237,6 +398,15 @@ class MainWindow(QMainWindow):
             when = datetime.fromisoformat(row["finished_at"]) if row["finished_at"] else None
             self.source_status.set_status(key, name, row["status"], found=row["offers_found"],
                                           error=row["error"], when=when)
+
+    def set_last_refresh(self, when: datetime | None) -> None:
+        if when is None:
+            self.refresh_label.setText("Nie odświeżano")
+            return
+        local = when.astimezone()
+        today = datetime.now().astimezone().date()
+        day = "" if local.date() == today else f"{local:%d.%m} "
+        self.refresh_label.setText(f"Odświeżono {day}{local:%H:%M}")
 
     def run_diagnosis(self) -> None:
         """Diagnostyka źródeł w tle; raport w oknie i w pliku diagnostyka.txt."""
@@ -341,23 +511,31 @@ class MainWindow(QMainWindow):
         self.filters = FiltersPanel(self.settings.view_filter, self.settings.location_name, self)
         self.filters.changed.connect(self._filter_changed)
         self.filters.location_requested.connect(self.change_location)
-        dock = QDockWidget("Filtry", self)
-        dock.setWidget(self.filters)
-        dock.setFeatures(QDockWidget.DockWidgetFeature.DockWidgetMovable
-                         | QDockWidget.DockWidgetFeature.DockWidgetClosable)
-        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
-        self.filters_dock = dock
 
     # ------------------------------------------------------------- dane ---
 
     def reload(self) -> None:
         """Wczytuje oferty z bazy i wycenia je w bieżącym trybie."""
+        selected = self.current_offer_id()
         offers = OfferRepository(self.conn).list(include_hidden=self.show_hidden_action.isChecked())
         rows = Evaluator(self.conn, self.settings).evaluate_all(offers)
         self.model.set_rows(rows)
         self.stack.setCurrentWidget(self.table if rows else self.empty_label)
+        self._select_offer(selected)
         self._update_count()
         self._update_rejected_count()
+
+    def current_offer_id(self) -> int | None:
+        index = self.table.currentIndex()
+        return self._row_at(index)[0].id if index.isValid() else None
+
+    def _select_offer(self, offer_id: int | None) -> None:
+        row = self.model.row_of(offer_id) if offer_id is not None else None
+        index = self.proxy.mapFromSource(self.model.index(row, Col.MODEL)) if row is not None else QModelIndex()
+        if index.isValid():
+            self.table.setCurrentIndex(index)
+            self.table.scrollTo(index)
+        self._current_changed(self.table.currentIndex())
 
     def _update_count(self) -> None:
         rows = self.model.rows()
@@ -365,17 +543,26 @@ class MainWindow(QMainWindow):
         greens = sum(1 for r in range(shown)
                      if self._row_at(self.proxy.index(r, 0))[1].color is RowColor.GREEN)
         total = f" z {len(rows)}" if shown != len(rows) else ""
-        self.count_label.setText(f"Ofert: {shown}{total} (zielonych: {greens})  ")
+        self.count_label.setText(f"Ofert: <b>{shown}</b>{total} · zielonych: <b>{greens}</b>")
 
     def _filter_changed(self, f: ViewFilter) -> None:
+        selected = self.current_offer_id()
         self.proxy.set_view_filter(f)
+        self._select_offer(selected)
         self.settings.view_filter = f
         self.settings_repo.save(self.settings)
         self._update_count()
 
     def apply_settings(self, settings) -> None:
-        settings.view_filter = self.settings.view_filter
+        old = self.settings
+        # stan układu zmieniany w oknie głównym (nie w ustawieniach) zostaje bez zmian
+        for name in ("view_filter", "hidden_columns", "column_widths", "splitter_sizes", "filters_visible",
+                     "details_visible"):
+            setattr(settings, name, getattr(old, name))
         self.settings = settings
+        self.details.settings = settings
+        if (settings.ui_theme, settings.ui_font_pt) != (old.ui_theme, old.ui_font_pt):
+            self.apply_appearance()
         self.settings_repo.save(settings)
         self.limiter.delay_s = settings.request_delay_s
         self._configure_timer()
@@ -385,6 +572,21 @@ class MainWindow(QMainWindow):
         self.mode_combo.setCurrentIndex(self.mode_combo.findData(settings.mode))
         self.mode_combo.blockSignals(False)
         self.reload()
+
+    def apply_appearance(self) -> None:
+        """Przełącza motyw/czcionkę bez restartu."""
+        self.palette_ = apply_theme(self.settings.ui_theme, self.settings.ui_font_pt)
+        self.model.set_palette(self.palette_)
+        self.source_status.restyle()
+        self.thumbs.restyle()
+        self.photos.restyle()
+        self.details.render()
+        self._update_row_height()
+        self.table.viewport().update()
+
+    def _system_scheme_changed(self, *_args) -> None:
+        if self.settings.ui_theme == "system" and system_prefers_dark() != self.palette_.dark:
+            self.apply_appearance()
 
     def open_settings(self) -> SettingsDialog:
         fp = RejectedRepository(self.conn).false_positives_by_keyword()
@@ -459,6 +661,7 @@ class MainWindow(QMainWindow):
             else f"{s.name}: {labels.get(s.kind, 'BŁĄD')}" for s in report.sources
         )
         now = datetime.now().astimezone()
+        self.set_last_refresh(now)
         for s in report.sources:
             self.source_status.set_status(s.key, s.name, s.kind, found=s.saved, error=s.error, when=now)
         post = getattr(report, "post", None)
@@ -539,6 +742,10 @@ class MainWindow(QMainWindow):
             self.reload()
         else:
             self.model.update_status(offer_id, st)
+            if self.details.offer is not None and self.details.offer.id == offer_id:
+                self.details.offer.status = st
+                self.details._refresh_buttons()
+                self.details.render()
 
     def _context_menu(self, pos: QPoint) -> None:
         index = self.table.indexAt(pos)
@@ -571,6 +778,7 @@ class MainWindow(QMainWindow):
                 self._tray_hint_shown = True
             return
         self.refresh_timer.stop()
+        self._save_ui_state()
         if self.tray is not None:
             self.tray.hide()
         if self.quit_on_close:

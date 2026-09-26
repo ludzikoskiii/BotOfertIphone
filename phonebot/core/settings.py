@@ -71,6 +71,10 @@ def _default_penalties() -> dict[str, int]:
     }
 
 
+# kolumny tabeli ukryte domyślnie (nazwy z ui.table_model.Col, małymi literami)
+DEFAULT_HIDDEN_COLUMNS = ("photo", "condition", "battery", "market", "score", "flags", "location", "added", "link")
+
+
 @dataclass
 class Settings:
     # --- tryb i lokalizacja ---
@@ -154,6 +158,15 @@ class Settings:
     telegram_enabled: bool = False
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
+
+    # --- wygląd ---
+    ui_theme: str = "system"  # system | light | dark
+    ui_font_pt: int = 10
+    hidden_columns: list[str] = field(default_factory=lambda: list(DEFAULT_HIDDEN_COLUMNS))
+    column_widths: dict[str, int] = field(default_factory=dict)
+    splitter_sizes: list[int] = field(default_factory=list)  # filtry | tabela | szczegóły
+    filters_visible: bool = True
+    details_visible: bool = True
 
     # --- analiza opisów przez AI (opcjonalna) ---
     llm_enabled: bool = False

@@ -1,0 +1,190 @@
+"""Nowy układ okna: panele, kolumny, motyw, pasek statusu, wydajność przy dużej liczbie ofert."""
+import os
+import random
+import time
+
+import pytest
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+
+from PySide6.QtCore import Qt  # noqa: E402
+
+from phonebot.core.models import RawOffer  # noqa: E402
+from phonebot.core.normalizer import parse_offer  # noqa: E402
+from phonebot.core.view_filter import ViewFilter  # noqa: E402
+from phonebot.storage.db import open_database  # noqa: E402
+from phonebot.storage.repositories import OfferRepository, PartsRepository, SettingsRepository  # noqa: E402
+from phonebot.ui.table_model import Col  # noqa: E402
+
+from .sample_data import build_sample_db  # noqa: E402
+
+DEFAULT_VISIBLE = [Col.MODEL, Col.STORAGE, Col.PRICE, Col.PROFIT, Col.MAX_BUY, Col.VERDICT, Col.SOURCE]
+
+
+@pytest.fixture(scope="module")
+def app():
+    return QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+
+
+@pytest.fixture
+def window(app, tmp_path):
+    conn, _ = build_sample_db(tmp_path / "t.sqlite3")
+    from phonebot.ui.main_window import MainWindow
+
+    win = MainWindow(conn, tmp_path / "t.sqlite3", thumbs_dir=tmp_path)
+    yield win
+    win._quitting = True
+    win.close()
+    conn.close()
+
+
+def new_window(win):
+    from phonebot.ui.main_window import MainWindow
+
+    return MainWindow(win.conn, win.db_path, thumbs_dir=win.db_path.parent)
+
+
+def test_three_panel_layout(window):
+    split = window.splitter
+    assert [split.widget(i) for i in range(3)] == [window.filters, window.stack, window.details]
+    assert window.statusBar().isVisible() or not window.isVisible()
+
+
+def test_default_columns_and_toggle_persist(window):
+    assert window.visible_columns() == DEFAULT_VISIBLE
+    window.set_column_visible(Col.BATTERY, True)
+    window.set_column_visible(Col.SOURCE, False)
+    window.set_column_visible(Col.MODEL, False)  # model zawsze widoczny
+    assert Col.BATTERY in window.visible_columns() and Col.SOURCE not in window.visible_columns()
+    assert Col.MODEL in window.visible_columns()
+    other = new_window(window)
+    assert other.visible_columns() == window.visible_columns()
+    other.reset_columns()
+    assert other.visible_columns() == DEFAULT_VISIBLE
+    other._quitting = True
+    other.close()
+
+
+def test_columns_menu_lists_all_columns(window):
+    window._fill_columns_menu()
+    actions = [a for a in window.columns_menu.actions() if a.isCheckable()]
+    assert len(actions) == len(Col)
+    photo = next(a for a in actions if a.text() == "Zdjęcie")
+    photo.setChecked(True)
+    assert not window.table.isColumnHidden(Col.PHOTO)
+    assert window.table.verticalHeader().defaultSectionSize() >= 60  # miniatura mieści się w wierszu
+
+
+def test_details_panel_follows_selection(window):
+    assert window.details.offer is None
+    window.table.selectRow(0)
+    offer, _ = window._row_at(window.proxy.index(0, 0))
+    assert window.details.offer.id == offer.id
+    assert "Maksymalna cena zakupu" in window.details.browser.toHtml()
+    window.details._toggle_watch()
+    assert window.model.row_at(window.model.row_of(offer.id))[0].status.value == "watched"
+    # zaznaczenie przeżywa przeładowanie i zmianę filtrów
+    window.reload()
+    assert window.current_offer_id() == offer.id
+    window.details_action.setChecked(False)
+    assert window.details.isHidden()
+    assert SettingsRepository(window.conn).load().details_visible is False or window._ui_save_timer.isActive()
+
+
+def test_status_bar_shows_count_refresh_and_sources(window):
+    text = window.count_label.text()
+    assert "Ofert:" in text and "zielonych" in text
+    assert window.refresh_label.text().startswith("Odświeżono")
+    for key in ("allegro_lokalnie", "vinted", "sprzedajemy"):
+        assert window.source_status.text_of(key)
+    window.filters.set_filter(ViewFilter(sources=["vinted"]))
+    assert " z " in window.count_label.text()
+
+
+def test_theme_switch_without_restart(window):
+    from phonebot.ui.theme import DARK, LIGHT, current
+
+    s = SettingsRepository(window.conn).load()
+    s.ui_theme, s.ui_font_pt = "dark", 11
+    window.apply_settings(s)
+    assert current() is DARK
+    assert QtWidgets.QApplication.instance().font().pointSize() == 11
+    r = next(r for r in range(window.proxy.rowCount())
+             if (window._row_at(window.proxy.index(r, 0))[1].expected_profit or 0) > 0)
+    fg = window.proxy.index(r, Col.PROFIT).data(Qt.ItemDataRole.ForegroundRole).color().name()
+    assert fg == DARK.positive
+    s = SettingsRepository(window.conn).load()
+    assert s.ui_theme == "dark"
+    s.ui_theme, s.ui_font_pt = "light", 10
+    window.apply_settings(s)
+    assert current() is LIGHT
+
+
+def test_theme_selectable_in_settings(window):
+    dialog = window.open_settings()
+    dialog.theme_combo.setCurrentIndex(dialog.theme_combo.findData("dark"))
+    dialog.font_spin.setValue(12)
+    result = dialog.result_settings()
+    assert (result.ui_theme, result.ui_font_pt) == ("dark", 12)
+    dialog.reject()
+
+
+def _big_db(path, n):
+    conn = open_database(path)
+    PartsRepository(conn).seed_defaults_if_empty()
+    repo = OfferRepository(conn)
+    rng = random.Random(7)
+    models = ["iPhone 11", "iPhone 12", "iPhone 12 Pro", "iPhone 13", "iPhone 13 Pro", "iPhone 14", "iPhone 15"]
+    extras = ["", " zbity ekran", " bateria 81%", " nie ładuje", " stan idealny", " pęknięty tył"]
+    conn.execute("BEGIN")
+    for i in range(n):
+        title = f"{rng.choice(models)} {rng.choice([64, 128, 256])}GB{rng.choice(extras)}"
+        raw = RawOffer(rng.choice(["allegro_lokalnie", "vinted", "sprzedajemy"]), f"id{i}", f"https://x/{i}", title,
+                       float(rng.randrange(400, 3500, 10)), description="Opis", city="Kraków", photos=["x"],
+                       shipping_available=True)
+        repo.upsert(raw, parse_offer(raw))
+    conn.execute("COMMIT")
+    return conn
+
+
+def test_fast_with_many_rows(app, tmp_path):
+    """Kilkaset–tysiąc ofert: wczytanie, sortowanie, filtrowanie i przewijanie bez zacięć."""
+    from phonebot.ui.main_window import MainWindow
+
+    conn = _big_db(tmp_path / "big.sqlite3", 1000)
+    win = MainWindow(conn, tmp_path / "big.sqlite3", thumbs_dir=tmp_path)
+    win.resize(1400, 800)
+    win.show()
+    app.processEvents()
+    assert win.model.rowCount() == 1000
+
+    t = time.perf_counter()
+    win.reload()
+    reload_s = time.perf_counter() - t
+
+    t = time.perf_counter()
+    for col in (Col.PRICE, Col.VERDICT, Col.PROFIT):
+        win.table.sortByColumn(col, Qt.SortOrder.AscendingOrder)
+    sort_s = time.perf_counter() - t
+
+    t = time.perf_counter()
+    win.filters.set_filter(ViewFilter(models=["iPhone 13"]))
+    win.filters.set_filter(ViewFilter())
+    filter_s = time.perf_counter() - t
+
+    t = time.perf_counter()
+    bar = win.table.verticalScrollBar()
+    for v in range(0, bar.maximum(), max(1, bar.maximum() // 20)):
+        bar.setValue(v)
+        win.table.viewport().repaint()
+    scroll_s = time.perf_counter() - t
+
+    win._quitting = True
+    win.close()
+    conn.close()
+    # progi z zapasem na wolne maszyny CI
+    assert reload_s < 3.0, reload_s
+    assert sort_s < 1.5, sort_s
+    assert filter_s < 1.0, filter_s
+    assert scroll_s < 3.0, scroll_s

@@ -9,6 +9,8 @@ from PySide6.QtCore import QObject, QSize, Qt, QUrl, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPixmap
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 
+from .theme import current
+
 log = logging.getLogger(__name__)
 
 THUMB_SIZE = QSize(72, 54)
@@ -16,10 +18,11 @@ MAX_PARALLEL = 4
 
 
 def placeholder(text: str = "brak\nzdjęcia", size: QSize = THUMB_SIZE) -> QPixmap:
+    pal = current()
     pm = QPixmap(size)
-    pm.fill(QColor("#e9ecef"))
+    pm.fill(QColor(pal.surface_alt))
     p = QPainter(pm)
-    p.setPen(QColor("#868e96"))
+    p.setPen(QColor(pal.muted))
     font = QFont()
     font.setPointSize(7 if size.width() < 150 else 11)
     p.setFont(font)
@@ -42,8 +45,12 @@ class ThumbnailCache(QObject):
         self._queue: list[str] = []
         self._active: set[str] = set()
         self._nam = QNetworkAccessManager(self)
-        self._placeholder = placeholder(size=size)
-        self._loading = placeholder("…", size)
+        self.restyle()
+
+    def restyle(self) -> None:
+        """Placeholdery w kolorach bieżącego motywu."""
+        self._placeholder = placeholder(size=self.size)
+        self._loading = placeholder("…", self.size)
 
     def _path(self, url: str) -> Path:
         name = hashlib.sha1(url.encode()).hexdigest()
