@@ -1,7 +1,7 @@
-"""Kroki po pobraniu ofert: wybór zielonych ofert i powiadomienia Telegram.
+"""Kroki po pobraniu ofert: zielone oferty (powiadomienia Windows) i kolejka Telegram.
 
-Wykonywane w wątku roboczym (bez GUI). Powiadomienia na pulpicie pokazuje GUI
-na podstawie ``PostScanResult.green``.
+Wykonywane w wątku roboczym (bez GUI). Powiadomienia na pulpicie pokazuje GUI na podstawie
+``PostScanResult.green``; Telegram — kolejka ``telegram_queue`` (nowe oferty z „Wybrane”, obniżki cen).
 """
 from __future__ import annotations
 
@@ -13,8 +13,9 @@ from ..core.models import OfferStatus, RowColor, Verdict
 from ..core.settings import Settings
 from ..storage.repositories import OfferRepository
 from .evaluator import Evaluator
-from .notifications import NotificationError, offer_headline, send_telegram_batch
+from .notifications import NotificationError, TelegramClient, offer_headline
 from .scanner import ScanReport
+from .telegram_queue import TelegramQueue
 
 log = logging.getLogger(__name__)
 
@@ -32,6 +33,8 @@ class GreenOffer:
 class PostScanResult:
     green: list[GreenOffer] = field(default_factory=list)
     telegram_sent: int = 0
+    telegram_queued: int = 0
+    telegram_waiting: int = 0
     telegram_error: str | None = None
     silent_first_scan: bool = False
     error: str | None = None  # nieoczekiwany błąd po skanie (wyniki skanu i tak są zapisane)
@@ -63,12 +66,20 @@ def run_post_scan(conn: sqlite3.Connection, settings: Settings, report: ScanRepo
     if report.first_scan:
         # pierwsze pobranie: wszystko jest „nowe” — nie zasypujemy powiadomieniami
         result.silent_first_scan = True
+        if settings.telegram_enabled:
+            TelegramQueue(conn, settings).ensure_since()  # oferty z tego pobrania nie trafią na Telegram
         return result
 
     result.green = [GreenOffer(o.id, offer_headline(o, v), v.expected_profit, o.raw.url, r) for o, v, r in greens]
-    if greens and settings.telegram_enabled:
+    if settings.telegram_enabled:
         try:
-            result.telegram_sent = send_telegram_batch(settings, greens, telegram)
+            queue = TelegramQueue(conn, settings)
+            result.telegram_queued = queue.enqueue_scan(report.new_offer_ids, report.price_drop_ids,
+                                                        evaluator.evaluate)
+            client = telegram or TelegramClient(settings.telegram_bot_token, settings.telegram_chat_id)
+            flushed = queue.flush(client)
+            result.telegram_sent, result.telegram_waiting = flushed.sent, flushed.waiting
+            result.telegram_error = flushed.error
         except NotificationError as e:
             log.warning("Telegram: %s", e)
             result.telegram_error = str(e)

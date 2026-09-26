@@ -3,7 +3,7 @@
 Aplikacja desktopowa (Windows) do wyszukiwania ofert używanych iPhone'ów na
 Allegro Lokalnie, Vinted i Sprzedajemy.pl, wyceny ich opłacalności i podpowiadania, czy i za ile kupić.
 
-> **Status: wersja 1.7.0.** Trzy portale, wycena, werdykty i negocjacje, filtry, zabezpieczenia werdyktu,
+> **Status: wersja 1.8.0.** Trzy portale, wycena, werdykty i negocjacje, filtry, zabezpieczenia werdyktu,
 > **darmowe lokalne AI** (klasyfikator tytułów, analiza zdjęć, opcjonalnie model językowy w Ollamie),
 > szablony wiadomości do sprzedającego, automatyczne odświeżanie, powiadomienia Windows i Telegram
 > oraz gotowy plik `PhoneBot.exe`. Program nie korzysta z żadnych płatnych usług.
@@ -68,23 +68,42 @@ dist\PhoneBot.exe --self-test             # moduły, lokalne AI (bez pobierania 
 
 ### Powiadomienia Telegram
 
-1. W Telegramie otwórz **@BotFather**, wyślij `/newbot` i nadaj botowi nazwę. Dostaniesz **token**
-   (np. `123456789:AAH…`).
-2. Otwórz rozmowę ze swoim nowym botem i wyślij mu `/start`.
-3. W PhoneBot: **⚙ Ustawienia → Powiadomienia**. Wklej token i kliknij **Pobierz chat ID**.
-4. Kliknij **Wyślij test**. Na Telegramie powinna przyjść wiadomość.
-5. Zaznacz „Wysyłaj powiadomienia na Telegram” i zapisz.
+**Połączenie (raz, ok. 2 minut):**
+
+1. W Telegramie wyszukaj **@BotFather** (niebieski znaczek weryfikacji) i wyślij `/newbot`.
+2. Podaj nazwę bota (np. *Mój PhoneBot*) i login kończący się na `bot` (np. `kacwin_phone_bot`).
+3. BotFather odpisze **tokenem** (np. `123456789:AAH…`). Wklej go w **⚙ Ustawienia → Powiadomienia →
+   Token bota**. Nikomu go nie pokazuj.
+4. Otwórz rozmowę ze swoim botem (link w wiadomości od BotFather) i wyślij mu `/start`.
+5. Kliknij **Pobierz chat ID** — program odczyta numer Twojej rozmowy z botem.
+6. Kliknij **Wyślij test** (na Telegram przyjdzie wiadomość), zaznacz „Wysyłaj powiadomienia na Telegram”
+   i zapisz.
 
 ![Ustawienia powiadomień](docs/screenshots/ustawienia_powiadomienia.png)
 
-Każda wiadomość zawiera model, cenę, szacowany zysk, max cenę, sugestię negocjacji, lokalizację,
-czerwone flagi i link do ogłoszenia. Na jedno odświeżenie wysyłanych jest maksymalnie 5 osobnych
-wiadomości (do ustawienia), a resztę dostajesz w jednym podsumowaniu.
+**Kiedy przychodzi wiadomość:**
 
-Token Telegrama jest przechowywany w lokalnej bazie aplikacji bez szyfrowania.
+- nowa oferta, która **automatycznie** trafiła do „Wybrane” i spełnia **osobne, ostrzejsze kryteria
+  Telegrama** (domyślnie KUPUJ/NEGOCJUJ i zysk ≥ 250 zł, bez poważnych flag);
+- opcjonalnie **obniżka ceny** oferty z „Wybrane” (także dodanej ręcznie) — raz na każdą nową cenę;
+- każda oferta tylko **raz** (zapisane w bazie), nigdy oferty sprzed pierwszego włączenia powiadomień
+  ani z pierwszego pobrania do pustej bazy.
 
-(Płatna analiza opisów przez Claude z wersji 1.0–1.3 została usunięta; zapisany klucz API znika z bazy
-przy pierwszym uruchomieniu wersji 1.4. Zastępuje ją darmowa analiza lokalnym modelem — niżej.)
+**Treść:** model, pamięć, cena, szacowany zysk, werdykt, portal, miejscowość z odległością, link do
+ogłoszenia i miniatura zdjęcia. Przy NEGOCJUJ — proponowana cena i gotowa wiadomość do sprzedającego
+(z zadania „Wiadomości”) w bloku, który Telegram kopiuje jednym dotknięciem.
+
+**Cisza nocna i limit:** w godzinach ciszy (domyślnie 22:00–7:00) wiadomości czekają do rana albo są
+pomijane — do wyboru. Najwyżej 10 wiadomości na godzinę (ustawienie); nadmiar przychodzi jako jedno
+podsumowanie z listą ofert.
+
+**Niezawodność:** wiadomości czekają w kolejce w bazie; po błędzie (np. brak internetu) są ponawiane
+w tle (po 1, 5, 15, 30 min…), bez duplikatów. Wysyłka działa w tle — po każdym odświeżeniu i co 5 minut.
+
+**Bezpieczeństwo:** token bota i chat ID nie są w kodzie ani w zwykłych ustawieniach — program zapisuje
+je osobno, **zaszyfrowane kontem Windows (DPAPI)**; skopiowana baza nie zdradzi tokenu na innym komputerze.
+Token zapisany jawnie przez starszą wersję jest przenoszony do szyfrowanego magazynu przy pierwszym
+uruchomieniu.
 
 ### Status źródeł i diagnostyka
 

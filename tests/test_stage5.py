@@ -4,9 +4,10 @@ import httpx
 import pytest
 
 from phonebot.core.settings import Settings
-from phonebot.services.notifications import NotificationError, TelegramClient, format_telegram, send_telegram_batch
+from phonebot.services.notifications import NotificationError, TelegramClient
 from phonebot.services.post_scan import run_post_scan
 from phonebot.services.scanner import ScanReport
+from phonebot.services.telegram_queue import TelegramQueue
 from phonebot.storage.repositories import OfferRepository
 
 from .conftest import make_raw
@@ -29,7 +30,7 @@ def test_telegram_send_and_errors():
     log = []
     TelegramClient("123:ABC", "42", transport=tg_transport(log)).send("<b>hej</b>")
     assert log == [("sendMessage", {"chat_id": "42", "text": "<b>hej</b>", "parse_mode": "HTML",
-                                    "disable_web_page_preview": False})]
+                                    "link_preview_options": {"is_disabled": True}})]
     with pytest.raises(NotificationError, match="Unauthorized"):
         TelegramClient("bad", "42", transport=tg_transport([], ok=False)).send("x")
     with pytest.raises(NotificationError, match="tokenu"):
@@ -60,6 +61,8 @@ def test_first_scan_is_silent(tmp_path):
 
 def test_new_green_offer_triggers_notifications(tmp_path):
     conn, _ = build_sample_db(tmp_path / "db.sqlite3")
+    settings = Settings(telegram_enabled=True, telegram_bot_token="t", telegram_chat_id="1")
+    TelegramQueue(conn, settings).ensure_since()  # powiadomienia włączone przed pojawieniem się ofert
     repo = OfferRepository(conn)
     from phonebot.core.normalizer import parse_offer
 
@@ -69,32 +72,11 @@ def test_new_green_offer_triggers_notifications(tmp_path):
     bad = make_raw("iPhone 13 128GB", 3000, source="allegro_lokalnie", source_id="NEW2")
     bad_id = repo.upsert(bad, parse_offer(bad)).offer_id
     log = []
-    settings = Settings(telegram_enabled=True, telegram_bot_token="t", telegram_chat_id="1")
     report = ScanReport(new_offer_ids=[new_id, bad_id])
     tg = TelegramClient("t", "1", transport=tg_transport(log))
     post = run_post_scan(conn, settings, report, telegram=tg)
     assert [g.offer_id for g in post.green] == [new_id]
-    assert post.telegram_sent == 1 and "iPhone 13 128 GB" in log[0][1]["text"]
+    assert post.telegram_sent == 1 and "<b>iPhone 13</b> · 128 GB" in log[0][1]["text"]
     # drugi raz ta sama oferta nie jest zgłaszana
     again = run_post_scan(conn, settings, report, telegram=tg)
     assert again.green == []
-
-
-def test_telegram_batch_cap():
-    from phonebot.core.models import MarketEstimate, Mode
-    from phonebot.core.parts import PartsCatalog, default_parts
-    from phonebot.core.valuation import evaluate
-
-    from .conftest import make_offer
-
-    items = []
-    for i in range(8):
-        o = make_offer("iPhone 13 128GB", 1100 + i)  # bez flagi „podejrzanie tanio” (<50% rynku)
-        v = evaluate(o, MarketEstimate(2000, 10, "m", "wysoka", 2000), PartsCatalog(default_parts()), Settings(),
-                     Mode.RESELL)
-        items.append((o, v, "nowa"))
-    log = []
-    sent = send_telegram_batch(Settings(notify_max_per_scan=3), items,
-                               TelegramClient("t", "1", transport=tg_transport(log)))
-    assert sent == 4 and "…i jeszcze 5" in log[-1][1]["text"]
-    assert "KUPUJ" in format_telegram(*items[0])

@@ -1,15 +1,12 @@
-"""Powiadomienia o nowych zielonych ofertach: Telegram (tu) i pulpit (w GUI)."""
+"""Klient Telegram (Bot API) i nagłówek oferty do powiadomień; kolejka wysyłek: ``telegram_queue``."""
 from __future__ import annotations
 
 import logging
-from html import escape
 
 import httpx
 
 from ..core.catalog import format_storage
 from ..core.models import Offer, Valuation
-from ..core.settings import Settings
-from ..sources import SOURCE_NAMES
 
 log = logging.getLogger(__name__)
 
@@ -27,25 +24,6 @@ def _zl(v: float | None) -> str:
 def offer_headline(offer: Offer, val: Valuation) -> str:
     p = offer.parsed
     return f"{p.model or '?'} {format_storage(p.storage_gb)} — {_zl(offer.price)}"
-
-
-def format_telegram(offer: Offer, val: Valuation, reason: str = "") -> str:
-    """Wiadomość HTML do Telegrama."""
-    lines = [f"🟢 <b>{escape(val.verdict.value)}</b> · ocena {val.score}/100" + (f" · {escape(reason)}" if reason else ""),
-             f"<b>{escape(offer_headline(offer, val))}</b>",
-             escape(offer.raw.title),
-             f"Zysk ok. <b>{_zl(val.expected_profit)}</b> · max cena {_zl(val.max_buy_price)}"]
-    neg = val.negotiation
-    if neg.opening_price:
-        lines.append(f"Negocjuj: zacznij od {_zl(neg.opening_price)}, maks. {_zl(neg.max_price)}")
-    place = offer.raw.city or "—"
-    if offer.distance_km is not None:
-        place += f" ({offer.distance_km:.0f} km)"
-    lines.append(f"{escape(SOURCE_NAMES.get(offer.raw.source, offer.raw.source))} · {escape(place)}")
-    if val.flags:
-        lines.append("⚑ " + escape(", ".join(f.label for f in dict.fromkeys(val.flags))))
-    lines.append(escape(offer.raw.url))
-    return "\n".join(lines)
 
 
 class TelegramClient:
@@ -67,11 +45,17 @@ class TelegramClient:
             raise NotificationError(f"Telegram: {data.get('description') or 'nieznany błąd'}")
         return data
 
-    def send(self, text: str) -> None:
+    def send(self, text: str, *, preview_url: str | None = None) -> None:
+        """Wiadomość HTML. ``preview_url`` — miniatura (np. zdjęcie oferty) jako podgląd linku nad tekstem."""
         if not self.chat_id:
             raise NotificationError("brak chat ID Telegram")
-        self._call("sendMessage", {"chat_id": self.chat_id, "text": text, "parse_mode": "HTML",
-                                   "disable_web_page_preview": False})
+        payload: dict = {"chat_id": self.chat_id, "text": text, "parse_mode": "HTML"}
+        if preview_url:
+            payload["link_preview_options"] = {"url": preview_url, "prefer_small_media": True,
+                                               "show_above_text": True}
+        else:
+            payload["link_preview_options"] = {"is_disabled": True}
+        self._call("sendMessage", payload)
 
     def find_chat_id(self) -> str:
         """Chat ID z ostatniej wiadomości wysłanej do bota (najpierw napisz do bota /start)."""
@@ -82,20 +66,3 @@ class TelegramClient:
             if "id" in chat:
                 return str(chat["id"])
         raise NotificationError("brak wiadomości — wyślij do swojego bota /start i spróbuj ponownie")
-
-
-def send_telegram_batch(settings: Settings, items: list[tuple[Offer, Valuation, str]],
-                        client: TelegramClient | None = None) -> int:
-    """Wysyła powiadomienia (max ``notify_max_per_scan`` osobno + podsumowanie reszty)."""
-    if not items:
-        return 0
-    client = client or TelegramClient(settings.telegram_bot_token, settings.telegram_chat_id)
-    limit = max(1, settings.notify_max_per_scan)
-    for offer, val, reason in items[:limit]:
-        client.send(format_telegram(offer, val, reason))
-    rest = items[limit:]
-    if rest:
-        lines = [f"…i jeszcze {len(rest)} zielonych ofert:"]
-        lines += [f"• {escape(offer_headline(o, v))} — zysk {_zl(v.expected_profit)}" for o, v, _ in rest[:15]]
-        client.send("\n".join(lines))
-    return min(len(items), limit) + (1 if rest else 0)

@@ -227,8 +227,18 @@ class Settings:
     notify_price_drops: bool = True
     notify_max_per_scan: int = 5
     telegram_enabled: bool = False
-    telegram_bot_token: str = ""
+    telegram_bot_token: str = ""  # zapisywany zaszyfrowany osobno (SettingsRepository), nie w tym JSON-ie
     telegram_chat_id: str = ""
+    # osobne, zwykle ostrzejsze kryteria niż lista „Wybrane” (oferta musi spełnić oba)
+    telegram_criteria: SelectionCriteria = field(default_factory=lambda: SelectionCriteria(
+        verdicts=["KUPUJ", "NEGOCJUJ"], min_profit=250.0))
+    telegram_price_drops: bool = True  # obniżka ceny oferty z „Wybrane”
+    telegram_photos: bool = True  # miniatura zdjęcia w wiadomości
+    telegram_max_per_hour: int = 10  # nadmiar trafia do jednego podsumowania
+    telegram_quiet_enabled: bool = True
+    telegram_quiet_start: int = 22  # godzina
+    telegram_quiet_end: int = 7
+    telegram_quiet_mode: str = "batch"  # batch — wyślij rano | skip — pomiń
 
     # --- wygląd ---
     ui_theme: str = "system"  # system | light | dark

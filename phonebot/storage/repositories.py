@@ -18,6 +18,7 @@ from ..core.models import (
     RedFlag,
 )
 from ..core.parts import PartPrice, default_parts
+from ..core.secret_store import protect, unprotect
 from ..core.settings import Settings
 
 
@@ -322,6 +323,8 @@ class SettingsRepository:
     KEY = "app"
     # ustawienia usuniętych funkcji — przy pierwszym wczytaniu znikają z bazy (np. klucz API płatnej analizy Claude)
     OBSOLETE_KEYS = ("anthropic_api_key", "llm_enabled", "llm_model", "llm_max_per_scan")
+    SECRET_FIELDS = ("telegram_bot_token", "telegram_chat_id")
+    SECRET_PREFIX = "secret:"
 
     def __init__(self, conn: sqlite3.Connection):
         self.conn = conn
@@ -329,7 +332,14 @@ class SettingsRepository:
     def load(self) -> Settings:
         row = self.conn.execute("SELECT value FROM settings WHERE key = ?", (self.KEY,)).fetchone()
         settings = Settings.from_json(row["value"] if row else None)
-        if row and self._has_obsolete(row["value"]):
+        resave = bool(row and self._has_obsolete(row["value"]))
+        for name in self.SECRET_FIELDS:
+            stored = self.get_value(self.SECRET_PREFIX + name)
+            if stored is not None:
+                setattr(settings, name, unprotect(stored))
+            elif getattr(settings, name):
+                resave = True  # sekret zapisany jawnie przez starszą wersję — przenieś do magazynu sekretów
+        if resave:
             self.save(settings)
         return settings
 
@@ -341,7 +351,12 @@ class SettingsRepository:
         return isinstance(data, dict) and any(k in data for k in self.OBSOLETE_KEYS)
 
     def save(self, settings: Settings) -> None:
-        self.set_value(self.KEY, settings.to_json())
+        """Sekrety (token bota, chat ID, PIN) idą osobno i zaszyfrowane (``core.secret_store``), nie do JSON-a."""
+        data = json.loads(settings.to_json())
+        for name in self.SECRET_FIELDS:
+            data[name] = ""
+            self.set_value(self.SECRET_PREFIX + name, protect(getattr(settings, name) or ""))
+        self.set_value(self.KEY, json.dumps(data, ensure_ascii=False, indent=2))
 
     def get_value(self, key: str) -> str | None:
         row = self.conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()

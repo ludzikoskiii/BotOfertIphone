@@ -193,6 +193,27 @@ MIGRATIONS: list[str] = [
     ALTER TABLE offers ADD COLUMN pick_excluded INTEGER NOT NULL DEFAULT 0;
     CREATE INDEX idx_offers_picked ON offers (picked_at) WHERE picked_at IS NOT NULL;
     """,
+    # v9 — kolejka powiadomień Telegram: każda oferta raz (nowa) i raz na każdą obniżkę ceny,
+    # ponowienia po błędzie, cisza nocna, limit na godzinę (nadmiar → jedno podsumowanie)
+    """
+    CREATE TABLE telegram_outbox (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        offer_id    INTEGER NOT NULL,
+        kind        TEXT NOT NULL,
+        price       REAL NOT NULL,
+        headline    TEXT NOT NULL,
+        text        TEXT NOT NULL,
+        photo       TEXT,
+        status      TEXT NOT NULL DEFAULT 'pending',
+        attempts    INTEGER NOT NULL DEFAULT 0,
+        next_try    TEXT NOT NULL,
+        created_at  TEXT NOT NULL,
+        sent_at     TEXT,
+        error       TEXT,
+        UNIQUE (offer_id, kind, price)
+    );
+    CREATE INDEX idx_outbox_status ON telegram_outbox (status, next_try);
+    """,
 ]
 
 

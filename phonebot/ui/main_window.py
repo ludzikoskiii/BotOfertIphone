@@ -1,6 +1,7 @@
 """Główne okno: filtry po lewej, tabela ofert w środku, szczegóły po prawej, status na dole."""
 from __future__ import annotations
 
+import copy
 import logging
 import sqlite3
 from datetime import UTC, datetime, timedelta
@@ -198,6 +199,11 @@ class MainWindow(QMainWindow):
             hints.colorSchemeChanged.connect(self._system_scheme_changed)
         self.refresh_timer = QTimer(self)
         self.refresh_timer.timeout.connect(self._auto_refresh)
+        # Telegram: zaległe wiadomości (cisza nocna, limit na godzinę, ponowienia) wysyłane w tle co 5 min
+        self._tg_worker = None
+        self.telegram_timer = QTimer(self, interval=5 * 60_000)
+        self.telegram_timer.timeout.connect(self.flush_telegram)
+        self.telegram_timer.start()
         self._configure_timer()
         self.refresh_source_status()
         self._apply_filter_rules()
@@ -921,6 +927,10 @@ class MainWindow(QMainWindow):
             self.apply_appearance()
         self.settings_repo.save(settings)
         self.limiter.delay_s = settings.request_delay_s
+        if settings.telegram_enabled:
+            from ..services.telegram_queue import TelegramQueue
+
+            TelegramQueue(self.conn, settings).ensure_since()  # oferty sprzed włączenia nie trafią na Telegram
         self._configure_timer()
         self.refresh_source_status()
         self.filters.set_location_name(settings.location_name)
@@ -1016,6 +1026,25 @@ class MainWindow(QMainWindow):
         self._worker = worker
         self._thread = start_in_thread(worker, self)
         self._thread.finished.connect(self._thread_done)
+
+    def flush_telegram(self) -> bool:
+        """Wysyła zaległe powiadomienia Telegram w wątku roboczym (nigdy dwa naraz). Zwraca, czy uruchomiono."""
+        s = self.settings
+        if self._tg_worker is not None or not (s.telegram_enabled and s.telegram_bot_token and s.telegram_chat_id):
+            return False
+        from ..services.telegram_queue import flush_in_background
+
+        worker = FuncWorker(flush_in_background, self.db_path, copy.deepcopy(s))
+        worker.finished.connect(self._telegram_flushed)
+        worker.failed.connect(self._telegram_flushed)
+        self._tg_worker = worker
+        start_in_thread(worker, self)
+        return True
+
+    def _telegram_flushed(self, result) -> None:
+        self._tg_worker = None
+        if isinstance(result, str) or getattr(result, "error", None):
+            log.warning("Telegram (w tle): %s", getattr(result, "error", result))
 
     def _scan_finished(self, report: ScanReport) -> None:
         errors = [f"{s.name}: {s.error}" for s in report.sources if s.error]

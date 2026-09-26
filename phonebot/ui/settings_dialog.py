@@ -467,29 +467,34 @@ class SettingsDialog(QDialog):
         intro.setWordWrap(True)
         auto = QGroupBox("Kryteria automatyczne (wszystkie muszą być spełnione)")
         form = self._form([Field("selection.enabled", "Dodawaj oferty automatycznie", "bool")])
-        verdicts = QHBoxLayout()
-        self.selection_verdicts: dict[str, QCheckBox] = {}
-        for v in Verdict:
-            box = QCheckBox(v.value)
-            box.setObjectName(f"selection.verdict.{v.name.lower()}")
-            box.setChecked(v.value in self.settings.selection.verdicts)
-            verdicts.addWidget(box)
-            self.selection_verdicts[v.value] = box
-        verdicts.addStretch(1)
-        form.addRow("Werdykt:", verdicts)
-        self._readers.append(lambda s: setattr(s.selection, "verdicts", [
-            v for v, box in self.selection_verdicts.items() if box.isChecked()]))
-        self._form([
-            Field("selection.min_profit", "Minimalny szacowany zysk", "float", 0, 20000, 10, " zł",
-                  tip="0 = bez progu"),
-            Field("selection.min_score", "Minimalna ocena", "int", 0, 100, 5, " / 100", tip="0 = bez progu"),
-            Field("selection.skip_hard_flags", "Pomijaj oferty z poważną flagą (iCloud, IMEI, podróbka)", "bool"),
-        ], form)
+        self.selection_verdicts = self._criteria_form("selection", form)
         auto.setLayout(form)
         note = QLabel("Filtry i sortowanie są wspólne dla obu list; każda lista pamięta własne sortowanie.")
         note.setObjectName("muted")
         note.setWordWrap(True)
         return self._page(intro, auto, note)
+
+    def _criteria_form(self, attr: str, form: QFormLayout) -> dict[str, QCheckBox]:
+        """Werdykty + progi (``SelectionCriteria``) — wspólne dla „Wybrane” i Telegrama."""
+        crit = getattr(self.settings, attr)
+        verdicts = QHBoxLayout()
+        boxes: dict[str, QCheckBox] = {}
+        for v in Verdict:
+            box = QCheckBox(v.value)
+            box.setObjectName(f"{attr}.verdict.{v.name.lower()}")
+            box.setChecked(v.value in crit.verdicts)
+            verdicts.addWidget(box)
+            boxes[v.value] = box
+        verdicts.addStretch(1)
+        form.addRow("Werdykt:", verdicts)
+        self._readers.append(lambda s: setattr(getattr(s, attr), "verdicts", [
+            v for v, box in boxes.items() if box.isChecked()]))
+        self._form([
+            Field(f"{attr}.min_profit", "Minimalny szacowany zysk", "float", 0, 20000, 10, " zł", tip="0 = bez progu"),
+            Field(f"{attr}.min_score", "Minimalna ocena", "int", 0, 100, 5, " / 100", tip="0 = bez progu"),
+            Field(f"{attr}.skip_hard_flags", "Pomijaj oferty z poważną flagą (iCloud, IMEI, podróbka)", "bool"),
+        ], form)
+        return boxes
 
     def _safety_tab(self) -> QWidget:
         s = self.settings
@@ -808,22 +813,40 @@ class SettingsDialog(QDialog):
             Field("minimize_to_tray", "Zamknięcie okna chowa do zasobnika", "bool"),
             Field("notify_desktop", "Powiadomienia Windows o nowych zielonych ofertach", "bool"),
             Field("notify_price_drops", "Powiadamiaj też o obniżce ceny do zielonej", "bool"),
-            Field("notify_max_per_scan", "Maks. osobnych powiadomień na odświeżenie", "int", 1, 50),
+            Field("notify_max_per_scan", "Maks. powiadomień Windows na odświeżenie", "int", 1, 50),
         ]))
 
-        tg = QGroupBox("Telegram")
+        from ..core.secret_store import is_encrypted
+        from ..services.telegram_queue import QUIET_MODES
+
+        howto = QLabel(
+            "<b>Jak połączyć Telegram (raz, ok. 2 minut):</b><ol>"
+            "<li>W Telegramie wyszukaj <b>@BotFather</b> (niebieski znaczek weryfikacji) i napisz <code>/newbot</code>.</li>"
+            "<li>Podaj nazwę bota (np. <i>Mój PhoneBot</i>) i jego login kończący się na <i>bot</i> "
+            "(np. <i>kacwin_phone_bot</i>).</li>"
+            "<li>BotFather odpisze <b>tokenem</b> w rodzaju <code>123456789:AAH…</code> — skopiuj go do pola "
+            "„Token bota” poniżej. Nikomu go nie pokazuj.</li>"
+            "<li>Otwórz rozmowę ze swoim nowym botem (link w wiadomości od BotFather) i wyślij mu <code>/start</code>.</li>"
+            "<li>Kliknij <b>„Pobierz chat ID”</b> — program odczyta numer Twojej rozmowy z botem.</li>"
+            "<li>Kliknij <b>„Wyślij test”</b>, zaznacz „Wysyłaj powiadomienia na Telegram” i zapisz.</li></ol>")
+        howto.setWordWrap(True)
+        howto.setTextFormat(Qt.TextFormat.RichText)
+
+        tg = QGroupBox("Telegram — połączenie")
         tg_form = self._form([Field("telegram_enabled", "Wysyłaj powiadomienia na Telegram", "bool")])
         self.tg_token = QLineEdit(s.telegram_bot_token)
+        self.tg_token.setObjectName("telegram_token")
         self.tg_token.setEchoMode(QLineEdit.EchoMode.Password)
         self.tg_token.setPlaceholderText("token od @BotFather, np. 123456:ABC…")
         self.tg_chat = QLineEdit(s.telegram_chat_id)
+        self.tg_chat.setObjectName("telegram_chat")
         self.tg_chat.setPlaceholderText("np. 123456789")
         find_btn, test_btn = QPushButton("Pobierz chat ID"), QPushButton("Wyślij test")
         find_btn.clicked.connect(self._telegram_find_chat)
         test_btn.clicked.connect(self._telegram_test)
-        self.tg_status = QLabel("Instrukcja: README → „Powiadomienia Telegram”.")
+        self.tg_status = QLabel("")
         self.tg_status.setWordWrap(True)
-        self.tg_status.setStyleSheet("color: #868e96;")
+        self.tg_status.setObjectName("muted")
         row = QHBoxLayout()
         row.addWidget(self.tg_chat, 1)
         row.addWidget(find_btn)
@@ -835,11 +858,33 @@ class SettingsDialog(QDialog):
         self._readers.append(lambda st: (setattr(st, "telegram_bot_token", self.tg_token.text().strip()),
                                          setattr(st, "telegram_chat_id", self.tg_chat.text().strip())))
 
-        note = QLabel("Uwaga: token Telegrama jest zapisywany w lokalnej bazie aplikacji "
-                      "(%LOCALAPPDATA%\\PhoneBot) bez szyfrowania — nie udostępniaj tego pliku.")
+        what = QGroupBox("Kiedy wysyłać (oferta musi być w „Wybrane” i spełnić te kryteria)")
+        what_form = QFormLayout()
+        self.telegram_verdicts = self._criteria_form("telegram_criteria", what_form)
+        self._form([
+            Field("telegram_price_drops", "Obniżka ceny oferty z „Wybrane”", "bool"),
+            Field("telegram_photos", "Miniatura zdjęcia w wiadomości", "bool"),
+            Field("telegram_max_per_hour", "Najwyżej wiadomości na godzinę", "int", 1, 60,
+                  tip="Nadmiar trafia do jednej wiadomości z podsumowaniem"),
+        ], what_form)
+        what.setLayout(what_form)
+        quiet = QGroupBox("Cisza nocna")
+        quiet.setLayout(self._form([
+            Field("telegram_quiet_enabled", "Nie wysyłaj w nocy", "bool"),
+            Field("telegram_quiet_start", "Od godziny", "int", 0, 23, 1, ":00"),
+            Field("telegram_quiet_end", "Do godziny", "int", 0, 23, 1, ":00"),
+            Field("telegram_quiet_mode", "Oferty z nocy", "choice", choices=QUIET_MODES),
+        ]))
+        info = ("Każda oferta jest zgłaszana tylko raz (zapisane w bazie), nigdy oferty sprzed pierwszego włączenia "
+                "powiadomień. Wiadomości, których nie udało się wysłać (brak internetu), są ponawiane w tle.")
+        secure = ("Token i chat ID są zapisywane osobno, zaszyfrowane kontem Windows (DPAPI) — nie w kodzie ani "
+                  "w zwykłych ustawieniach." if is_encrypted() else
+                  "Token i chat ID są zapisywane osobno, poza zwykłymi ustawieniami (szyfrowanie DPAPI działa "
+                  "w wersji dla Windows).")
+        note = QLabel(f"{info}<br>{secure}")
         note.setWordWrap(True)
-        note.setStyleSheet("color: #868e96;")
-        return self._page(general, tg, note)
+        note.setObjectName("muted")
+        return self._page(general, howto, tg, what, quiet, note)
 
     def _run_bg(self, func, on_ok, status: QLabel | None = None) -> None:
         """Zadanie w tle; wynik trafia do ``on_ok`` w wątku okna (metody okna, nie lambdy — patrz niżej)."""
