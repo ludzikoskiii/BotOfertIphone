@@ -60,6 +60,27 @@ class Probe:
     markers: list[str] = field(default_factory=list)
     snippet: str = ""
     error: str | None = None
+    extracted: str = ""  # oferty odczytane uniwersalnym ekstraktorem (JSON / JSON-LD)
+    html_sample: str = ""  # fragment HTML wokół pierwszej ceny (do pisania parsera)
+
+
+def _html_sample(text: str) -> str:
+    i = text.find(" zł")
+    if i < 0:
+        return ""
+    return text[max(0, i - 1200): i + 300].replace("\n", " ")
+
+
+def _extracted(text: str, url: str) -> str:
+    from .sources.extract import embedded_json, offers_from_html
+
+    offers = offers_from_html(text, url)
+    types = []
+    for block in embedded_json(text):
+        items = block if isinstance(block, list) else [block]
+        types += [str(b.get("@type")) for b in items if isinstance(b, dict) and "@type" in b]
+    head = "; ".join(f"{o.price:.0f} {o.currency} | {o.title[:50]} | {o.url}" for o in offers[:3])
+    return f"{len(offers)} ofert, typy JSON-LD: {types[:10]}; przykłady: {head}"
 
 
 def _json_summary(text: str) -> str:
@@ -190,6 +211,10 @@ async def run_probes(probes: list[Probe]) -> list[Probe]:
             p.markers = [m for m in ("__PRERENDERED_STATE__", "__NEXT_DATA__", "application/ld+json",
                                      "datadome", "captcha", "cf-chl") if m.lower() in low]
             p.snippet = text[:400].replace("\n", " ")
+            if "html" in p.content_type:
+                p.extracted = _extracted(text, p.url)
+                if "sprzedajemy" in p.url:
+                    p.html_sample = _html_sample(text)
     return probes
 
 
@@ -233,6 +258,10 @@ def format_report(data: dict[str, Any]) -> str:
         lines.append(f"{p['name']}: {p['method']} {p['url'][:150]}")
         lines.append(f"    status={p['status']} typ={p['content_type']} bajtów={p['bytes']} blokada={p['blocked']} "
                      f"cookies={p['set_cookies']} znaczniki={p['markers']} błąd={p['error']}")
+        if p.get("extracted"):
+            lines.append(f"    ekstraktor: {p['extracted'][:1200]}")
+        if p.get("html_sample"):
+            lines.append(f"    HTML: {p['html_sample']}")
         if p["json_summary"]:
             lines.append(f"    JSON: {p['json_summary'][:1800]}")
         elif p["status"] and (p["status"] >= 400 or not p["markers"]):
