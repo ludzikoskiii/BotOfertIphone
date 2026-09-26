@@ -36,6 +36,7 @@ class SourceReport:
     new: int = 0
     skipped: int = 0
     error: str | None = None
+    kind: str = "ok"  # ok | empty | error | network | blocked | changed | timeout
     seconds: float = 0.0
 
     @property
@@ -102,7 +103,10 @@ class Scanner:
                 OfferRepository(self.conn).deactivate_missing(
                     adapter.key, utcnow() - timedelta(days=s.offer_stale_days)
                 )
-            runs.finish(run_id, found=src_report.found, new=src_report.new, error=src_report.error)
+            if src_report.ok and src_report.saved == 0:
+                src_report.kind = "empty"  # działa technicznie, ale nic nie zwrócił — możliwa zmiana formatu
+            runs.finish(run_id, found=src_report.found, new=src_report.new, error=src_report.error,
+                        status=src_report.kind)
             report.sources.append(src_report)
         progress(_summary(report))
         return report
@@ -119,9 +123,11 @@ class Scanner:
             progress(f"{adapter.display_name}: pobrano {len(offers)} ofert")
         except TimeoutError:
             rep.error = f"przekroczono limit czasu ({self.settings.source_timeout_s:.0f} s)"
+            rep.kind = "timeout"
         except Exception as e:  # izolacja awarii źródła
             log.exception("Błąd źródła %s", adapter.key)
             rep.error = str(e) or e.__class__.__name__
+            rep.kind = getattr(e, "kind", "error")
         if rep.error:
             progress(f"{adapter.display_name}: błąd — {rep.error}")
         rep.seconds = round(time.monotonic() - start, 1)

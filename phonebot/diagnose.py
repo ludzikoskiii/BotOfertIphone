@@ -70,9 +70,11 @@ def _json_summary(text: str) -> str:
         parts = [f"klucze: {sorted(data)[:25]}"]
         for key, value in data.items():
             if isinstance(value, list) and value and isinstance(value[0], dict):
+                first = {k: v for k, v in value[0].items() if k not in ("photo", "photos", "thumbnails")}
                 parts.append(f"{key}[{len(value)}] pierwszy element: "
-                             + json.dumps(value[0], ensure_ascii=False)[:1500])
-                break
+                             + json.dumps(first, ensure_ascii=False)[:3000])
+            elif isinstance(value, dict) and key in ("pagination", "links", "metadata"):
+                parts.append(f"{key}: " + json.dumps(value, ensure_ascii=False)[:500])
         return " | ".join(parts)
     return f"typ: {type(data).__name__}"
 
@@ -131,8 +133,11 @@ def default_probes() -> list[Probe]:
         Probe("Vinted strona (sesja)", "https://www.vinted.pl/catalog?search_text=iphone", method="HEAD"),
         Probe("Vinted stary API", "https://www.vinted.pl/api/v2/catalog/items?search_text=iphone&per_page=5",
               headers={"Accept": "application/json"}),
-        Probe("Vinted nowy API", "https://api.vinted.pl/svc-catalogue/items?search_text=iphone&per_page=5"
-                                 "&order=newest_first", headers={"Accept": "application/json"}),
+        Probe("Vinted nowy API", "https://api.vinted.pl/svc-catalogue/items?search_text=iphone%2013&per_page=3"
+                                 "&order=newest_first&page=2", headers={"Accept": "application/json"}),
+        Probe("Vinted nowy API z cenami", "https://api.vinted.pl/svc-catalogue/items?search_text=iphone%2013"
+                                          "&per_page=3&order=newest_first&price_from=500&price_to=3000",
+              headers={"Accept": "application/json", "Accept-Language": "pl-PL,pl;q=0.9"}),
         Probe("Allegro Lokalnie", "https://allegrolokalnie.pl/oferty/q/iphone%2013"),
         Probe("Sprzedajemy.pl", "https://sprzedajemy.pl/wszystkie-ogloszenia?inp_text=iphone+13"),
     ]

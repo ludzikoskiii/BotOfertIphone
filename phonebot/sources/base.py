@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import ClassVar
 
 from ..core.models import Mode, RawOffer
+from ..net.http import HttpError
 
 
 @dataclass
@@ -33,6 +34,65 @@ def search_phrases(watched_models: list[str], mode: Mode) -> list[str]:
 
 class SourceError(Exception):
     """Błąd źródła — izolowany na poziomie adaptera, nie przerywa pozostałych."""
+
+    kind = "error"
+
+
+class SourceNetworkError(SourceError):
+    """Brak połączenia z portalem (internet, DNS, proxy, timeout)."""
+
+    kind = "network"
+
+
+class SourceBlocked(SourceError):
+    """Portal blokuje automatyczne pobieranie (403/429, captcha, ochrona antybotowa)."""
+
+    kind = "blocked"
+
+
+class SourceFormatChanged(SourceError):
+    """Portal zmienił adres API lub strukturę danych — adapter wymaga aktualizacji."""
+
+    kind = "changed"
+
+
+def source_error_from_http(e: HttpError, context: str = "") -> SourceError:
+    """Zamienia błąd HTTP na kategorię błędu źródła (do statusu w GUI)."""
+    prefix = f"{context}: " if context else ""
+    if e.network:
+        return SourceNetworkError(f"{prefix}{e}")
+    if e.blocked or e.status in (401, 403, 429):
+        return SourceBlocked(f"{prefix}{e} — portal blokuje automatyczne pobieranie")
+    if e.status in (404, 410):
+        return SourceFormatChanged(f"{prefix}{e} — adres API już nie istnieje (portal zmienił API)")
+    if e.status is None:  # np. odpowiedź nie jest JSON-em
+        return SourceFormatChanged(f"{prefix}{e}")
+    return SourceError(f"{prefix}{e}")
+
+
+async def search_all_phrases(phrases: list[str], search_phrase) -> list:
+    """Wspólna pętla po frazach: przerywa przy blokadzie/braku sieci, zwraca zebrane oferty.
+
+    ``search_phrase(phrase, out)`` dopisuje oferty do słownika ``out``.
+    Gdy żadna fraza nic nie zwróciła i wystąpił błąd — rzuca najpoważniejszy błąd.
+    """
+    out: dict = {}
+    errors: list[SourceError] = []
+    for phrase in phrases:
+        try:
+            await search_phrase(phrase, out)
+        except HttpError as e:
+            err = source_error_from_http(e, f"„{phrase}”")
+            errors.append(err)
+            if isinstance(err, (SourceBlocked, SourceNetworkError, SourceFormatChanged)):
+                break
+        except SourceError as e:
+            errors.append(e)
+            if e.kind != "error":  # blokada / sieć / zmiana formatu — kolejne frazy nic nie dadzą
+                break
+    if errors and not out:
+        raise errors[0]
+    return list(out.values())
 
 
 class SourceAdapter(abc.ABC):

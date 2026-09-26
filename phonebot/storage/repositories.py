@@ -263,12 +263,20 @@ class FetchRunRepository:
         )
         return int(cur.lastrowid)
 
-    def finish(self, run_id: int, *, found: int, new: int, error: str | None = None) -> None:
+    def finish(self, run_id: int, *, found: int, new: int, error: str | None = None,
+               status: str | None = None) -> None:
         self.conn.execute(
             "UPDATE fetch_runs SET finished_at = ?, status = ?, offers_found = ?, new_offers = ?, error = ? "
             "WHERE id = ?",
-            (_iso(utcnow()), "error" if error else "ok", found, new, error, run_id),
+            (_iso(utcnow()), status or ("error" if error else "ok"), found, new, error, run_id),
         )
+
+    def latest_by_source(self) -> dict[str, sqlite3.Row]:
+        """Ostatni zakończony przebieg każdego źródła (do statusu w GUI)."""
+        rows = self.conn.execute(
+            "SELECT * FROM fetch_runs WHERE id IN (SELECT MAX(id) FROM fetch_runs "
+            "WHERE finished_at IS NOT NULL GROUP BY source)")
+        return {r["source"]: r for r in rows}
 
     def last_runs(self, limit: int = 20) -> list[sqlite3.Row]:
         return list(self.conn.execute("SELECT * FROM fetch_runs ORDER BY id DESC LIMIT ?", (limit,)))
