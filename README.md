@@ -296,7 +296,7 @@ graficzną po 5 minutach bezczynności.
 
 **Sprawdzone na prawdziwej Ollamie** (workflow **ollama-check**: kod programu, `qwen3:8b`, 16 opisów
 z pułapkami — zaprzeczenia „ekran cały”, „Face ID działa”, „bez blokad”, ogłoszenia „kupię”/„zamienię”,
-samo etui i pudełko): **95% zgodności pól** (41 z 43). Pierwsza wersja promptu miała 79% — model dopisywał
+samo etui i pudełko): **98% zgodności pól** (42 z 43). Pierwsza wersja promptu miała 79% — model dopisywał
 usterki mimo zaprzeczeń; stąd zasada cytatów (niżej). Tryb „myślenia” Qwen3 dał 93% przy ok. 5× dłuższym
 czasie, więc jest domyślnie wyłączony (można go włączyć w ustawieniach). Na procesorze serwera testowego
 opis trwał ok. 25 s; na karcie graficznej — kilka sekund.
