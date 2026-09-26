@@ -73,7 +73,8 @@ def run_post_scan(conn: sqlite3.Connection, settings: Settings, report: ScanRepo
     result.green = [GreenOffer(o.id, offer_headline(o, v), v.expected_profit, o.raw.url, r) for o, v, r in greens]
     if settings.telegram_enabled:
         try:
-            queue = TelegramQueue(conn, settings)
+            link = settings.web_url if settings.web_enabled and settings.web_url else None
+            queue = TelegramQueue(conn, settings, details_base_url=link)  # link „Szczegóły w PhoneBot”
             result.telegram_queued = queue.enqueue_scan(report.new_offer_ids, report.price_drop_ids,
                                                         evaluator.evaluate)
             client = telegram or TelegramClient(settings.telegram_bot_token, settings.telegram_chat_id)

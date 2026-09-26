@@ -232,6 +232,7 @@ class SettingsDialog(QDialog):
         tabs.addTab(self._ai_tab(), "AI lokalne")
         tabs.addTab(self._messages_tab(), "Wiadomości")
         tabs.addTab(self._notify_tab(), "Powiadomienia")
+        tabs.addTab(self._phone_tab(), "Telefon")
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
         buttons.button(QDialogButtonBox.StandardButton.Save).setText("Zapisz")
@@ -886,6 +887,87 @@ class SettingsDialog(QDialog):
         note.setObjectName("muted")
         return self._page(general, howto, tg, what, quiet, note)
 
+    def _phone_tab(self) -> QWidget:
+        from ..web.auth import MIN_PIN_LEN
+        from ..web.server import BIND_MODES, DEFAULT_PORT
+
+        howto = QLabel(
+            "<b>PhoneBot na telefonie — przez Tailscale (za darmo, bez wystawiania do internetu):</b><ol>"
+            "<li>Na tym komputerze zainstaluj <b>Tailscale</b> (<i>tailscale.com/download</i>, Windows) i zaloguj "
+            "się (konto Google, Microsoft albo GitHub; plan Personal jest darmowy).</li>"
+            "<li>Na telefonie zainstaluj aplikację <b>Tailscale</b> (Google Play / App Store) i zaloguj się "
+            "<b>tym samym kontem</b>. Komputer i telefon są teraz w Twojej prywatnej sieci.</li>"
+            "<li>Poniżej ustaw <b>PIN</b>, zaznacz „Włącz wersję na telefon”, zostaw „Tylko ten komputer” i zapisz.</li>"
+            "<li>Na komputerze otwórz <b>Wiersz polecenia</b> (cmd) i wpisz: "
+            f"<code>tailscale serve --bg {DEFAULT_PORT}</code>. Tailscale udostępni program pod adresem "
+            "<code>https://NAZWA-KOMPUTERA.NAZWA-SIECI.ts.net</code> — <b>tylko w Twojej sieci Tailscale</b>. "
+            "Adres pokaże polecenie <code>tailscale serve status</code> (przy pierwszym razie Tailscale może "
+            "poprosić o włączenie certyfikatów HTTPS w panelu — potwierdź).</li>"
+            "<li>Wklej ten adres w pole „Adres dla telefonu” — z niego korzystają linki w powiadomieniach Telegram.</li>"
+            "<li>Na telefonie (z włączonym Tailscale) otwórz adres, podaj PIN. Chrome: menu ⋮ → „Dodaj do ekranu "
+            "głównego”; Safari: Udostępnij → „Do ekranu początkowego”.</li></ol>"
+            "⚠️ <b>Nigdy nie używaj <code>tailscale funnel</code></b> — to wystawia usługę publicznie do internetu. "
+            "Nie przekierowuj też portu na routerze. Program i tak nasłuchuje wyłącznie na tym komputerze albo "
+            "na adresie Tailscale (100.x.y.z) — inne adresy są zablokowane w kodzie.<br><br>"
+            "Bez polecenia <code>tailscale serve</code>: wybierz „Adres Tailscale 100.x.y.z” i otwórz na telefonie "
+            f"<code>http://100.x.y.z:{DEFAULT_PORT}</code> (adres komputera z aplikacji Tailscale). Połączenie "
+            "i tak jest szyfrowane przez Tailscale, ale Android nie zainstaluje wtedy strony jako aplikacji "
+            "(zadziała zwykły skrót na ekranie).")
+        howto.setWordWrap(True)
+        howto.setTextFormat(Qt.TextFormat.RichText)
+        server = QGroupBox("Serwer")
+        form = self._form([
+            Field("web_enabled", "Włącz wersję na telefon", "bool"),
+            Field("web_bind", "Dostęp", "choice", choices=BIND_MODES),
+            Field("web_port", "Port", "int", 1024, 65535),
+        ])
+        self.web_url = QLineEdit(self.settings.web_url)
+        self.web_url.setObjectName("web_url")
+        self.web_url.setPlaceholderText("np. https://moj-pc.tail1234.ts.net albo http://100.101.102.103:8765")
+        form.addRow("Adres dla telefonu:", self.web_url)
+        self._readers.append(lambda st: setattr(st, "web_url", self.web_url.text().strip().rstrip("/")))
+        self.web_pin = QLineEdit()
+        self.web_pin.setObjectName("web_pin")
+        self.web_pin.setEchoMode(QLineEdit.EchoMode.Password)
+        self.web_pin2 = QLineEdit()
+        self.web_pin2.setObjectName("web_pin2")
+        self.web_pin2.setEchoMode(QLineEdit.EchoMode.Password)
+        state = "PIN jest ustawiony — wpisz nowy, aby go zmienić" if self.settings.web_pin_hash else "PIN nie jest ustawiony"
+        self.web_pin.setPlaceholderText(state)
+        self.web_pin2.setPlaceholderText("powtórz PIN")
+        form.addRow("Nowy PIN:", self.web_pin)
+        form.addRow("Powtórz PIN:", self.web_pin2)
+        self.web_status = QLabel(f"PIN: co najmniej {MIN_PIN_LEN} znaki (najlepiej 6+ cyfr). Zmiana PIN-u wylogowuje "
+                                 "wszystkie telefony. PIN jest zapisywany jako skrót (PBKDF2), zaszyfrowany jak token "
+                                 "Telegrama.")
+        self.web_status.setWordWrap(True)
+        self.web_status.setObjectName("muted")
+        form.addRow(self.web_status)
+        server.setLayout(form)
+        return self._page(howto, server)
+
+    def _pin_error(self) -> str | None:
+        from ..web.auth import MIN_PIN_LEN
+
+        pin, pin2 = self.web_pin.text(), self.web_pin2.text()
+        if not pin and not pin2:
+            return None
+        if len(pin) < MIN_PIN_LEN:
+            return f"PIN musi mieć co najmniej {MIN_PIN_LEN} znaki."
+        if pin != pin2:
+            return "PIN-y się różnią."
+        return None
+
+    def accept(self) -> None:
+        from PySide6.QtWidgets import QMessageBox
+
+        error = self._pin_error()
+        if error:
+            self.web_status.setText(f"❌ {error}")
+            QMessageBox.warning(self, "PIN", error)
+            return
+        super().accept()
+
     def _run_bg(self, func, on_ok, status: QLabel | None = None) -> None:
         """Zadanie w tle; wynik trafia do ``on_ok`` w wątku okna (metody okna, nie lambdy — patrz niżej)."""
         from .workers import FuncWorker, start_in_thread
@@ -933,6 +1015,10 @@ class SettingsDialog(QDialog):
         result = copy.deepcopy(self.settings)
         for read in self._readers:
             read(result)
+        if self.web_pin.text() and self._pin_error() is None:
+            from ..web.auth import hash_pin
+
+            result.web_pin_hash = hash_pin(self.web_pin.text())
         if result.score_yellow > result.score_green:
             result.score_yellow = result.score_green
         return result

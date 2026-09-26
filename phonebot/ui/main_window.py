@@ -206,6 +206,12 @@ class MainWindow(QMainWindow):
         self.telegram_timer.start()
         self._configure_timer()
         self.refresh_source_status()
+        # wersja na telefon (serwer www w tle): włączana w Ustawieniach → Telefon
+        self.web = None
+        self._web_changes = 0
+        self.web_timer = QTimer(self, interval=3000)  # zmiany z telefonu (obserwuj, ukryj…) → odśwież tabelę
+        self.web_timer.timeout.connect(self._web_poll)
+        self._configure_web()
         self._apply_filter_rules()
         self.reload()
         # sprzątanie starych miniatur po starcie, żeby nie opóźniać otwarcia okna
@@ -580,8 +586,11 @@ class MainWindow(QMainWindow):
         self.ai_label = QLabel("AI: wyłączone")
         self.ai_label.setObjectName("muted")
         self.ai_label.setToolTip("Lokalne AI: klasyfikator tytułów i analiza zdjęć (działa na Twoim komputerze)")
+        self.web_label = QLabel()
+        self.web_label.setObjectName("muted")
+        self.web_label.hide()
         for w in (self.count_label, self._sep(), self.refresh_label, self._sep(), self.source_status, self._sep(),
-                  self.ai_label, self._sep(), self.auto_label):
+                  self.ai_label, self._sep(), self.web_label, self.auto_label):
             bar.addPermanentWidget(w)
         self.refresh_source_status()
 
@@ -738,6 +747,8 @@ class MainWindow(QMainWindow):
         rows = Evaluator(self.conn, self.settings).evaluate_all(offers)
         self.model.set_rows(rows)
         self._mark_picked()
+        if getattr(self, "web", None) is not None:
+            self.web.app.invalidate()
         self.stack.setCurrentWidget(self.table if rows else self.empty_label)
         self._select_offer(selected)
         self._update_count()
@@ -927,6 +938,13 @@ class MainWindow(QMainWindow):
             self.apply_appearance()
         self.settings_repo.save(settings)
         self.limiter.delay_s = settings.request_delay_s
+        web_keys = ("web_enabled", "web_port", "web_bind", "web_url", "web_pin_hash")
+        if any(getattr(settings, k) != getattr(old, k) for k in web_keys):
+            if settings.web_pin_hash != old.web_pin_hash and self.web is not None:
+                self.web.app.sessions.revoke_all()  # nowy PIN — telefony muszą zalogować się ponownie
+            self._configure_web()
+        elif self.web is not None:
+            self.web.update_settings(settings)
         if settings.telegram_enabled:
             from ..services.telegram_queue import TelegramQueue
 
@@ -1026,6 +1044,40 @@ class MainWindow(QMainWindow):
         self._worker = worker
         self._thread = start_in_thread(worker, self)
         self._thread.finished.connect(self._thread_done)
+
+    # ------------------------------------------------------ wersja na telefon ---
+
+    def _configure_web(self) -> None:
+        from ..web.server import WebError, WebServer
+
+        s = self.settings
+        if not s.web_enabled:
+            if self.web is not None:
+                self.web.stop()
+            self.web_timer.stop()
+            self.web_label.hide()
+            return
+        if self.web is None:
+            self.web = WebServer(self.db_path, s)
+        try:
+            url = self.web.start(s)
+        except WebError as e:
+            self.web_label.setText("📱 Telefon: BŁĄD")
+            self.web_label.setToolTip(f"Wersja na telefon nie działa: {e}")
+            self.web_label.show()
+            self._status.setText(f"Wersja na telefon: {e}")
+            return
+        self._web_changes = self.web.app.changes
+        self.web_timer.start()
+        self.web_label.setText("📱 Telefon: działa")
+        self.web_label.setToolTip(f"Serwer na {url}" + (f"\nAdres dla telefonu: {s.web_url}" if s.web_url else "")
+                                  + "\nDostęp tylko z tego komputera albo przez Tailscale, z PIN-em.")
+        self.web_label.show()
+
+    def _web_poll(self) -> None:
+        if self.web is not None and self.web.app.changes != self._web_changes:
+            self._web_changes = self.web.app.changes
+            self.reload()
 
     def flush_telegram(self) -> bool:
         """Wysyła zaległe powiadomienia Telegram w wątku roboczym (nigdy dwa naraz). Zwraca, czy uruchomiono."""
@@ -1189,6 +1241,8 @@ class MainWindow(QMainWindow):
             return
         self.refresh_timer.stop()
         self._save_ui_state()
+        if self.web is not None:
+            self.web.stop()
         if self.tray is not None:
             self.tray.hide()
         if self.quit_on_close:

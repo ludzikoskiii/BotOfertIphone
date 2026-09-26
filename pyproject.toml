@@ -1,6 +1,6 @@
 [project]
 name = "phonebot"
-version = "1.8.0"
+version = "1.9.0"
 description = "Wyszukiwarka i wycena opłacalnych ofert używanych iPhone'ów (Allegro Lokalnie, Vinted, Sprzedajemy.pl)"
 requires-python = ">=3.11"
 dependencies = [

@@ -239,6 +239,12 @@ class Settings:
     telegram_quiet_start: int = 22  # godzina
     telegram_quiet_end: int = 7
     telegram_quiet_mode: str = "batch"  # batch — wyślij rano | skip — pomiń
+    # --- wersja na telefon (serwer www w tle; tylko ten komputer albo Tailscale, z PIN-em) ---
+    web_enabled: bool = False
+    web_port: int = 8765
+    web_bind: str = "localhost"  # localhost (z „tailscale serve”) | tailscale (adres 100.x.y.z)
+    web_url: str = ""  # adres dla telefonu, np. https://moj-pc.tail1234.ts.net — linki w Telegramie
+    web_pin_hash: str = ""  # hash PBKDF2 PIN-u; zapisywany zaszyfrowany osobno, jak token Telegrama
 
     # --- wygląd ---
     ui_theme: str = "system"  # system | light | dark

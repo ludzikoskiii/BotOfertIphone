@@ -62,9 +62,30 @@ def _self_test() -> str:
     window = MainWindow(conn, tmp / "selftest.sqlite3", thumbs_dir=tmp)
     window._quitting = True
     window.close()
+    web = _web_self_test(tmp / "selftest.sqlite3")
     conn.close()
     app.processEvents()
-    return f"PhoneBot {__version__} self-test OK; portale: {', '.join(sorted(REGISTRY))}; {ai}; {secrets}"
+    return f"PhoneBot {__version__} self-test OK; portale: {', '.join(sorted(REGISTRY))}; {ai}; {secrets}; {web}"
+
+
+def _web_self_test(db_path) -> str:
+    """Wersja na telefon: serwer na 127.0.0.1, logowanie PIN-em, strona listy, ikona PWA."""
+    import httpx
+
+    from .core.settings import Settings
+    from .web.auth import hash_pin
+    from .web.server import WebServer
+
+    settings = Settings(web_enabled=True, web_port=0, web_pin_hash=hash_pin("2468"))
+    server = WebServer(db_path, settings)
+    server.start(settings)
+    try:
+        with httpx.Client(base_url=server.local_url(), follow_redirects=True, trust_env=False, timeout=10) as c:
+            if c.post("/login", data={"pin": "2468"}).status_code != 200 or c.get("/icon-192.png").content[:4] != b"\x89PNG":
+                raise RuntimeError("wersja na telefon nie działa")
+    finally:
+        server.stop()
+    return "telefon (www) OK"
 
 
 def diagnose_cli() -> int:

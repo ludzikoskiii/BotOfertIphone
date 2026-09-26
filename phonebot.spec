@@ -4,7 +4,7 @@ import sys
 
 from PyInstaller.utils.hooks import collect_submodules
 
-hiddenimports = collect_submodules("phonebot.sources") + ["selectolax.parser"]
+hiddenimports = collect_submodules("phonebot.sources") + collect_submodules("phonebot.web") + ["selectolax.parser"]
 # lokalne AI: model tytułów zapisany przez joblib odwołuje się do tych klas przy wczytywaniu
 hiddenimports += ["sklearn.pipeline", "sklearn.feature_extraction.text", "sklearn.linear_model._logistic",
                   "phonebot.ml.text_model", "onnxruntime", "PIL.JpegImagePlugin", "PIL.PngImagePlugin",
