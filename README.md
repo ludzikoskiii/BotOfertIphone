@@ -3,7 +3,7 @@
 Aplikacja desktopowa (Windows) do wyszukiwania ofert używanych iPhone'ów na
 Allegro Lokalnie, Vinted i Sprzedajemy.pl, wyceny ich opłacalności i podpowiadania, czy i za ile kupić.
 
-> **Status: wersja 1.4.1.** Trzy portale, wycena, werdykty i negocjacje, filtry, zabezpieczenia werdyktu,
+> **Status: wersja 1.5.0.** Trzy portale, wycena, werdykty i negocjacje, filtry, zabezpieczenia werdyktu,
 > **darmowe lokalne AI** (klasyfikator tytułów, analiza zdjęć, opcjonalnie model językowy w Ollamie),
 > szablony wiadomości do sprzedającego, automatyczne odświeżanie, powiadomienia Windows i Telegram
 > oraz gotowy plik `PhoneBot.exe`. Program nie korzysta z żadnych płatnych usług.
@@ -354,8 +354,17 @@ i „▤ Szczegóły” (Ctrl+D). Ich szerokość zmienisz, przeciągając kraw�
   Pozostałe (zdjęcie, stan, bateria, wartość rynkowa, ocena, czerwone flagi, lokalizacja, data dodania,
   link) włączasz w menu **„▦ Kolumny”** albo prawym przyciskiem na nagłówku. Kolumny można przeciągać
   i poszerzać; „Przywróć domyślne kolumny” cofa zmiany. Nagłówek jest zawsze widoczny przy przewijaniu.
-- Każdą kolumnę można sortować kliknięciem nagłówka. Domyślnie tabela jest posortowana
-  po szacowanym zysku, malejąco.
+- **Sortowanie** (pasek „Sortuj:” nad tabelą albo nagłówki kolumn):
+  - do trzech poziomów, np. „Werdykt, potem Zysk”: drugi poziom rozstrzyga remisy pierwszego;
+  - przycisk obok pola (np. „↓ największy” / „↑ najmniejszy”) odwraca kierunek jednym kliknięciem;
+  - klik w nagłówek sortuje po tej kolumnie, drugi klik odwraca kierunek; **Shift+klik** dodaje kolumnę
+    jako kolejny poziom (w nagłówku widać numer poziomu i kierunek, np. „Pamięć ²↓”);
+  - **Model** sortuje się w kolejności generacji (… 11, 11 Pro, 11 Pro Max, SE 2020, 12 mini, 12, 12 Pro,
+    12 Pro Max, 13 mini, 13 …), a w ramach modelu po pamięci;
+  - „Gotowe ▾” — gotowe zestawy (najlepsze okazje, największy zysk, najtańsze, model i pamięć, najnowsze);
+  - oferty bez wartości (np. bez wyliczonego zysku) są zawsze na końcu;
+  - domyślnie: werdykt (najlepszy najpierw), potem zysk malejąco; ostatnie sortowanie jest zapamiętywane
+    między uruchomieniami. Sortowanie nie wycenia ofert od nowa — działa natychmiast.
 - **Werdykt** to kolorowa etykieta z tekstem: 🟢 KUPUJ, 🟡 NEGOCJUJ, ⚪ DO WERYFIKACJI, 🔴 ODPUŚĆ.
   Ocena 0–100 jest w podpowiedzi i w kolumnie „Ocena”. Tło wierszy jest neutralne,
   a oferty obserwowane są lekko wyróżnione.

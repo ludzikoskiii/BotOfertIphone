@@ -1,4 +1,4 @@
-"""Model tabeli ofert (Qt model/view) z kluczami sortowania dla każdej kolumny."""
+"""Model tabeli ofert (Qt model/view) z sortowaniem wielopoziomowym (``core.sorting``)."""
 from __future__ import annotations
 
 from collections import defaultdict
@@ -6,21 +6,20 @@ from datetime import datetime
 from enum import IntEnum
 from typing import Any
 
-from PySide6.QtCore import QAbstractTableModel, QModelIndex, QPersistentModelIndex, QRectF, Qt
+from PySide6.QtCore import QAbstractTableModel, QModelIndex, QPersistentModelIndex, QRectF, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QFont, QPainter
 from PySide6.QtWidgets import QStyle, QStyledItemDelegate, QStyleOptionViewItem
 
 from ..core.catalog import format_storage
 from ..core.models import Offer, OfferStatus, Severity, Valuation, Verdict
+from ..core.sorting import DEFAULT_SORT, SortLevel, level, normalize, sort_rows
 from ..sources import SOURCE_NAMES
 from .images import ThumbnailCache
 from .theme import FLAG_MARK, WATCHED_MARK, Palette, current
 
-SORT_ROLE = Qt.ItemDataRole.UserRole + 1
 OFFER_ROLE = Qt.ItemDataRole.UserRole + 2
 VERDICT_ROLE = Qt.ItemDataRole.UserRole + 3
 
-_NO_VALUE = float("-inf")
 _RIGHT = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
 _CENTER = Qt.AlignmentFlag.AlignCenter
 _LEFT = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
@@ -65,6 +64,13 @@ HEADERS = {
 }
 NUMERIC = {Col.PRICE, Col.MARKET, Col.PROFIT, Col.MAX_BUY, Col.BATTERY, Col.SCORE}
 ALWAYS_VISIBLE = {Col.MODEL}
+# pole sortowania dla kolumny (kliknięcie nagłówka); „Link” nie sortuje
+COL_FIELD = {Col.PHOTO: "photos", Col.MODEL: "model", Col.STORAGE: "storage", Col.PRICE: "price",
+             Col.PROFIT: "profit", Col.MAX_BUY: "max_buy", Col.VERDICT: "verdict", Col.SOURCE: "source",
+             Col.CONDITION: "condition", Col.BATTERY: "battery", Col.MARKET: "market", Col.SCORE: "score",
+             Col.FLAGS: "flags", Col.LOCATION: "distance", Col.ADDED: "added"}
+FIELD_COL = {f: c for c, f in COL_FIELD.items()}
+_SUPERSCRIPT = {2: "²", 3: "³"}
 DEFAULT_WIDTHS = {Col.PHOTO: 84, Col.MODEL: 150, Col.STORAGE: 80, Col.PRICE: 95, Col.PROFIT: 110,
                   Col.MAX_BUY: 140, Col.VERDICT: 115, Col.SOURCE: 130, Col.CONDITION: 125, Col.BATTERY: 85,
                   Col.MARKET: 140, Col.SCORE: 75, Col.FLAGS: 220, Col.LOCATION: 170, Col.ADDED: 110, Col.LINK: 80}
@@ -96,14 +102,15 @@ def format_dt(dt: datetime | None) -> str:
 
 
 class OffersTableModel(QAbstractTableModel):
+    sort_changed = Signal()  # zmiana sortowania (do zapisania w ustawieniach i odświeżenia paska sortowania)
+
     def __init__(self, thumbs: ThumbnailCache, parent=None):
         super().__init__(parent)
         self._rows: list[tuple[Offer, Valuation]] = []
         self._thumbs = thumbs
         self._rows_by_photo: dict[str, list[int]] = defaultdict(list)
         self._row_by_id: dict[int, int] = {}
-        self._sort_col: Col | None = Col.PROFIT
-        self._sort_order = Qt.SortOrder.DescendingOrder
+        self._spec: tuple[SortLevel, ...] = DEFAULT_SORT
         thumbs.ready.connect(self._thumb_ready)
         self._bold = QFont()
         self._bold.setBold(True)
@@ -135,17 +142,22 @@ class OffersTableModel(QAbstractTableModel):
                 self._rows_by_photo[offer.raw.photos[0]].append(i)
 
     def _apply_sort(self) -> None:
-        """Sortowanie w Pythonie (klucz liczony raz na wiersz) — dużo szybsze niż porównania
-        wykonywane przez QSortFilterProxyModel, które przy każdym porównaniu wołają ``data()``."""
-        if self._sort_col is not None:
-            col = self._sort_col
-            self._rows.sort(key=lambda r: self._sort_key(col, r[0], r[1]),
-                            reverse=self._sort_order == Qt.SortOrder.DescendingOrder)
+        """Sortowanie w Pythonie (klucz liczony raz na wiersz i poziom) — dużo szybsze niż porównania
+        wykonywane przez QSortFilterProxyModel, które przy każdym porównaniu wołają ``data()``.
+        Bez ponownej wyceny: sortowane są gotowe pary (oferta, wycena)."""
+        sort_rows(self._rows, self._spec)
         self._reindex()
 
-    def sort(self, column: int, order: Qt.SortOrder = Qt.SortOrder.AscendingOrder) -> None:
-        self._sort_col = Col(column) if 0 <= column < len(Col) else None
-        self._sort_order = order
+    @property
+    def sort_spec(self) -> tuple[SortLevel, ...]:
+        return self._spec
+
+    def set_sort_spec(self, spec) -> None:
+        """Sortowanie wielopoziomowe, np. werdykt, potem zysk malejąco. Zaznaczenie zostaje na swojej ofercie."""
+        spec = normalize(spec) or DEFAULT_SORT
+        if spec == self._spec and self._rows:
+            return
+        self._spec = spec
         self.layoutAboutToBeChanged.emit()
         persistent = self.persistentIndexList()
         ids = [self._rows[i.row()][0].id for i in persistent]
@@ -154,6 +166,14 @@ class OffersTableModel(QAbstractTableModel):
                for oid, i in zip(ids, persistent, strict=True)]
         self.changePersistentIndexList(persistent, new)
         self.layoutChanged.emit()
+        self.headerDataChanged.emit(Qt.Orientation.Horizontal, 0, len(Col) - 1)
+        self.sort_changed.emit()
+
+    def sort(self, column: int, order: Qt.SortOrder = Qt.SortOrder.AscendingOrder) -> None:
+        """Qt API (``QTableView.sortByColumn``): jeden poziom — ta kolumna w podanym kierunku."""
+        field = COL_FIELD.get(Col(column)) if 0 <= column < len(Col) else None
+        if field is not None:
+            self.set_sort_spec([level(field, "desc" if order == Qt.SortOrder.DescendingOrder else "asc")])
 
     def row_at(self, row: int) -> tuple[Offer, Valuation]:
         return self._rows[row]
@@ -188,10 +208,20 @@ class OffersTableModel(QAbstractTableModel):
         if orientation != Qt.Orientation.Horizontal:
             return None
         if role == Qt.ItemDataRole.DisplayRole:
-            return HEADERS[Col(section)]
+            return HEADERS[Col(section)] + self._level_mark(Col(section))
         if role == Qt.ItemDataRole.TextAlignmentRole:
             return _RIGHT if Col(section) in NUMERIC else _LEFT
         return None
+
+    def _level_mark(self, col: Col) -> str:
+        """Przy sortowaniu wielopoziomowym: numer poziomu i kierunek dalszych poziomów, np. „Szac. zysk ²↓”.
+        Pierwszy poziom pokazuje strzałka nagłówka."""
+        if len(self._spec) < 2:
+            return ""
+        for i, lv in enumerate(self._spec, start=1):
+            if FIELD_COL.get(lv.field) is col:
+                return " ¹" if i == 1 else f" {_SUPERSCRIPT.get(i, str(i))}{'↓' if lv.descending else '↑'}"
+        return ""
 
     def data(self, index: QModelIndex | QPersistentModelIndex, role: int = Qt.ItemDataRole.DisplayRole) -> Any:
         if not index.isValid():
@@ -200,8 +230,6 @@ class OffersTableModel(QAbstractTableModel):
         col = Col(index.column())
         if role == Qt.ItemDataRole.DisplayRole:
             return self._display(col, offer, val)
-        if role == SORT_ROLE:
-            return self._sort_key(col, offer, val)
         if role == OFFER_ROLE:
             return offer.id
         if role == VERDICT_ROLE:
@@ -290,44 +318,6 @@ class OffersTableModel(QAbstractTableModel):
             case Col.LINK:
                 return "Otwórz ↗"
         return ""
-
-    def _sort_key(self, col: Col, offer: Offer, val: Valuation) -> Any:
-        p = offer.parsed
-        match col:
-            case Col.PHOTO:
-                return len(offer.raw.photos)
-            case Col.MODEL:
-                return (p.model or "").lower()
-            case Col.STORAGE:
-                return p.storage_gb or 0
-            case Col.CONDITION:
-                return p.condition.label
-            case Col.BATTERY:
-                return p.battery_health or 0
-            case Col.PRICE:
-                return offer.price
-            case Col.MARKET:
-                return val.market.value if val.market.value is not None else _NO_VALUE
-            case Col.PROFIT:
-                return val.expected_profit if val.expected_profit is not None else _NO_VALUE
-            case Col.MAX_BUY:
-                return val.max_buy_price if val.max_buy_price is not None else _NO_VALUE
-            case Col.VERDICT:
-                return val.verdict.rank * 1000 + val.score
-            case Col.SCORE:
-                return val.score
-            case Col.FLAGS:
-                return len(set(val.flags)) + (100 if val.has_hard_flag else 0)
-            case Col.SOURCE:
-                return offer.raw.source
-            case Col.LOCATION:
-                return offer.distance_km if offer.distance_km is not None else 1e9
-            case Col.ADDED:
-                dt = added_at(offer)
-                return dt.timestamp() if dt else 0.0
-            case Col.LINK:
-                return offer.raw.url
-        return None
 
 
 class VerdictDelegate(QStyledItemDelegate):

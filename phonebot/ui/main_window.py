@@ -41,6 +41,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..core.models import Mode, Offer, OfferStatus, RowColor, Valuation, Verdict
+from ..core.sorting import MAX_LEVELS, level, spec_from_json, spec_to_json
 from ..core.text import plural
 from ..core.view_filter import ViewFilter, matches
 from ..ml.desc_model import text_hash
@@ -71,11 +72,14 @@ from .offer_details import PANEL_PHOTO_SIZE, PHOTO_SIZE, OfferDetailsDialog, Off
 from .parts_editor import PartsEditor
 from .rejected_dialog import RejectedDialog
 from .settings_dialog import SettingsDialog
+from .sort_bar import SortBar
 from .source_status import SourceStatusBar
 from .style import MARGIN, apply_theme, system_prefers_dark
 from .table_model import (
     ALWAYS_VISIBLE,
+    COL_FIELD,
     DEFAULT_WIDTHS,
+    FIELD_COL,
     HEADERS,
     Col,
     OffersTableModel,
@@ -153,6 +157,7 @@ class MainWindow(QMainWindow):
         self.proxy = OfferFilterProxy(self)
         self.proxy.setSourceModel(self.model)
         self.proxy.set_view_filter(self.settings.view_filter)
+        self.model.set_sort_spec(spec_from_json(self.settings.table_sort.get("all")))  # ostatnie sortowanie
 
         self._ui_save_timer = QTimer(self, singleShot=True, interval=600)
         self._ui_save_timer.timeout.connect(self._save_ui_state)
@@ -239,8 +244,8 @@ class MainWindow(QMainWindow):
     def _build_table(self) -> None:
         view = QTableView(self)
         view.setModel(self.proxy)
-        view.setSortingEnabled(True)
-        view.sortByColumn(Col.PROFIT, Qt.SortOrder.DescendingOrder)
+        # sortowanie obsługuje okno (wielopoziomowe: klik = ta kolumna, Shift+klik = kolejny poziom)
+        view.setSortingEnabled(False)
         view.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         view.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         view.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -260,6 +265,11 @@ class MainWindow(QMainWindow):
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         header.setSectionsMovable(True)
         header.setHighlightSections(False)
+        header.setSectionsClickable(True)
+        header.setSortIndicatorShown(True)
+        header.sectionClicked.connect(self._header_clicked)
+        header.setToolTip("Klik: sortuj po tej kolumnie (drugi klik odwraca kierunek). "
+                          "Shift+klik: dodaj kolumnę jako kolejny poziom sortowania.")
         header.setStretchLastSection(True)
         header.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         header.customContextMenuRequested.connect(
@@ -267,7 +277,8 @@ class MainWindow(QMainWindow):
         bold = QFont(view.font())
         bold.setBold(True)
         fm = QFontMetrics(bold)
-        self._min_widths = {c: fm.horizontalAdvance(HEADERS[c]) + 28 for c in Col}  # tekst + odstępy + strzałka
+        # tekst + odstępy + strzałka + numer poziomu sortowania (np. „ ²↓”)
+        self._min_widths = {c: fm.horizontalAdvance(HEADERS[c] + " ²↓") + 28 for c in Col}
         # etykieta werdyktu (kropka + tekst) musi się zmieścić w całości, także „DO WERYFIKACJI”
         self._min_widths[Col.VERDICT] = max(self._min_widths[Col.VERDICT],
                                             max(fm.horizontalAdvance(v.value) for v in Verdict) + 34 + 16)
@@ -291,6 +302,54 @@ class MainWindow(QMainWindow):
         self.stack = QStackedWidget(self)
         self.stack.addWidget(self.table)
         self.stack.addWidget(self.empty_label)
+
+        self.sort_bar = SortBar(self)
+        self.sort_bar.spec_changed.connect(self.model.set_sort_spec)
+        self.model.sort_changed.connect(self._sort_changed)
+        self.table_area = QWidget(self)
+        area = QVBoxLayout(self.table_area)
+        area.setContentsMargins(0, 0, 0, 0)
+        area.setSpacing(0)
+        area.addWidget(self.sort_bar)
+        area.addWidget(self.stack, 1)
+        self._sort_changed()
+
+    # ------------------------------------------------------------ sortowanie ---
+
+    def _header_clicked(self, section: int) -> None:
+        field = COL_FIELD.get(Col(section))
+        if field is None:
+            return
+        spec = list(self.model.sort_spec)
+        pos = next((i for i, lv in enumerate(spec) if lv.field == field), None)
+        if QApplication.keyboardModifiers() & Qt.KeyboardModifier.ShiftModifier:
+            if pos is not None:
+                spec[pos] = spec[pos].toggled()
+            elif len(spec) < MAX_LEVELS:
+                spec.append(level(field))
+        elif pos == 0:
+            spec[0] = spec[0].toggled()  # drugi klik w tę samą kolumnę odwraca kierunek, dalsze poziomy zostają
+        else:
+            spec = [level(field)]
+        self.model.set_sort_spec(spec)
+
+    def _sort_changed(self) -> None:
+        """Pasek sortowania, strzałka w nagłówku i zapis w ustawieniach (pamiętane między uruchomieniami)."""
+        spec = self.model.sort_spec
+        self.sort_bar.set_spec(spec)
+        header = self.table.horizontalHeader()
+        col = FIELD_COL.get(spec[0].field) if spec else None
+        header.blockSignals(True)
+        if col is None:
+            header.setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
+        else:
+            header.setSortIndicator(col, Qt.SortOrder.DescendingOrder if spec[0].descending
+                                    else Qt.SortOrder.AscendingOrder)
+        header.blockSignals(False)
+        saved = spec_to_json(spec)
+        if self.settings.table_sort.get("all") != saved:
+            self.settings.table_sort["all"] = saved
+            self._ui_save_timer.start()
 
     def _update_row_height(self) -> None:
         text_h = self.table.fontMetrics().height() + 16
@@ -355,7 +414,7 @@ class MainWindow(QMainWindow):
     def _build_layout(self) -> None:
         split = QSplitter(Qt.Orientation.Horizontal, self)
         split.addWidget(self.filters)
-        split.addWidget(self.stack)
+        split.addWidget(self.table_area)
         split.addWidget(self.details)
         split.setStretchFactor(0, 0)
         split.setStretchFactor(1, 1)
@@ -746,8 +805,8 @@ class MainWindow(QMainWindow):
     def apply_settings(self, settings) -> None:
         old = self.settings
         # stan układu zmieniany w oknie głównym (nie w ustawieniach) zostaje bez zmian
-        for name in ("view_filter", "hidden_columns", "column_widths", "splitter_sizes", "filters_visible",
-                     "details_visible"):
+        for name in ("view_filter", "hidden_columns", "column_widths", "table_sort", "splitter_sizes",
+                     "filters_visible", "details_visible"):
             setattr(settings, name, getattr(old, name))
         self.settings = settings
         self.details.settings = settings

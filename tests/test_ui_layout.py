@@ -47,7 +47,7 @@ def new_window(win):
 
 def test_three_panel_layout(window):
     split = window.splitter
-    assert [split.widget(i) for i in range(3)] == [window.filters, window.stack, window.details]
+    assert [split.widget(i) for i in range(3)] == [window.filters, window.table_area, window.details]
     assert window.statusBar().isVisible() or not window.isVisible()
 
 

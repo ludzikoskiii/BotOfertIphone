@@ -231,6 +231,8 @@ class Settings:
     ui_font_pt: int = 10
     hidden_columns: list[str] = field(default_factory=lambda: list(DEFAULT_HIDDEN_COLUMNS))
     column_widths: dict[str, int] = field(default_factory=dict)
+    # ostatnie sortowanie tabeli (osobno dla każdej listy): {"all": [["verdict", "desc"], ["profit", "desc"]]}
+    table_sort: dict[str, list] = field(default_factory=dict)
     splitter_sizes: list[int] = field(default_factory=list)  # filtry | tabela | szczegóły
     filters_visible: bool = True
     details_visible: bool = True

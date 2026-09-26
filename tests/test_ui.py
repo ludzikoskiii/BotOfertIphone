@@ -35,14 +35,14 @@ def cell(win, row, col):
     return win.proxy.index(row, col).data()
 
 
-def test_table_filled_and_sorted_by_profit(window):
+def test_table_filled_and_sorted_by_verdict_then_profit(window):
     assert window.proxy.rowCount() == 17  # 12 Allegro Lokalnie + 2 Vinted + 3 Sprzedajemy.pl
-    profits = []
+    keys = []
     for r in range(window.proxy.rowCount()):
         oid = window.proxy.index(r, 0).data(OFFER_ROLE)
         _, val = next(x for x in window.model.rows() if x[0].id == oid)
-        profits.append(val.expected_profit if val.expected_profit is not None else float("-inf"))
-    assert profits == sorted(profits, reverse=True)
+        keys.append((val.verdict.rank, val.expected_profit if val.expected_profit is not None else float("-inf")))
+    assert keys == sorted(keys, reverse=True)
     assert cell(window, 0, Col.VERDICT).startswith(Verdict.BUY.value)
     assert cell(window, 0, Col.PRICE).endswith("zł")
 
