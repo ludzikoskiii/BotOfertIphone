@@ -16,6 +16,7 @@ from .listing_filter import ListingFilterConfig
 from .messages import DEFAULT_TEMPLATES
 from .models import Mode, RedFlag
 from .sanity import SanityConfig
+from .selection import SelectionCriteria
 from .view_filter import ViewFilter
 
 MIN_PROFIT_MODES = ("amount", "percent", "max", "min")
@@ -210,6 +211,8 @@ class Settings:
     listing_filter: ListingFilterConfig = field(default_factory=ListingFilterConfig)
     # --- zabezpieczenia werdyktu (testy sensowności, limity przy flagach, sprzedawcy seryjni) ---
     sanity: SanityConfig = field(default_factory=SanityConfig)
+    # --- lista „Wybrane”: kryteria automatyczne ---
+    selection: SelectionCriteria = field(default_factory=SelectionCriteria)
     # --- lokalne AI (etap 2) ---
     ml: MlConfig = field(default_factory=MlConfig)
 
@@ -233,6 +236,7 @@ class Settings:
     column_widths: dict[str, int] = field(default_factory=dict)
     # ostatnie sortowanie tabeli (osobno dla każdej listy): {"all": [["verdict", "desc"], ["profit", "desc"]]}
     table_sort: dict[str, list] = field(default_factory=dict)
+    table_list: str = "all"  # ostatnio otwarta lista: all („Wszystkie oferty”) | picked („Wybrane”)
     splitter_sizes: list[int] = field(default_factory=list)  # filtry | tabela | szczegóły
     filters_visible: bool = True
     details_visible: bool = True

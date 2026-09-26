@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 
 from ..core.messages import DEFAULT_TEMPLATES, TEMPLATE_KEYS, TEMPLATE_NAMES, render, template_for
 from ..core.models import Offer, OfferStatus, Valuation
+from ..core.selection import is_picked
 from ..core.settings import Settings
 from ..storage.repositories import OfferRepository
 from .details_html import build_details_html
@@ -44,6 +45,7 @@ class OfferDetailsView(QWidget):
     full_view_requested = Signal()
     not_phone = Signal(int, str)  # offer_id, klasa (accessory | part | wanted)
     message_copied = Signal(str)  # komunikat do paska stanu
+    pick_requested = Signal(int, bool)  # offer_id, True = dodaj do „Wybrane”, False = usuń
 
     def __init__(self, settings: Settings, repo: OfferRepository, photos: ThumbnailCache, parent=None, *,
                  compact: bool = True):
@@ -87,6 +89,8 @@ class OfferDetailsView(QWidget):
         self.watch_btn.clicked.connect(self._toggle_watch)
         self.hide_btn = QPushButton()
         self.hide_btn.clicked.connect(self._toggle_hidden)
+        self.pick_btn = QPushButton()  # „Wybrane”: ręczne dodanie / usunięcie (pierwszeństwo przed kryteriami)
+        self.pick_btn.clicked.connect(self._toggle_picked)
         self.not_phone_btn = QPushButton("✖ Nie telefon" if compact else "✖ To nie jest telefon")
         self.not_phone_btn.setToolTip("Przenosi ofertę do „Odrzucone” i uczy klasyfikator tytułów, "
                                       "że takie ogłoszenia to nie telefony")
@@ -109,6 +113,7 @@ class OfferDetailsView(QWidget):
         buttons.setSpacing(SPACING)
         buttons.addWidget(self.open_btn)
         buttons.addWidget(self.watch_btn)
+        buttons.addWidget(self.pick_btn)
         if not compact:
             buttons.addWidget(self.copy_btn)
             buttons.addWidget(self.hide_btn)
@@ -236,6 +241,16 @@ class OfferDetailsView(QWidget):
         watched = self.offer is not None and self.offer.status is OfferStatus.WATCHED
         self._set_status(OfferStatus.NEW if watched else OfferStatus.WATCHED)
 
+    def is_picked(self) -> bool:
+        return self.offer is not None and self.val is not None and is_picked(self.offer, self.val,
+                                                                              self.settings.selection)
+
+    def _toggle_picked(self) -> None:
+        if self.offer is not None and self.offer.id is not None:
+            self.pick_requested.emit(self.offer.id, not self.is_picked())
+            self._refresh_buttons()
+            self.render()
+
     def _toggle_hidden(self) -> None:
         hidden = self.offer is not None and self.offer.status is OfferStatus.HIDDEN
         self._set_status(OfferStatus.NEW if hidden else OfferStatus.HIDDEN)
@@ -244,12 +259,21 @@ class OfferDetailsView(QWidget):
         s = self.offer.status if self.offer else OfferStatus.NEW
         watched, hidden = s is OfferStatus.WATCHED, s is OfferStatus.HIDDEN
         if self.compact:
-            self.watch_btn.setText("☆ Nie obserwuj" if watched else "★ Obserwuj")
+            # wąski panel: sama gwiazdka (pełny opis w podpowiedzi), żeby zmieścił się przycisk „Wybrane”
+            self.watch_btn.setText("★" if watched else "☆")
             self.hide_btn.setText("Odkryj" if hidden else "Ukryj")
         else:
             self.watch_btn.setText("☆ Przestań obserwować" if watched else "★ Obserwuj")
             self.hide_btn.setText("Przywróć (odkryj)" if hidden else "Ukryj ofertę")
-        self.watch_btn.setToolTip("Obserwowane oferty są wyróżnione w tabeli")
+        self.watch_btn.setToolTip(("Obserwowana — kliknij, aby przestać obserwować. " if watched else "Obserwuj. ")
+                                  + "Obserwowane oferty są wyróżnione w tabeli i zawsze są w „Wybrane”")
+        picked = self.is_picked()
+        if self.compact:
+            self.pick_btn.setText("− Wybrane" if picked else "+ Wybrane")
+        else:
+            self.pick_btn.setText("✕ Usuń z Wybranych" if picked else "✓ Dodaj do Wybranych")
+        self.pick_btn.setToolTip("Ręczna decyzja ma pierwszeństwo przed kryteriami automatycznymi "
+                                 "(Ustawienia → Wybrane). Dodanie = obserwowanie oferty.")
         self.hide_btn.setToolTip("Ukryte oferty nie pokazują się w tabeli (przycisk „Pokaż ukryte”)")
 
 
@@ -259,6 +283,7 @@ class OfferDetailsDialog(QDialog):
     status_changed = Signal(int, str)
     not_phone = Signal(int, str)
     message_copied = Signal(str)
+    pick_requested = Signal(int, bool)
 
     def __init__(self, offer: Offer, val: Valuation, settings: Settings, repo: OfferRepository,
                  photos: ThumbnailCache, parent=None):
@@ -270,6 +295,7 @@ class OfferDetailsDialog(QDialog):
         self.view.status_changed.connect(self.status_changed.emit)
         self.view.not_phone.connect(self.not_phone.emit)
         self.view.message_copied.connect(self.message_copied.emit)
+        self.view.pick_requested.connect(self.pick_requested.emit)
         self.view.not_phone.connect(lambda *_: self.accept())  # oferta znika z tabeli — okno też
         self.view.open_btn.setDefault(True)
         self.browser, self.watch_btn, self.hide_btn = self.view.browser, self.view.watch_btn, self.view.hide_btn

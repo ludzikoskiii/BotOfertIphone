@@ -119,7 +119,11 @@ class OfferRepository:
         return [_row_to_offer(r) for r in self.conn.execute(sql)]
 
     def set_status(self, offer_id: int, status: OfferStatus) -> None:
-        self.conn.execute("UPDATE offers SET status = ? WHERE id = ?", (status.value, offer_id))
+        """„Obserwuj” = ręczne dodanie do „Wybrane” — cofa też wcześniejsze „Usuń z Wybranych”."""
+        if status is OfferStatus.WATCHED:
+            self.conn.execute("UPDATE offers SET status = ?, pick_excluded = 0 WHERE id = ?", (status.value, offer_id))
+        else:
+            self.conn.execute("UPDATE offers SET status = ? WHERE id = ?", (status.value, offer_id))
 
     def mark_notified(self, offer_id: int, when: datetime | None = None) -> None:
         self.conn.execute("UPDATE offers SET notified_at = ? WHERE id = ?", (_iso(when or utcnow()), offer_id))
@@ -127,6 +131,34 @@ class OfferRepository:
     def was_notified(self, offer_id: int) -> bool:
         row = self.conn.execute("SELECT notified_at FROM offers WHERE id = ?", (offer_id,)).fetchone()
         return bool(row and row["notified_at"])
+
+    # --- lista „Wybrane” ---
+
+    def mark_picked(self, offer_ids: list[int], when: datetime | None = None) -> int:
+        """Zapisuje, kiedy oferta pierwszy raz trafiła do „Wybrane” (tylko te bez daty). Zwraca liczbę nowych."""
+        stamp, n = _iso(when or utcnow()), 0
+        ids = list(offer_ids)
+        for start in range(0, len(ids), 500):
+            chunk = ids[start:start + 500]
+            cur = self.conn.execute(
+                f"UPDATE offers SET picked_at = ? WHERE picked_at IS NULL AND id IN ({', '.join('?' * len(chunk))})",
+                [stamp, *chunk])
+            n += cur.rowcount
+        return n
+
+    def set_pick_excluded(self, offer_id: int, excluded: bool) -> None:
+        """„Usuń z Wybranych” (automat już jej nie doda) / cofnięcie wykluczenia."""
+        if excluded:
+            self.conn.execute("UPDATE offers SET pick_excluded = 1, status = CASE WHEN status = 'watched' "
+                              "THEN 'new' ELSE status END WHERE id = ?", (offer_id,))
+        else:
+            self.conn.execute("UPDATE offers SET pick_excluded = 0 WHERE id = ?", (offer_id,))
+
+    def list_picked_inactive(self) -> list[Offer]:
+        """Oferty z „Wybrane”, które zniknęły z portalu — zostają na liście jako nieaktualne."""
+        sql = (_OFFER_SELECT + " WHERE o.is_active = 0 AND o.picked_at IS NOT NULL AND o.pick_excluded = 0 "
+               "AND o.status != 'hidden' ORDER BY o.id")
+        return [_row_to_offer(r) for r in self.conn.execute(sql)]
 
     def deactivate_missing(self, source: str, older_than: datetime) -> int:
         """Oznacza jako nieaktywne oferty źródła, których nie widziano od ``older_than``."""
@@ -247,6 +279,10 @@ def _row_to_offer(row: sqlite3.Row) -> Offer:
     keys = row.keys()
     if "page_description" in keys and row["page_description"]:
         offer.desc_from_page = row["page_description"] == row["description"]
+    offer.active = bool(row["is_active"])
+    if "picked_at" in keys:
+        offer.picked_at = _dt(row["picked_at"])
+        offer.pick_excluded = bool(row["pick_excluded"])
     return offer
 
 

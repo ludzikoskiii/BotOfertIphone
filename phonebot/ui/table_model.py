@@ -15,7 +15,7 @@ from ..core.models import Offer, OfferStatus, Severity, Valuation, Verdict
 from ..core.sorting import DEFAULT_SORT, SortLevel, level, normalize, sort_rows
 from ..sources import SOURCE_NAMES
 from .images import ThumbnailCache
-from .theme import FLAG_MARK, WATCHED_MARK, Palette, current
+from .theme import FLAG_MARK, OUTDATED_MARK, WATCHED_MARK, Palette, current
 
 OFFER_ROLE = Qt.ItemDataRole.UserRole + 2
 VERDICT_ROLE = Qt.ItemDataRole.UserRole + 3
@@ -255,6 +255,8 @@ class OffersTableModel(QAbstractTableModel):
         return None
 
     def _foreground(self, col: Col, offer: Offer, val: Valuation) -> QBrush | None:
+        if not offer.active:  # nieaktualna (zniknęła z portalu) — cały wiersz wyszarzony
+            return self._muted
         if col is Col.PROFIT:
             if val.expected_profit is None:
                 return self._muted
@@ -267,6 +269,10 @@ class OffersTableModel(QAbstractTableModel):
 
     @staticmethod
     def _tooltip(col: Col, offer: Offer, val: Valuation) -> str | None:
+        if not offer.active and col is Col.MODEL:
+            seen = format_dt(offer.last_seen)
+            return f"{OUTDATED_MARK} Nieaktualna — oferta zniknęła z portalu (ostatnio widziana {seen}).\n" \
+                   f"{offer.raw.title}"
         if col in (Col.MODEL, Col.FLAGS):
             flags = "".join(f"\n{FLAG_MARK} {f.label}" + (" (poważna)" if f.severity is Severity.HARD else "")
                             for f in dict.fromkeys(val.flags))
@@ -284,6 +290,8 @@ class OffersTableModel(QAbstractTableModel):
                 return ""
             case Col.MODEL:
                 prefix = f"{WATCHED_MARK} " if offer.status is OfferStatus.WATCHED else ""
+                if not offer.active:
+                    prefix = f"{OUTDATED_MARK} " + prefix
                 suffix = f"  {FLAG_MARK}{len(set(val.flags))}" if val.flags else ""
                 return f"{prefix}{p.model or '?'}{suffix}"
             case Col.STORAGE:

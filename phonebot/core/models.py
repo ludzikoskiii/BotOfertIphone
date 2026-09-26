@@ -252,6 +252,9 @@ class Offer:
     layers: AiLayers | None = None  # lokalne AI (tytuł, zdjęcie, opis)
     desc_applied: bool = False  # wynik z opisu już dołożony do ``parsed``
     desc_from_page: bool = False  # opis pobrany ze strony oferty (wyniki wyszukiwania go nie miały)
+    active: bool = True  # False = niewidziana na portalu od ``offer_stale_days`` (w „Wybrane”: nieaktualna)
+    picked_at: datetime | None = None  # kiedy pierwszy raz trafiła do „Wybrane”
+    pick_excluded: bool = False  # ręcznie usunięta z „Wybrane”
 
     @property
     def price(self) -> float:

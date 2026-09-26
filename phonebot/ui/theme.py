@@ -28,6 +28,7 @@ COLOR_LABEL = {
 }
 FLAG_MARK = "⚑"
 WATCHED_MARK = "★"
+OUTDATED_MARK = "⌛"  # oferta zniknęła z portalu (w „Wybrane”)
 
 THEME_LABELS = {"system": "Systemowy", "light": "Jasny", "dark": "Ciemny"}
 

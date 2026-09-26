@@ -186,6 +186,13 @@ MIGRATIONS: list[str] = [
     ALTER TABLE ai_results ADD COLUMN desc_at TEXT;
     ALTER TABLE ai_results ADD COLUMN desc_error TEXT;
     """,
+    # v8 — lista „Wybrane”: kiedy oferta pierwszy raz tam trafiła (nieaktualne zostają oznaczone,
+    # a nie usunięte) i ręczne wykluczenie („Usuń z Wybranych” — automat jej już nie doda)
+    """
+    ALTER TABLE offers ADD COLUMN picked_at TEXT;
+    ALTER TABLE offers ADD COLUMN pick_excluded INTEGER NOT NULL DEFAULT 0;
+    CREATE INDEX idx_offers_picked ON offers (picked_at) WHERE picked_at IS NOT NULL;
+    """,
 ]
 
 

@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..core.market import manual_key
-from ..core.models import RedFlag
+from ..core.models import RedFlag, Verdict
 from ..core.places import Place
 from ..core.sanity import VERDICT_CHOICES
 from ..core.settings import MIN_PROFIT_MODE_LABELS, VINTED_COUNTRY_MODES, SalesChannel, Settings
@@ -226,6 +226,7 @@ class SettingsDialog(QDialog):
         tabs.addTab(self._buying_tab(), "Zakup i naprawa")
         tabs.addTab(self._market_tab(), "Wycena rynkowa")
         tabs.addTab(self._verdict_tab(), "Werdykt i flagi")
+        tabs.addTab(self._selection_tab(), "Wybrane")
         tabs.addTab(self._filter_tab(), "Filtr ogłoszeń")
         tabs.addTab(self._safety_tab(), "Zabezpieczenia")
         tabs.addTab(self._ai_tab(), "AI lokalne")
@@ -455,6 +456,40 @@ class SettingsDialog(QDialog):
         self._readers.append(lambda st: setattr(st, "flag_penalties",
                                                 {k: w.value() for k, w in self.penalties.items()}))
         return self._page(form, pen)
+
+    def _selection_tab(self) -> QWidget:
+        intro = QLabel(
+            "Lista <b>„Wybrane”</b> (zakładka nad tabelą) zbiera oferty warte uwagi. Trafiają tam automatycznie "
+            "oferty spełniające poniższe kryteria, a także oferty dodane ręcznie (★ Obserwuj / „Dodaj do "
+            "Wybranych”). Ręczna decyzja ma pierwszeństwo: „Usuń z Wybranych” wyklucza ofertę na stałe, "
+            "nawet jeśli spełnia kryteria. Oferta, która zniknie z portalu, zostaje na liście z oznaczeniem "
+            "⌛ nieaktualna.")
+        intro.setWordWrap(True)
+        auto = QGroupBox("Kryteria automatyczne (wszystkie muszą być spełnione)")
+        form = self._form([Field("selection.enabled", "Dodawaj oferty automatycznie", "bool")])
+        verdicts = QHBoxLayout()
+        self.selection_verdicts: dict[str, QCheckBox] = {}
+        for v in Verdict:
+            box = QCheckBox(v.value)
+            box.setObjectName(f"selection.verdict.{v.name.lower()}")
+            box.setChecked(v.value in self.settings.selection.verdicts)
+            verdicts.addWidget(box)
+            self.selection_verdicts[v.value] = box
+        verdicts.addStretch(1)
+        form.addRow("Werdykt:", verdicts)
+        self._readers.append(lambda s: setattr(s.selection, "verdicts", [
+            v for v, box in self.selection_verdicts.items() if box.isChecked()]))
+        self._form([
+            Field("selection.min_profit", "Minimalny szacowany zysk", "float", 0, 20000, 10, " zł",
+                  tip="0 = bez progu"),
+            Field("selection.min_score", "Minimalna ocena", "int", 0, 100, 5, " / 100", tip="0 = bez progu"),
+            Field("selection.skip_hard_flags", "Pomijaj oferty z poważną flagą (iCloud, IMEI, podróbka)", "bool"),
+        ], form)
+        auto.setLayout(form)
+        note = QLabel("Filtry i sortowanie są wspólne dla obu list; każda lista pamięta własne sortowanie.")
+        note.setObjectName("muted")
+        note.setWordWrap(True)
+        return self._page(intro, auto, note)
 
     def _safety_tab(self) -> QWidget:
         s = self.settings

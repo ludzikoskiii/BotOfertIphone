@@ -3,7 +3,7 @@
 Aplikacja desktopowa (Windows) do wyszukiwania ofert używanych iPhone'ów na
 Allegro Lokalnie, Vinted i Sprzedajemy.pl, wyceny ich opłacalności i podpowiadania, czy i za ile kupić.
 
-> **Status: wersja 1.5.0.** Trzy portale, wycena, werdykty i negocjacje, filtry, zabezpieczenia werdyktu,
+> **Status: wersja 1.6.0.** Trzy portale, wycena, werdykty i negocjacje, filtry, zabezpieczenia werdyktu,
 > **darmowe lokalne AI** (klasyfikator tytułów, analiza zdjęć, opcjonalnie model językowy w Ollamie),
 > szablony wiadomości do sprzedającego, automatyczne odświeżanie, powiadomienia Windows i Telegram
 > oraz gotowy plik `PhoneBot.exe`. Program nie korzysta z żadnych płatnych usług.
@@ -343,6 +343,23 @@ pozwala wybrać inny:
 
 Szablony edytujesz w **⚙ Ustawienia → Wiadomości** (pola: `{telefon}`, `{model}`, `{pamiec}`, `{cena}`,
 `{propozycja}`, `{argumenty}`, `{pytania}`, `{wysylka}`); „Przywróć domyślne szablony” cofa zmiany.
+
+### Listy „Wszystkie oferty” i „Wybrane”
+
+Nad tabelą są dwie zakładki z licznikami, np. **„Wszystkie oferty (16)” · „Wybrane (4)”**. Liczniki
+pokazują oferty widoczne po filtrach.
+
+- **Automatycznie** do „Wybrane” trafiają oferty spełniające kryteria z **Ustawienia → Wybrane**:
+  werdykty (domyślnie KUPUJ i NEGOCJUJ), minimalny zysk (domyślnie 150 zł), minimalna ocena
+  (domyślnie bez progu) i brak poważnej flagi (iCloud, IMEI, podróbka).
+- **Ręcznie:** „✓ Dodaj do Wybranych” (albo ★ Obserwuj — to to samo) i „✕ Usuń z Wybranych”
+  (panel szczegółów, prawy przycisk na ofercie). Ręczna decyzja ma pierwszeństwo przed kryteriami:
+  usunięta oferta nie wróci automatycznie, dopóki znów jej nie dodasz.
+- **Nieaktualne:** oferta z „Wybrane”, która zniknęła z portalu (niewidziana od „Ukryj oferty
+  niewidziane od” — domyślnie 7 dni), nie znika z listy — jest wyszarzona i oznaczona **⌛**,
+  a w szczegółach widać, kiedy była ostatnio widziana. We „Wszystkie oferty” jej nie ma.
+- Filtry są wspólne dla obu list; **każda lista pamięta własne sortowanie**, a program pamięta też
+  ostatnio otwartą listę.
 
 ### Okno główne
 

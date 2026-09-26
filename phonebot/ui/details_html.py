@@ -10,6 +10,7 @@ from html import escape
 from ..core.catalog import format_storage
 from ..core.models import Offer, OfferStatus, RedFlag, Severity, Valuation
 from ..core.sanity import SANITY_FLAGS
+from ..core.selection import pick_reason
 from ..core.settings import Settings
 from ..ml.combine import AGREE, CONFLICT, MISSING, UNSURE
 from ..ml.combine import combine as combine_layers
@@ -89,6 +90,12 @@ def build_details_html(
     status = " ★ obserwowana" if offer.status is OfferStatus.WATCHED else (
         " (ukryta)" if offer.status is OfferStatus.HIDDEN else "")
     parts.append(f"<h2>{escape(raw.title)}{escape(status)}</h2>")
+    if not offer.active:
+        parts.append(f'<p class="flag-hard">⌛ Nieaktualna — oferta zniknęła z portalu (ostatnio widziana '
+                     f"{_fmt_dt(offer.last_seen)}). Zostaje w „Wybrane”, dopóki jej nie usuniesz.</p>")
+    reason = pick_reason(offer, val, settings.selection)
+    if reason:
+        parts.append(f'<p class="muted">✓ {escape(reason)}</p>')
     location = escape(raw.city or "—")
     if offer.distance_km is not None:
         location += f" ({offer.distance_km:.0f} km od: {escape(settings.location_name)})"

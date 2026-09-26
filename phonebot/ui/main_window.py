@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from PySide6.QtCore import (
@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
     QSplitter,
     QStackedWidget,
     QSystemTrayIcon,
+    QTabBar,
     QTableView,
     QToolBar,
     QToolButton,
@@ -41,6 +42,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..core.models import Mode, Offer, OfferStatus, RowColor, Valuation, Verdict
+from ..core.selection import SelectionCriteria, is_picked
 from ..core.sorting import MAX_LEVELS, level, spec_from_json, spec_to_json
 from ..core.text import plural
 from ..core.view_filter import ViewFilter, matches
@@ -91,6 +93,9 @@ from .workers import FuncWorker, ScanWorker, start_in_thread
 
 log = logging.getLogger(__name__)
 
+LIST_ALL, LIST_PICKED = "all", "picked"
+LIST_NAMES = {LIST_ALL: "Wszystkie oferty", LIST_PICKED: "Wybrane"}
+
 
 class OfferFilterProxy(QSortFilterProxyModel):
     """Sortowanie + filtry widoku (``ViewFilter``) bez ponownego wyceniania."""
@@ -98,6 +103,22 @@ class OfferFilterProxy(QSortFilterProxyModel):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.view_filter = ViewFilter()
+        self.list_key = LIST_ALL  # „Wszystkie oferty” albo „Wybrane” — filtry i sortowanie wspólne
+        self.criteria = SelectionCriteria()
+
+    def set_list(self, key: str, criteria: SelectionCriteria) -> None:
+        if hasattr(self, "beginFilterChange"):  # Qt ≥ 6.10
+            self.beginFilterChange()
+            self.list_key, self.criteria = key, criteria
+            self.endFilterChange(QSortFilterProxyModel.Direction.Rows)
+        else:
+            self.list_key, self.criteria = key, criteria
+            self.invalidateFilter()
+
+    def in_list(self, key: str, offer: Offer, val: Valuation) -> bool:
+        if key == LIST_PICKED:
+            return is_picked(offer, val, self.criteria)
+        return offer.active  # nieaktualne oferty są tylko w „Wybrane”
 
     def set_view_filter(self, f: ViewFilter) -> None:
         if hasattr(self, "beginFilterChange"):  # Qt ≥ 6.10
@@ -114,7 +135,7 @@ class OfferFilterProxy(QSortFilterProxyModel):
 
     def filterAcceptsRow(self, source_row: int, source_parent: QModelIndex) -> bool:  # noqa: N802
         offer, val = self.sourceModel().row_at(source_row)
-        return matches(offer, val, self.view_filter)
+        return self.in_list(self.list_key, offer, val) and matches(offer, val, self.view_filter)
 
 
 class MainWindow(QMainWindow):
@@ -157,7 +178,11 @@ class MainWindow(QMainWindow):
         self.proxy = OfferFilterProxy(self)
         self.proxy.setSourceModel(self.model)
         self.proxy.set_view_filter(self.settings.view_filter)
-        self.model.set_sort_spec(spec_from_json(self.settings.table_sort.get("all")))  # ostatnie sortowanie
+        if self.settings.table_list not in LIST_NAMES:
+            self.settings.table_list = LIST_ALL
+        self.proxy.set_list(self.settings.table_list, self.settings.selection)
+        # ostatnie sortowanie tej listy (każda lista pamięta swoje)
+        self.model.set_sort_spec(spec_from_json(self.settings.table_sort.get(self.settings.table_list)))
 
         self._ui_save_timer = QTimer(self, singleShot=True, interval=600)
         self._ui_save_timer.timeout.connect(self._save_ui_state)
@@ -306,10 +331,21 @@ class MainWindow(QMainWindow):
         self.sort_bar = SortBar(self)
         self.sort_bar.spec_changed.connect(self.model.set_sort_spec)
         self.model.sort_changed.connect(self._sort_changed)
+        self.list_tabs = QTabBar(self)
+        self.list_tabs.setObjectName("list_tabs")
+        self.list_tabs.setExpanding(False)
+        self.list_tabs.setDrawBase(False)
+        for key, name in LIST_NAMES.items():
+            self.list_tabs.setTabData(self.list_tabs.addTab(name), key)
+        self.list_tabs.setTabToolTip(1, "Oferty spełniające Twoje kryteria (Ustawienia → Wybrane) i dodane ręcznie "
+                                        "(★ Obserwuj). Oferty, które zniknęły z portalu, są oznaczone ⌛.")
+        self.list_tabs.setCurrentIndex(list(LIST_NAMES).index(self.settings.table_list))
+        self.list_tabs.currentChanged.connect(self._list_changed)
         self.table_area = QWidget(self)
         area = QVBoxLayout(self.table_area)
         area.setContentsMargins(0, 0, 0, 0)
         area.setSpacing(0)
+        area.addWidget(self.list_tabs)
         area.addWidget(self.sort_bar)
         area.addWidget(self.stack, 1)
         self._sort_changed()
@@ -347,9 +383,66 @@ class MainWindow(QMainWindow):
                                     else Qt.SortOrder.AscendingOrder)
         header.blockSignals(False)
         saved = spec_to_json(spec)
-        if self.settings.table_sort.get("all") != saved:
-            self.settings.table_sort["all"] = saved
+        key = self.proxy.list_key
+        if self.settings.table_sort.get(key) != saved:
+            self.settings.table_sort[key] = saved
             self._ui_save_timer.start()
+
+    # ------------------------------------------------ listy: Wszystkie / Wybrane ---
+
+    def current_list(self) -> str:
+        return self.proxy.list_key
+
+    def _list_changed(self, index: int) -> None:
+        key = self.list_tabs.tabData(index) or LIST_ALL
+        selected = self.current_offer_id()
+        self.proxy.set_list(key, self.settings.selection)
+        self.settings.table_list = key
+        self.model.set_sort_spec(spec_from_json(self.settings.table_sort.get(key)))  # sortowanie tej listy
+        self._select_offer(selected)
+        self._ui_save_timer.start()
+        self._update_count()
+
+    def _update_tab_counts(self) -> None:
+        """Liczniki zakładek — oferty widoczne po wspólnych filtrach, np. „Wybrane (12)”."""
+        counts = dict.fromkeys(LIST_NAMES, 0)
+        f = self.proxy.view_filter
+        for offer, val in self.model.rows():
+            if not matches(offer, val, f):
+                continue
+            for key in LIST_NAMES:
+                counts[key] += self.proxy.in_list(key, offer, val)
+        for i, key in enumerate(LIST_NAMES):
+            self.list_tabs.setTabText(i, f"{LIST_NAMES[key]} ({counts[key]})")
+
+    def _mark_picked(self) -> None:
+        """Oferty, które pierwszy raz trafiły do „Wybrane”, dostają datę (nieaktualne zostają potem na liście)."""
+        crit = self.settings.selection
+        new = [o for o, v in self.model.rows() if o.active and o.id is not None and o.picked_at is None
+               and is_picked(o, v, crit)]
+        if new:
+            now = datetime.now(UTC)
+            OfferRepository(self.conn).mark_picked([o.id for o in new], now)
+            for o in new:
+                o.picked_at = now
+
+    def set_picked(self, offer_id: int, picked: bool) -> None:
+        """Ręczne „Dodaj do Wybranych” (= Obserwuj) / „Usuń z Wybranych” — ma pierwszeństwo przed kryteriami."""
+        repo = OfferRepository(self.conn)
+        if picked:
+            repo.set_status(offer_id, OfferStatus.WATCHED)
+        else:
+            repo.set_pick_excluded(offer_id, True)
+        row = self.model.row_of(offer_id)
+        if row is not None:
+            offer = self.model.row_at(row)[0]
+            offer.pick_excluded = not picked
+            if picked:
+                offer.status = OfferStatus.WATCHED
+            elif offer.status is OfferStatus.WATCHED:
+                offer.status = OfferStatus.NEW
+            self._status_changed(offer_id, offer.status.value)
+            self._mark_picked()
 
     def _update_row_height(self) -> None:
         text_h = self.table.fontMetrics().height() + 16
@@ -406,6 +499,7 @@ class MainWindow(QMainWindow):
         self.details = OfferDetailsView(self.settings, OfferRepository(self.conn), self.photos, self)
         self.details.setMinimumWidth(PANEL_PHOTO_SIZE.width() + 2 * MARGIN + 24)
         self.details.status_changed.connect(self._status_changed)
+        self.details.pick_requested.connect(self.set_picked)
         self.details.full_view_requested.connect(self._details_for_current)
         self.details.not_phone.connect(self.mark_not_phone)
         self.details.message_copied.connect(self._show_status)
@@ -632,9 +726,12 @@ class MainWindow(QMainWindow):
     def reload(self) -> None:
         """Wczytuje oferty z bazy i wycenia je w bieżącym trybie."""
         selected = self.current_offer_id()
-        offers = OfferRepository(self.conn).list(include_hidden=self.show_hidden_action.isChecked())
+        repo = OfferRepository(self.conn)
+        offers = repo.list(include_hidden=self.show_hidden_action.isChecked())
+        offers += repo.list_picked_inactive()  # zniknęły z portalu — w „Wybrane” jako nieaktualne
         rows = Evaluator(self.conn, self.settings).evaluate_all(offers)
         self.model.set_rows(rows)
+        self._mark_picked()
         self.stack.setCurrentWidget(self.table if rows else self.empty_label)
         self._select_offer(selected)
         self._update_count()
@@ -690,7 +787,7 @@ class MainWindow(QMainWindow):
         candidates = []
         for offer, val in self.model.rows():
             key = (offer.raw.source, offer.raw.source_id)
-            if val.verdict is Verdict.SKIP or not offer.raw.photos or key in self._photo_queued:
+            if val.verdict is Verdict.SKIP or not offer.raw.photos or key in self._photo_queued or not offer.active:
                 continue
             if offer.layers is not None and (offer.layers.photo_at is not None or offer.layers.photo_error):
                 continue
@@ -707,7 +804,7 @@ class MainWindow(QMainWindow):
             return
         candidates = []
         for offer, val in self.model.rows():
-            if val.verdict is not Verdict.VERIFY or offer.id is None:
+            if val.verdict is not Verdict.VERIFY or offer.id is None or not offer.active:
                 continue
             key = text_hash(offer.raw.title, offer.raw.description)
             if offer.layers is not None and offer.layers.desc_hash == key:
@@ -769,7 +866,8 @@ class MainWindow(QMainWindow):
         self._current_changed(self.table.currentIndex())
 
     def _update_count(self) -> None:
-        rows = self.model.rows()
+        self._update_tab_counts()
+        rows = [r for r in self.model.rows() if r[0].active]
         shown = self.proxy.rowCount()
         greens = sum(1 for r in range(shown)
                      if self._row_at(self.proxy.index(r, 0))[1].color is RowColor.GREEN)
@@ -805,7 +903,7 @@ class MainWindow(QMainWindow):
     def apply_settings(self, settings) -> None:
         old = self.settings
         # stan układu zmieniany w oknie głównym (nie w ustawieniach) zostaje bez zmian
-        for name in ("view_filter", "hidden_columns", "column_widths", "table_sort", "splitter_sizes",
+        for name in ("view_filter", "hidden_columns", "column_widths", "table_sort", "table_list", "splitter_sizes",
                      "filters_visible", "details_visible"):
             setattr(settings, name, getattr(old, name))
         self.settings = settings
@@ -830,6 +928,7 @@ class MainWindow(QMainWindow):
         self.mode_combo.setCurrentIndex(self.mode_combo.findData(settings.mode))
         self.mode_combo.blockSignals(False)
         self._apply_filter_rules()
+        self.proxy.set_list(self.proxy.list_key, settings.selection)  # nowe kryteria „Wybrane”
         self.reload()
 
     def apply_appearance(self) -> None:
@@ -993,6 +1092,7 @@ class MainWindow(QMainWindow):
         dialog.status_changed.connect(self._status_changed)
         dialog.not_phone.connect(self.mark_not_phone)
         dialog.message_copied.connect(self._show_status)
+        dialog.pick_requested.connect(self.set_picked)
         dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         dialog.show()
         return dialog
@@ -1016,6 +1116,9 @@ class MainWindow(QMainWindow):
             self.reload()
         else:
             self.model.update_status(offer_id, st)
+            if st is OfferStatus.WATCHED:
+                self._mark_picked()
+            self._update_count()
             if self.details.offer is not None and self.details.offer.id == offer_id:
                 self.details.offer.status = st
                 self.details._refresh_buttons()
@@ -1025,7 +1128,7 @@ class MainWindow(QMainWindow):
         index = self.table.indexAt(pos)
         if not index.isValid():
             return
-        offer, _ = self._row_at(index)
+        offer, val = self._row_at(index)
         menu = QMenu(self)
         menu.addAction("Szczegóły i wyliczenie…", lambda: self.show_details(index))
         menu.addAction("Otwórz ogłoszenie w przeglądarce", lambda: self._open_offer(index))
@@ -1034,6 +1137,10 @@ class MainWindow(QMainWindow):
             menu.addAction("☆ Przestań obserwować", lambda: self.set_offer_status(offer.id, OfferStatus.NEW))
         else:
             menu.addAction("★ Obserwuj", lambda: self.set_offer_status(offer.id, OfferStatus.WATCHED))
+        if is_picked(offer, val, self.settings.selection):
+            menu.addAction("✕ Usuń z Wybranych", lambda: self.set_picked(offer.id, False))
+        else:
+            menu.addAction("✓ Dodaj do Wybranych", lambda: self.set_picked(offer.id, True))
         if offer.status is OfferStatus.HIDDEN:
             menu.addAction("Przywróć (odkryj)", lambda: self.set_offer_status(offer.id, OfferStatus.NEW))
         else:
