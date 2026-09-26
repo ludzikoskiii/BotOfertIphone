@@ -97,6 +97,26 @@ a szczegóły są w podpowiedzi i w logu.
 
 Token Telegrama i klucz API są przechowywane w lokalnej bazie aplikacji bez szyfrowania.
 
+### Status źródeł i diagnostyka
+
+Pod paskiem narzędzi widać status każdego portalu z ostatniego pobrania:
+
+| Status | Znaczenie | Co zrobić |
+|---|---|---|
+| ✔ działa (N) | portal zwrócił N ofert | nic |
+| ⚠ brak ofert | portal odpowiada, ale nic nie zwrócił | możliwa zmiana formatu — uruchom Diagnostykę |
+| ⛔ zablokowane | portal blokuje automatyczne pobieranie (403, captcha) | automat robi pauzę 3 h (ręczne „Odśwież” ją pomija); jeśli trwa — wyłącz źródło |
+| ✖ zmiana formatu | portal zmienił API lub stronę | adapter do aktualizacji — prześlij raport Diagnostyki |
+| ✖ brak połączenia | brak internetu / zapora | sprawdź połączenie |
+
+Najedź myszą na status, żeby zobaczyć szczegóły błędu. Przycisk **🩺 Diagnostyka**
+sprawdza każdy portal osobno i pokazuje etap problemu (połączenie, blokada, parsowanie,
+filtrowanie). Raport zapisuje się w `%LOCALAPPDATA%\PhoneBot\diagnostyka.txt`.
+Ten sam raport wygenerujesz poleceniem `PhoneBot.exe --diagnose`.
+
+Workflow **live-sources** w GitHub Actions codziennie sprawdza portale na żywo i oznacza
+przebieg na czerwono, gdy któryś adapter przestanie zwracać oferty.
+
 ### Twoja miejscowość
 
 Domyślnie ustawiony jest Kacwin. Zmienisz go w panelu filtrów („Lokalizacja → Zmień…”)
@@ -292,8 +312,14 @@ aplikacja zgłosi błąd źródła („możliwa zmiana formatu serwisu”).
 Allegro Lokalnie podaje tylko nazwę miasta. Odległość jest liczona, gdy to miasto jest
 na wbudowanej liście miejscowości.
 
-Vinted działa w trybie „best effort”. Adapter pobiera cookie sesji ze strony głównej
-i korzysta z wewnętrznego endpointu katalogu. Vinted często blokuje automaty; wtedy pasek stanu
+**OLX blokuje automatyczne pobieranie (wrzesień 2026).** Zapora CloudFront odpowiada
+„403 Request blocked” zarówno na API, jak i na stronę wyników. Aplikacja pokazuje wtedy
+status „zablokowane” i nie próbuje obchodzić zabezpieczeń. Oficjalne API OLX (Partner API)
+służy tylko do zarządzania własnymi ogłoszeniami, nie do wyszukiwania cudzych.
+
+Vinted działa w trybie „best effort”. We wrześniu 2026 Vinted przeniósł katalog na
+`api.vinted.pl/svc-catalogue/items` (stary adres zwraca 404) i adapter korzysta już z nowego. Adapter pobiera anonimowy token sesji
+(ciasteczko `access_token_web`) i wysyła go do endpointu katalogu. Vinted często blokuje automaty; wtedy pasek stanu
 pokaże błąd, a pozostałe portale działają normalnie. Katalog Vinted nie zawiera opisów ofert,
 więc usterki rozpoznawane są tylko z tytułu. Do kosztu zakupu doliczana jest opłata za ochronę
 kupujących: dokładna, jeśli podaje ją Vinted, w przeciwnym razie z ustawień (domyślnie 5% + 2,90 zł,
