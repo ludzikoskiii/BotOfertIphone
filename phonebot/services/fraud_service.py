@@ -16,8 +16,31 @@ def owner_key_from(source: str, params: dict, city: str | None) -> str:
     return f"{source}:{str(who).lower()}" if who else f"{source}:@{(city or '?').lower()}"
 
 
+_CACHE: dict[str, tuple[tuple, FraudContext]] = {}
+
+
+def _data_version(conn: sqlite3.Connection, settings: Settings) -> tuple:
+    """Tani „odcisk” danych, od których zależy kontekst — gdy się nie zmienił, kontekst jest brany z pamięci."""
+    offers = conn.execute("SELECT COUNT(*), MAX(last_seen), MAX(id), SUM(is_active) FROM offers").fetchone()
+    photos = conn.execute("SELECT COUNT(*), MAX(computed_at) FROM photo_hashes").fetchone()
+    sellers = conn.execute("SELECT COUNT(*), MAX(checked_at) FROM sellers").fetchone()
+    return (*offers, *photos, *sellers, settings.fraud.expensive_price)
+
+
 def build_context(conn: sqlite3.Connection, settings: Settings) -> FraudContext:
-    ctx = FraudContext()
+    """Kontekst z bazy; między odświeżeniami (te same dane) — z pamięci, bez ponownego liczenia."""
+    db = conn.execute("PRAGMA database_list").fetchone()[2] or f":memory:{id(conn)}"
+    version = _data_version(conn, settings)
+    cached = _CACHE.get(db)
+    if cached is not None and cached[0] == version:
+        return cached[1]
+    ctx = _build(conn, settings)
+    _CACHE[db] = (version, ctx)
+    return ctx
+
+
+def _build(conn: sqlite3.Connection, settings: Settings) -> FraudContext:
+    ctx = FraudContext(memoize=True)
     owners: dict[tuple[str, str], str] = {}
     for r in conn.execute("SELECT source, source_id, description, city, params FROM offers WHERE is_active = 1"):
         try:
@@ -27,6 +50,7 @@ def build_context(conn: sqlite3.Connection, settings: Settings) -> FraudContext:
         owner = owner_key_from(r["source"], params, r["city"])
         owners[(r["source"], r["source_id"])] = owner
         h = desc_hash(r["description"])
+        ctx.offer_desc[(r["source"], r["source_id"])] = h
         if h:
             ctx.descriptions.setdefault(h, set()).add(owner)
     for r in conn.execute("SELECT source, source_id, dhash, stock FROM photo_hashes WHERE dhash IS NOT NULL"):

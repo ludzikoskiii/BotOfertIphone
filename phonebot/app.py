@@ -141,7 +141,7 @@ def main() -> int:
 
     # aplikacja żyje w zasobniku — kończy ją „Zakończ” albo zamknięcie okna (gdy zasobnik wyłączony)
     app.setQuitOnLastWindowClosed(False)
-    window = MainWindow(conn, path)
+    window = MainWindow(conn, path, defer_load=True)  # okno od razu, oferty chwilę później
     window.quit_on_close = True
     window.show()
     window.start_ai()  # lokalne AI w osobnym wątku: modele ładowane raz, analiza w tle

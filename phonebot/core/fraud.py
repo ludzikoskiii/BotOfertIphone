@@ -19,6 +19,7 @@ import hashlib
 import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from functools import lru_cache
 
 from .models import Offer
 from .text import any_match, normalize, phrase
@@ -115,7 +116,10 @@ class FraudContext:
     photo_owner: dict[tuple[str, str], str] = field(default_factory=dict)  # (portal, id) → sprzedający/miasto
     sellers: dict[tuple[str, str], SellerStats] = field(default_factory=dict)
     expensive_by_seller: dict[tuple[str, str], int] = field(default_factory=dict)
+    offer_desc: dict[tuple[str, str], str | None] = field(default_factory=dict)  # (portal, id) → skrót opisu
     _bands: dict[tuple[int, int], list[tuple[str, str]]] | None = None
+    memoize: bool = False  # kontekst z bazy (niezmienny po zbudowaniu) — wyniki porównań zdjęć zapamiętywane
+    _dup_memo: dict[tuple, tuple[str, str] | None] = field(default_factory=dict)
 
     def similar_photos(self, key: tuple[str, str], max_distance: int) -> list[tuple[str, str]]:
         """Oferty z podobnym zdjęciem. Indeks 8 pasm po 8 bitów: przy różnicy ≤ 7 bitów co najmniej jedno
@@ -137,6 +141,17 @@ class FraudContext:
                     if hamming(self.photos[k][0], mine[0]) <= max_distance:
                         out.append(k)
         return out
+
+    def duplicate_of(self, key: tuple[str, str], max_distance: int, owner: str) -> tuple[str, str] | None:
+        """Pierwsze ogłoszenie innego sprzedającego z tym samym albo prawie tym samym zdjęciem.
+        W kontekście z bazy (``memoize``) wynik jest zapamiętywany — kontekst żyje między odświeżeniami listy."""
+        memo_key = (key, max_distance, owner)
+        if memo_key in self._dup_memo:
+            return self._dup_memo[memo_key]
+        dup = next((k for k in self.similar_photos(key, max_distance) if self.photo_owner.get(k) != owner), None)
+        if self.memoize:
+            self._dup_memo[memo_key] = dup
+        return dup
 
 
 # ------------------------------------------------------------- tekst ---
@@ -192,18 +207,34 @@ def hamming(a: int, b: int) -> int:
 
 # ------------------------------------------------------------- ocena ---
 
+@lru_cache(maxsize=20000)
+def _text_signals(text: str) -> tuple[tuple[str, ...], tuple[str, ...], bool, bool, bool]:
+    """Sygnały z tekstu ogłoszenia — liczone raz na treść (odświeżenie listy nie powtarza wyrażeń regularnych)."""
+    norm = normalize(text)
+    phones = phone_numbers(text)
+    contacts = []
+    m = _MESSENGERS.search(text)
+    if m:
+        contacts.append(m.group(0).strip())
+    if _EMAIL.search(text):
+        contacts.append("e-mail")
+    if phones:
+        contacts.append("numer telefonu")
+    return tuple(phones), tuple(contacts), any_match(_PREPAY, norm), any_match(_SHIP_ONLY, norm), any_match(_GIFT, norm)
+
+
 def assess(offer: Offer, market_value: float | None, ctx: FraudContext, cfg: FraudConfig,
            now: datetime | None = None) -> FraudAssessment:
     if not cfg.enabled:
         return FraudAssessment()
     raw = offer.raw
-    text = f"{raw.title}\n{raw.description or ''}"
-    norm = normalize(text)
+    phones, contacts, prepay, ship_only, gift = _text_signals(f"{raw.title}\n{raw.description or ''}")
     sig: list[Signal] = []
 
     def add(key: str, detail: str = "") -> None:
         sig.append(Signal(key, SIGNALS[key][0], cfg.weight(key), detail))
 
+    key = (raw.source, raw.source_id)
     cheap = bool(market_value) and raw.price < cfg.cheap_ratio * market_value  # type: ignore[operator]
     # --- sprzedający ---
     seller_key = (raw.source, str(raw.params.get("seller_id") or ""))
@@ -227,37 +258,27 @@ def assess(offer: Offer, market_value: float | None, ctx: FraudContext, cfg: Fra
     if (new or stats.reviews == 0) and ctx.expensive_by_seller.get(seller_key, 0) >= cfg.expensive_count:
         add("many_expensive_new", f"{ctx.expensive_by_seller[seller_key]} ofert ≥ {cfg.expensive_price:.0f} zł")
     # --- tekst ---
-    phones = phone_numbers(text)
-    contacts = []
-    if _MESSENGERS.search(text):
-        contacts.append(_MESSENGERS.search(text).group(0).strip())
-    if _EMAIL.search(text):
-        contacts.append("e-mail")
-    if phones:
-        contacts.append("numer telefonu")
     if contacts:
         add("contact_outside", ", ".join(dict.fromkeys(contacts)))
     foreign = [p for p in phones if not p.startswith("48")]
     if foreign:
         add("foreign_phone", "+" + foreign[0][:3] + "…")
-    if any_match(_PREPAY, norm):
+    if prepay:
         add("prepayment")
-    if cheap and (any_match(_SHIP_ONLY, norm)):
+    if cheap and ship_only:
         add("shipping_only_cheap")
-    if market_value and raw.price < cfg.gift_ratio * market_value and any_match(_GIFT, norm):
+    if market_value and raw.price < cfg.gift_ratio * market_value and gift:
         add("sealed_gift_cheap")
-    h = desc_hash(raw.description)
+    h = ctx.offer_desc[key] if key in ctx.offer_desc else desc_hash(raw.description)
     if h and len(ctx.descriptions.get(h, set()) - {owner_key(offer)}) > 0:
         add("copied_description")
     # --- zdjęcia ---
-    key = (raw.source, raw.source_id)
     mine = ctx.photos.get(key)
     if not raw.photos:
         add("no_real_photos")
     elif mine is not None:
         me = owner_key(offer)
-        dup = next((k for k in ctx.similar_photos(key, min(cfg.photo_distance, 7)) if ctx.photo_owner.get(k) != me),
-                   None)
+        dup = ctx.duplicate_of(key, min(cfg.photo_distance, 7), me)
         if dup is not None:
             add("duplicate_photo", f"też w ogłoszeniu {dup[0]} {dup[1]}")
         if mine[1]:

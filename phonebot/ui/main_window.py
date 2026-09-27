@@ -149,7 +149,8 @@ class MainWindow(QMainWindow):
     ai_retrain_requested = Signal()
     ai_auto_retrain_requested = Signal()
 
-    def __init__(self, conn: sqlite3.Connection, db_path: Path, thumbs_dir: Path | None = None):
+    def __init__(self, conn: sqlite3.Connection, db_path: Path, thumbs_dir: Path | None = None,
+                 defer_load: bool = False):
         super().__init__()
         self.conn = conn
         self.db_path = db_path
@@ -225,8 +226,13 @@ class MainWindow(QMainWindow):
         self.web_timer = QTimer(self, interval=3000)  # zmiany z telefonu (obserwuj, ukryj…) → odśwież tabelę
         self.web_timer.timeout.connect(self._web_poll)
         self._configure_web()
-        self._apply_filter_rules()
-        self.reload()
+        # defer_load: okno pokazuje się od razu, oferty wczytują się zaraz po pierwszym narysowaniu
+        self.loaded = False
+        if defer_load:
+            self._status.setText("Wczytywanie ofert…")
+            QTimer.singleShot(0, self._initial_load)
+        else:
+            self._initial_load()
         # sprzątanie starych miniatur po starcie, żeby nie opóźniać otwarcia okna
         QTimer.singleShot(5000, lambda: (self.thumbs.prune_disk(), self.photos.prune_disk()))
 
@@ -936,6 +942,13 @@ class MainWindow(QMainWindow):
         self.settings.view_filter = f
         self.settings_repo.save(self.settings)
         self._update_count()
+
+    def _initial_load(self) -> None:
+        if self._status.text() == "Wczytywanie ofert…":
+            self._status.setText("Gotowy.")
+        self._apply_filter_rules()
+        self.reload()
+        self.loaded = True
 
     def _apply_filter_rules(self) -> int:
         """Nowe reguły filtra (aktualizacja programu lub zmiana ustawień) → sprawdź też zapisane oferty."""

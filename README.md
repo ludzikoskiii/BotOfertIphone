@@ -3,7 +3,7 @@
 Aplikacja desktopowa (Windows) do wyszukiwania ofert używanych iPhone'ów na
 Allegro Lokalnie, Vinted i Sprzedajemy.pl, wyceny ich opłacalności i podpowiadania, czy i za ile kupić.
 
-> **Status: wersja 1.11.0.** Trzy portale, wycena, werdykty i negocjacje, filtry, zabezpieczenia werdyktu,
+> **Status: wersja 1.12.0.** Trzy portale, wycena, werdykty i negocjacje, filtry, zabezpieczenia werdyktu,
 > **darmowe lokalne AI** (klasyfikator tytułów, analiza zdjęć, opcjonalnie model językowy w Ollamie),
 > szablony wiadomości do sprzedającego, automatyczne odświeżanie, powiadomienia Windows i Telegram
 > oraz gotowy plik `PhoneBot.exe`. Program nie korzysta z żadnych płatnych usług.
@@ -711,13 +711,28 @@ Awaria jednego adaptera jest izolowana i nie zatrzymuje pozostałych.
 
 ### Wydajność
 
-Zmierzone na 5000 aktywnych ofert:
+Okno pokazuje się od razu, a oferty wczytują się chwilę później (napis „Wczytywanie ofert…” na pasku stanu).
+Ocena ryzyka oszustwa korzysta z kontekstu z bazy zapamiętanego między odświeżeniami. Kontekst liczy się
+od nowa tylko wtedy, gdy zmienią się oferty, zdjęcia albo dane sprzedających. Sygnały z tekstu ogłoszenia
+liczone są raz na treść. Sprzedawcy seryjni sprawdzani są jednym zapytaniem do bazy zamiast jednym na sprzedawcę.
 
-| Operacja | Czas |
-|---|---|
-| Otwarcie okna (wczytanie, wycena, tabela) | ok. 0,45 s |
-| Sortowanie po dowolnej kolumnie | kilkadziesiąt ms |
-| Zapis 3000 pobranych ofert (filtr + rozpoznanie + baza) | ok. 1,5 s (w tle) |
+Pomiar na 3000 aktywnych ofert (`python tools/benchmark.py --offers 3000`, mediana z 3 przebiegów,
+wersja 1.11.0 → 1.12.0):
+
+| Operacja | Przed | Po |
+|---|---|---|
+| Widoczne okno (typowy start) | 1,08 s | 0,33 s |
+| Widoczne okno (pierwszy start po aktualizacji) | 1,63 s | 0,37 s |
+| Pełne wczytanie listy przy starcie | 1,20 s | 1,05 s |
+| Odświeżenie listy (np. po skanie) | 726 ms | 348 ms |
+| Działania po skanie (zdjęcia, ceny, lista) | 218 ms | 182 ms |
+| Sortowanie / filtr / przełączenie list | 0 / 39 / 82 ms | 0 / 39 / 76 ms |
+| Przewijanie tabeli (średnio na klatkę) | 16 ms | 15 ms |
+| Pamięć | 152 MB | 154 MB |
+
+Sortowanie, filtr i przewijanie były już szybkie. Ich czas zależy głównie od rysowania w Qt, więc różnice
+mieszczą się w szumie pomiaru. Wyniki wyceny się nie zmieniły: na tej samej bazie 3000 ofert werdykt, zysk,
+ocena i ryzyko są identyczne przed optymalizacją i po niej.
 
 Baza nie rośnie bez końca: oferty nieaktywne dłużej niż 2 × okno wyceny (min. 60 dni) są usuwane,
 z wyjątkiem obserwowanych. Nieużywane od 30 dni miniatury znikają z dysku, a zdjęcia w pamięci

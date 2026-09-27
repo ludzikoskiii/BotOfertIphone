@@ -161,14 +161,15 @@ class OfferGuard:
             if key and p.decision.accepted and p.parsed.model and not self.whitelisted(p.raw):
                 groups[key].append(p)
         offers = OfferRepository(self.conn)
+        # oferty tych sprzedawców zapisane przy poprzednich skanach — jedno zapytanie zamiast jednego na sprzedawcę
+        stored = offers.seller_price_points(source, [k for k in groups if k not in found])
         for key, group in groups.items():
             if key in found:
                 continue
             batch_ids = {p.raw.source_id for p in group}
             candidates = [(p.parsed.model, p.parsed.storage_gb, p.raw.price) for p in group]
-            # oferty tego sprzedawcy zapisane przy poprzednich skanach
-            candidates += [(o.parsed.model, o.parsed.storage_gb, o.price) for o in offers.by_seller(source, key)
-                           if o.raw.source_id not in batch_ids and o.parsed.model]
+            candidates += [(model, storage, price) for sid, model, storage, price in stored.get(key, ())
+                           if sid not in batch_ids and model]
             if len(candidates) < cfg.serial_min_offers:
                 continue
             cheap = [price for model, storage, price in candidates

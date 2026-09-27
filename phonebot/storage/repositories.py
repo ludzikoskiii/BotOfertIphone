@@ -110,6 +110,19 @@ class OfferRepository:
         sql = f"{_OFFER_SELECT} WHERE o.source = ? AND o.seller_id = ?" + (" AND o.is_active = 1" if active_only else "")
         return [_row_to_offer(r) for r in self.conn.execute(sql, (source, seller_id))]
 
+    def seller_price_points(self, source: str, seller_ids) -> dict[str, list[tuple[str, str | None, int | None, float]]]:
+        """Aktywne oferty wielu sprzedawców jednym zapytaniem (na partie): {seller_id: [(source_id, model,
+        pamięć, cena)]} — tylko pola potrzebne do wykrywania sprzedawców seryjnych."""
+        ids = list(dict.fromkeys(seller_ids))
+        out: dict[str, list[tuple[str, str | None, int | None, float]]] = {sid: [] for sid in ids}
+        for i in range(0, len(ids), 500):
+            chunk = ids[i:i + 500]
+            sql = ("SELECT seller_id, source_id, model, storage_gb, price FROM offers WHERE source = ? "
+                   f"AND is_active = 1 AND seller_id IN ({','.join('?' * len(chunk))}) ORDER BY id")
+            for r in self.conn.execute(sql, (source, *chunk)):
+                out[r["seller_id"]].append((r["source_id"], r["model"], r["storage_gb"], float(r["price"])))
+        return out
+
     def list(self, *, include_hidden: bool = False, active_only: bool = True) -> list[Offer]:
         where = []
         if not include_hidden:

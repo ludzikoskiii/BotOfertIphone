@@ -65,6 +65,11 @@ HEADERS = {
     Col.RISK: "Ryzyko",
 }
 NUMERIC = {Col.PRICE, Col.MARKET, Col.PROFIT, Col.MAX_BUY, Col.BATTERY, Col.SCORE}
+_COLS = tuple(Col)
+_NCOLS = len(_COLS)
+_COL_ALIGN = {c: _RIGHT if c in NUMERIC else _CENTER if c in (Col.VERDICT, Col.PHOTO) else _LEFT for c in Col}
+_DISPLAY = Qt.ItemDataRole.DisplayRole
+_ALIGN = Qt.ItemDataRole.TextAlignmentRole
 ALWAYS_VISIBLE = {Col.MODEL}
 # pole sortowania dla kolumny (kliknięcie nagłówka); „Link” nie sortuje
 COL_FIELD = {Col.PHOTO: "photos", Col.MODEL: "model", Col.STORAGE: "storage", Col.PRICE: "price",
@@ -129,7 +134,7 @@ class OffersTableModel(QAbstractTableModel):
         self._warning = QBrush(QColor(palette.warning))
         self._watched_bg = QBrush(QColor(palette.watched))
         if self._rows:
-            self.dataChanged.emit(self.index(0, 0), self.index(len(self._rows) - 1, len(Col) - 1))
+            self.dataChanged.emit(self.index(0, 0), self.index(len(self._rows) - 1, _NCOLS - 1))
 
     # --- dane ---
 
@@ -171,7 +176,7 @@ class OffersTableModel(QAbstractTableModel):
                for oid, i in zip(ids, persistent, strict=True)]
         self.changePersistentIndexList(persistent, new)
         self.layoutChanged.emit()
-        self.headerDataChanged.emit(Qt.Orientation.Horizontal, 0, len(Col) - 1)
+        self.headerDataChanged.emit(Qt.Orientation.Horizontal, 0, _NCOLS - 1)
         self.sort_changed.emit()
 
     def sort(self, column: int, order: Qt.SortOrder = Qt.SortOrder.AscendingOrder) -> None:
@@ -191,7 +196,7 @@ class OffersTableModel(QAbstractTableModel):
         if row is None:
             return
         self._rows[row][0].status = status
-        self.dataChanged.emit(self.index(row, 0), self.index(row, len(Col) - 1))
+        self.dataChanged.emit(self.index(row, 0), self.index(row, _NCOLS - 1))
 
     def rows(self) -> list[tuple[Offer, Valuation]]:
         return self._rows
@@ -207,7 +212,7 @@ class OffersTableModel(QAbstractTableModel):
         return 0 if parent.isValid() else len(self._rows)
 
     def columnCount(self, parent: QModelIndex | QPersistentModelIndex = QModelIndex()) -> int:  # noqa: B008
-        return 0 if parent.isValid() else len(Col)
+        return 0 if parent.isValid() else _NCOLS
 
     def headerData(self, section: int, orientation: Qt.Orientation, role: int = Qt.ItemDataRole.DisplayRole) -> Any:
         if orientation != Qt.Orientation.Horizontal:
@@ -232,8 +237,8 @@ class OffersTableModel(QAbstractTableModel):
         if not index.isValid():
             return None
         offer, val = self._rows[index.row()]
-        col = Col(index.column())
-        if role == Qt.ItemDataRole.DisplayRole:
+        col = _COLS[index.column()]  # krotka zamiast Col(...) — data() woła się ~1000 razy na klatkę przewijania
+        if role == _DISPLAY:
             return self._display(col, offer, val)
         if role == OFFER_ROLE:
             return offer.id
@@ -249,12 +254,8 @@ class OffersTableModel(QAbstractTableModel):
             return None
         if role == Qt.ItemDataRole.DecorationRole and col is Col.PHOTO:
             return self._thumbs.get(offer.raw.photos[0] if offer.raw.photos else None)
-        if role == Qt.ItemDataRole.TextAlignmentRole:
-            if col in NUMERIC:
-                return _RIGHT
-            if col in (Col.VERDICT, Col.PHOTO):
-                return _CENTER
-            return _LEFT
+        if role == _ALIGN:
+            return _COL_ALIGN[col]
         if role == Qt.ItemDataRole.ToolTipRole:
             return self._tooltip(col, offer, val)
         return None
