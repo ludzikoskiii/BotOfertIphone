@@ -1,0 +1,27 @@
+name: probe-olx
+
+# Diagnoza OLX.pl (etapy: robots.txt, JSON API, strona wyników, oficjalne API). Kilka zapytań, bez obchodzenia blokad.
+on:
+  push:
+    paths:
+      - "scripts/probe_olx.py"
+      - ".github/workflows/probe-olx.yml"
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install httpx
+      - run: python scripts/probe_olx.py probe_olx.txt
+        env:
+          PYTHONIOENCODING: utf-8
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: probe-olx
+          path: probe_olx.txt
