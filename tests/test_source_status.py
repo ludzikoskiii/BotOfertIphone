@@ -137,7 +137,7 @@ def test_status_bar_shows_each_source(app, tmp_path):
     assert bar.kinds["allegro_lokalnie"] == "blocked" and "zablokowane" in bar.text_of("allegro_lokalnie")
     assert bar.kinds["vinted"] == "ok" and "działa" in bar.text_of("vinted")
     assert bar.kinds["sprzedajemy"] == "ok"
-    assert "olx" not in bar.kinds
+    assert bar.kinds["olx"] == "disabled"  # OLX z maili — domyślnie wyłączony
     tooltip = win.findChild(type(win._status), "status_allegro_lokalnie").toolTip()
     assert "HTTP 403" in tooltip and "Zwiększ odstęp" in tooltip
 

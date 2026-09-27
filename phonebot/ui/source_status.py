@@ -25,6 +25,8 @@ STATUS_STYLE: dict[str, tuple[str, str, str, str, str]] = {
                 "Portal zmienił adres API lub strukturę danych — adapter wymaga aktualizacji. "
                 "Uruchom Diagnostykę i prześlij raport."),
     "error": ("✖", "błąd", "#ffe3e3", "#c92a2a", "Szczegóły w logu aplikacji. Uruchom Diagnostykę."),
+    "config": ("⚙", "do ustawienia", "#fff3bf", "#e67700",
+               "Źródło wymaga danych w Ustawieniach → Portale (klucze API albo dane poczty)."),
     "never": ("–", "nie sprawdzano", "#f1f3f5", "#868e96", "Kliknij „Odśwież oferty”."),
     "disabled": ("○", "wyłączone", "#f1f3f5", "#adb5bd", "Włącz w Ustawieniach → Portale."),
 }

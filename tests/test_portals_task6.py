@@ -141,7 +141,7 @@ def test_keyed_portals_only_with_keys():
     s = Settings(allegro_client_id="a", allegro_client_secret="b", ebay_client_id="c", ebay_client_secret="d")
     s.enabled_sources.update(allegro=True, ebay=True)
     assert {"allegro", "ebay"} <= {a.key for a in default_adapters(http, s)}
-    assert list(SOURCE_NAMES) == ["allegro_lokalnie", "allegro", "vinted", "sprzedajemy", "lento", "ebay"]
+    assert list(SOURCE_NAMES) == ["allegro_lokalnie", "allegro", "olx", "vinted", "sprzedajemy", "lento", "ebay"]
 
 
 # -------------------------------------------------------------------- eBay ---

@@ -3,7 +3,7 @@
 Aplikacja desktopowa (Windows) do wyszukiwania ofert używanych iPhone'ów na
 Allegro Lokalnie, Vinted i Sprzedajemy.pl, wyceny ich opłacalności i podpowiadania, czy i za ile kupić.
 
-> **Status: wersja 1.12.0.** Trzy portale, wycena, werdykty i negocjacje, filtry, zabezpieczenia werdyktu,
+> **Status: wersja 1.13.0.** Trzy portale, wycena, werdykty i negocjacje, filtry, zabezpieczenia werdyktu,
 > **darmowe lokalne AI** (klasyfikator tytułów, analiza zdjęć, opcjonalnie model językowy w Ollamie),
 > szablony wiadomości do sprzedającego, automatyczne odświeżanie, powiadomienia Windows i Telegram
 > oraz gotowy plik `PhoneBot.exe`. Program nie korzysta z żadnych płatnych usług.
@@ -271,6 +271,35 @@ do zmiany), a iPhone 14 i nowsze z USA — **„tylko eSIM”** z niższą warto
   (domyślnie 50/50); stan sklepu → stan w programie w edytowalnym mapowaniu;
 - w szczegółach oferty widać sklep, cenę i **datę pobrania**; gdy sklep nie odpowiada, używana jest ostatnia
   zapisana cena, a bez ceny referencyjnej wycena działa jak dotąd (sama mediana).
+
+### OLX z powiadomień e-mail
+
+OLX blokuje automatyczne pobieranie, więc PhoneBot korzysta z oficjalnego kanału OLX, czyli powiadomień
+e-mail o nowych ogłoszeniach:
+
+1. Na OLX wyszukaj np. „iPhone” w kategorii telefonów, ustaw filtry i kliknij „Obserwuj wyszukiwanie”
+   z powiadomieniami e-mail.
+2. W **Ustawieniach → Portale → OLX** wpisz adres e-mail i **hasło aplikacji** do poczty. W Gmailu:
+   Konto Google → Bezpieczeństwo → Weryfikacja dwuetapowa → Hasła aplikacji. W innych skrzynkach
+   włącz dostęp IMAP. Kliknij „Sprawdź pocztę”.
+3. Włącz „OLX (e-mail)” w zakładce „Ogólne i pobieranie”.
+
+Jak to działa:
+- Program łączy się z Twoją skrzynką przez IMAP **tylko do odczytu**: maile zostają nieprzeczytane,
+  nic nie jest wysyłane ani usuwane.
+- Przy każdym odświeżeniu czyta maile od OLX z ostatnich 7 dni. Każdy mail pobiera raz (wynik zapisuje
+  w `olx_mail_cache.json`).
+- Hasło jest zapisywane zaszyfrowane, tak jak token Telegrama.
+- Z maila znane są tytuł, cena, miasto, link i zdjęcie, bez opisu i danych sprzedającego. Wycena opiera
+  się więc na tytule, a ocena ryzyka oszustwa ma mniej danych.
+- Oferty przechodzą przez te same filtry, wycenę, listę „Wybrane” i powiadomienia co z innych portali.
+- Miniatury zdjęć są ładowane z serwera zdjęć OLX, tak jak w programie pocztowym.
+
+Status w pasku źródeł:
+- „brak ofert”: nie ma maili od OLX, na przykład gdy powiadomienia są wyłączone.
+- „do ustawienia”: poczta odrzuciła logowanie.
+- „zmiana formatu”: powiadomienia przychodzą, ale nie udało się z nich odczytać żadnej oferty.
+  To znak, że OLX zmienił wygląd maili i parser wymaga aktualizacji.
 
 ### Oferty z zagranicy (Vinted)
 
@@ -747,14 +776,13 @@ aplikacja zgłosi błąd źródła („możliwa zmiana formatu serwisu”).
 Allegro Lokalnie podaje tylko nazwę miasta. Odległość jest liczona, gdy to miasto jest
 na wbudowanej liście miejscowości.
 
-**OLX i Facebook Marketplace nie są obsługiwane.** OLX blokuje automatyczne pobieranie
-(zapora CloudFront odpowiada „403 Request blocked” na API i stronę wyników), a jego oficjalne
-Partner API służy tylko do zarządzania własnymi ogłoszeniami. Facebook Marketplace nie ma
-publicznego API, a regulamin Meta zabrania automatycznego zbierania danych. Adapter OLX
-został usunięty z projektu. Stare oferty z OLX znikają z listy przy aktualizacji bazy,
-ale ich ceny nadal zasilają wycenę rynkową do końca okna czasowego (30 dni).
-OLX pozostaje dostępny jako **kanał sprzedaży** w ustawieniach zysku, bo dotyczy Twojej
-ręcznej sprzedaży, a nie pobierania ofert.
+**OLX: tylko z powiadomień e-mail.** OLX blokuje automatyczne pobieranie: zapora CloudFront odpowiada
+„403 Request blocked” na API, stronę wyników, a nawet robots.txt. Sprawdzone we wrześniu 2026 z serwerów
+GitHuba i z łącza domowego. Oficjalne Partner API OLX służy tylko do zarządzania własnymi ogłoszeniami.
+Dlatego PhoneBot nie pobiera stron OLX, tylko czyta maile z powiadomieniami (opis niżej, w części
+„OLX z powiadomień e-mail”). Facebook Marketplace nie jest obsługiwany: nie ma publicznego API,
+a regulamin Meta zabrania automatycznego zbierania danych. OLX pozostaje też **kanałem sprzedaży**
+w ustawieniach zysku.
 
 Vinted działa w trybie „best effort”. We wrześniu 2026 Vinted przeniósł katalog na
 `api.vinted.pl/svc-catalogue/items` (stary adres zwraca 404) i adapter korzysta już z nowego. Adapter pobiera anonimowy token sesji

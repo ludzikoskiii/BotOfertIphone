@@ -194,7 +194,8 @@ class Settings:
     # --- pobieranie ---
     enabled_sources: dict[str, bool] = field(
         default_factory=lambda: {"allegro_lokalnie": True, "vinted": True, "sprzedajemy": True, "lento": True,
-                                 "allegro": False, "ebay": False}  # Allegro i eBay — po wpisaniu kluczy API
+                                 "allegro": False, "ebay": False,  # Allegro i eBay — po wpisaniu kluczy API
+                                 "olx": False}  # OLX — z powiadomień e-mail, po wpisaniu danych poczty
     )
     request_delay_s: float = 4.0
     source_timeout_s: float = 180.0  # maks. czas pobierania z jednego portalu
@@ -251,6 +252,15 @@ class Settings:
     # --- eBay (oficjalne Browse API; klucze z developer.ebay.com) ---
     ebay_client_id: str = ""
     ebay_client_secret: str = ""
+    # --- OLX z powiadomień e-mail (IMAP, tylko do odczytu; hasło zaszyfrowane jak token Telegrama) ---
+    olx_mail_user: str = ""  # adres e-mail, na który OLX wysyła powiadomienia
+    olx_mail_password: str = ""  # hasło aplikacji do poczty
+    olx_mail_host: str = ""  # puste = odgadnięte z adresu (gmail.com → imap.gmail.com)
+    olx_mail_port: int = 993
+    olx_mail_folder: str = "INBOX"
+    olx_mail_sender: str = "olx.pl"  # nadawca powiadomień (fragment adresu)
+    olx_mail_days: int = 7  # maile z ostatnich dni
+    olx_mail_max: int = 150  # najwyżej tyle najnowszych maili na skan
     ebay_markets: list[str] = field(default_factory=lambda: ["EBAY_DE"])
     ebay_vat_pct: float = 23.0  # VAT importowy spoza UE
     ebay_duty_pct: float = 0.0  # cło na telefony komórkowe w UE: 0% (HS 8517.13)

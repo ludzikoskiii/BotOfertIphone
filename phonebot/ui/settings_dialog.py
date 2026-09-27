@@ -1003,7 +1003,82 @@ class SettingsDialog(QDialog):
                     manual[f"{model}|{int(gb)}"] = _num(price)
             st.reference_manual = manual
         self._readers.append(read_refs)
-        return self._page(allegro, ebay, ref)
+        return self._page(allegro, self._olx_mail_group(), ebay, ref)
+
+    def _text_edit(self, attr: str, placeholder: str) -> QLineEdit:
+        edit = QLineEdit(str(getattr(self.settings, attr)))
+        edit.setObjectName(attr)
+        edit.setPlaceholderText(placeholder)
+        self._readers.append(lambda st: setattr(st, attr, edit.text().strip()))
+        return edit
+
+    def _olx_mail_group(self) -> QGroupBox:
+        box = QGroupBox("OLX — z powiadomień e-mail (oficjalny kanał OLX; program nie pobiera stron OLX)")
+        form = QFormLayout(box)
+        info = QLabel(
+            "OLX blokuje automatyczne pobieranie (sprawdzone — odpowiada „403”), a jego oficjalne API służy tylko "
+            "do zarządzania własnymi ogłoszeniami. Dlatego PhoneBot czyta <b>maile z powiadomieniami OLX</b>:"
+            "<ol><li>Na OLX wyszukaj np. „iPhone” w kategorii telefonów, ustaw filtry (cena, stan) i kliknij "
+            "<b>„Obserwuj wyszukiwanie”</b> z powiadomieniami e-mail.</li>"
+            "<li>Poniżej wpisz adres, na który przychodzą te maile, i <b>hasło aplikacji</b> do poczty "
+            "(Gmail: Konto Google → Bezpieczeństwo → Weryfikacja dwuetapowa → Hasła aplikacji; w innych "
+            "skrzynkach włącz dostęp IMAP).</li>"
+            "<li>Kliknij „Sprawdź pocztę”, zapisz i włącz „OLX (e-mail)” w zakładce „Ogólne i pobieranie”.</li>"
+            "</ol>Program tylko czyta maile od OLX (nie oznacza ich jako przeczytane, niczego nie wysyła ani nie "
+            "usuwa) i — jak program pocztowy — wyświetla miniatury zdjęć z maila. Z maila znane są tytuł, cena, "
+            "miasto, link i zdjęcie — bez opisu i danych sprzedającego, "
+            "więc wycena opiera się na tytule. Hasło jest zapisywane zaszyfrowane, jak token Telegrama.")
+        info.setWordWrap(True)
+        info.setTextFormat(Qt.TextFormat.RichText)
+        form.addRow(info)
+        self.olx_user = self._secret_edit("olx_mail_user", "np. jan.kowalski@gmail.com")
+        self.olx_user.setEchoMode(QLineEdit.EchoMode.Normal)
+        form.addRow("Adres e-mail:", self.olx_user)
+        self.olx_password = self._secret_edit("olx_mail_password", "hasło aplikacji do poczty")
+        form.addRow("Hasło aplikacji:", self.olx_password)
+        self.olx_host = self._text_edit("olx_mail_host", "puste = automatycznie (np. imap.gmail.com)")
+        form.addRow("Serwer IMAP:", self.olx_host)
+        self.olx_folder = self._text_edit("olx_mail_folder", "INBOX")
+        form.addRow("Folder:", self.olx_folder)
+        self._form([
+            Field("olx_mail_days", "Maile z ostatnich", "int", 1, 30, 1, " dni"),
+        ], form)
+        check = QPushButton("Sprawdź pocztę")
+        check.setObjectName("olx_mail_check")
+        check.clicked.connect(self._olx_mail_check)
+        self.olx_status = QLabel("")
+        self.olx_status.setWordWrap(True)
+        row = QHBoxLayout()
+        row.addWidget(check)
+        row.addWidget(self.olx_status, 1)
+        form.addRow(row)
+        return box
+
+    def _olx_mail_check(self) -> None:
+        from ..sources.olx_mail import OlxMailAdapter
+
+        st = copy.deepcopy(self.settings)
+        for attr, edit in (("olx_mail_user", self.olx_user), ("olx_mail_password", self.olx_password),
+                           ("olx_mail_host", self.olx_host), ("olx_mail_folder", self.olx_folder)):
+            setattr(st, attr, edit.text().strip() if attr != "olx_mail_password" else edit.text())
+        if not OlxMailAdapter.configured(st):
+            self.olx_status.setText("❌ Wpisz adres e-mail i hasło aplikacji.")
+            return
+        self.olx_status.setText("Łączę się z pocztą…")
+
+        def done(result) -> None:
+            offers, check = result
+            if not check.messages:
+                self.olx_status.setText(f"⚠ Połączono, ale brak maili od OLX z ostatnich {st.olx_mail_days} dni. "
+                                        "Włącz powiadomienia e-mail dla obserwowanego wyszukiwania na OLX.")
+            elif not offers:
+                self.olx_status.setText(f"⚠ Połączono: {check.messages} maili od OLX, ale bez rozpoznanych ofert "
+                                        "(to mogą być inne maile niż powiadomienia o ogłoszeniach).")
+            else:
+                self.olx_status.setText(f"✅ Połączono: {check.messages} maili od OLX, {len(offers)} ofert, "
+                                        f"np. „{offers[0].title}” — {offers[0].price:.0f} zł.")
+
+        self._run_bg(lambda: OlxMailAdapter(None, st).check(), done, self.olx_status)
 
     def _fraud_tab(self) -> QWidget:
         from ..core.fraud import SIGNALS

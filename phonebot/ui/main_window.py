@@ -632,8 +632,7 @@ class MainWindow(QMainWindow):
                 self.source_status.set_status(key, name, "disabled")
                 continue
             if not cls.configured(self.settings):
-                self.source_status.set_status(key, name, "disabled",
-                                              error="brak kluczy API — Ustawienia → Portale")
+                self.source_status.set_status(key, name, "disabled", error=cls.config_hint)
                 continue
             row = runs.get(key)
             if row is None:
@@ -1200,7 +1199,7 @@ class MainWindow(QMainWindow):
     def _scan_finished(self, report: ScanReport) -> None:
         errors = [f"{s.name}: {s.error}" for s in report.sources if s.error]
         labels = {"blocked": "ZABLOKOWANE", "changed": "ZMIANA FORMATU", "network": "BRAK POŁĄCZENIA",
-                  "timeout": "ZA DŁUGO", "empty": "BRAK OFERT"}
+                  "timeout": "ZA DŁUGO", "empty": "BRAK OFERT", "config": "DO USTAWIENIA"}
         summary = "; ".join(
             f"{s.name}: {s.saved} ofert ({s.new} nowych)" if s.ok and s.kind == "ok"
             else f"{s.name}: {labels.get(s.kind, 'BŁĄD')}" for s in report.sources

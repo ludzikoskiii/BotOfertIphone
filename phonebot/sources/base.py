@@ -107,6 +107,8 @@ class SourceAdapter(abc.ABC):
     default_enabled: ClassVar[bool] = True
     #: wymaga kluczy API w ustawieniach
     requires_keys: ClassVar[bool] = False
+    #: podpowiedź w pasku statusu, gdy portal nie jest skonfigurowany
+    config_hint: ClassVar[str] = "brak kluczy API — Ustawienia → Portale"
 
     @staticmethod
     def configured(settings) -> bool:

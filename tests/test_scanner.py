@@ -97,10 +97,13 @@ def test_disabled_sources():
     assert default_adapters(None, s) == []
 
 
-def test_olx_is_not_a_source_anymore():
+def test_olx_only_from_email_not_scraped():
+    """OLX blokuje pobieranie — nie ma adaptera, który łączy się z olx.pl; „olx” to oferty z maili (IMAP)."""
     from phonebot.sources import REGISTRY
+    from phonebot.sources.olx_mail import OlxMailAdapter
 
-    assert "olx" not in REGISTRY
+    assert REGISTRY["olx"] is OlxMailAdapter and not OlxMailAdapter.default_enabled
+    assert not hasattr(OlxMailAdapter(object(), Settings()), "http")
 
 
 # ------------------------------------------------------ filtr ogłoszeń w skanerze ---
