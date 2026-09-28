@@ -400,8 +400,9 @@ Oszustwa. Przykłady takich ogłoszeń uczą też klasyfikator tytułów (klasa 
 - Allegro Lokalnie i Sprzedajemy.pl są przeszukiwane w kategorii telefonów, a Allegro Lokalnie nie podaje
   kategorii w wynikach. Dlatego kategoria rozstrzyga głównie wtedy, gdy portal ją podaje.
 - Na Vinted nie udało się pobrać drzewa kategorii (API zwraca 404).
-- Nowe etykiety CLIP dotyczą zdjęć analizowanych od tej wersji. Nie zostały jeszcze sprawdzone na prawdziwych
-  zdjęciach oszustw, dlatego są tylko słabym sygnałem z wysokim progiem (80%).
+- Nowe etykiety CLIP dotyczą zdjęć analizowanych od tej wersji. Sprawdzono je na 20 prawdziwych zdjęciach
+  telefonów (workflow `clip-check`): żadne nie przekroczyło progu 80% (najwyżej 61%). Nie było jednak próbek
+  prawdziwych zdjęć oszustw, dlatego CLIP jest tylko słabym sygnałem.
 
 ### Sprzedawcy seryjni
 
