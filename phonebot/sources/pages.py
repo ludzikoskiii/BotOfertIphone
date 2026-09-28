@@ -51,6 +51,46 @@ class PageResult:
     description: str = ""
     error: str | None = None
     blocked: bool = False
+    gone: bool = False  # ogłoszenie nie istnieje albo sprzedane / zakończone (404, 410, „SoldOut”, napis na stronie)
+    price: float | None = None  # aktualna cena ze strony (JSON-LD / meta), gdy ją podaje
+
+
+_GONE_TEXT = re.compile(r"ogłoszenie (?:zostało )?zakończone|oferta (?:została )?zakończona|ogłoszenie wygasło|"
+                        r"przedmiot (?:został )?sprzedany|ten przedmiot jest już sprzedany|"
+                        r"ogłoszenie nie jest już dostępne|is no longer available|this item is sold", re.I)
+_SOLD_AVAILABILITY = ("soldout", "outofstock", "discontinued")
+
+
+def page_price_state(page: str) -> tuple[float | None, bool]:
+    """(cena, zakończone) z JSON-LD ``offers`` albo znaczników meta strony oferty."""
+    price, gone = None, False
+    for block in _LD_JSON.findall(page):
+        try:
+            data = json.loads(block)
+        except json.JSONDecodeError:
+            continue
+        for d in walk(data):
+            offers = d.get("offers")
+            for o in offers if isinstance(offers, list) else [offers]:
+                if not isinstance(o, dict):
+                    continue
+                if price is None and o.get("price") not in (None, ""):
+                    try:
+                        price = float(str(o["price"]).replace(",", ".").replace(" ", ""))
+                    except ValueError:
+                        pass
+                avail = str(o.get("availability") or "").rsplit("/", 1)[-1].lower()
+                gone = gone or avail in _SOLD_AVAILABILITY
+    if price is None:
+        m = re.search(r'<meta[^>]+property="product:price:amount"[^>]+content="([\d.,]+)"', page)
+        if m:
+            try:
+                price = float(m.group(1).replace(",", "."))
+            except ValueError:
+                pass
+    head = page[:200_000]
+    gone = gone or bool(_GONE_TEXT.search(head))
+    return price, gone
 
 
 def _clean(text: str) -> str:
@@ -126,7 +166,11 @@ class PageFetcher:
             delay -= step
         return not self.stop()
 
-    def fetch(self, source: str, url: str, title: str = "") -> PageResult:
+    def check(self, source: str, url: str) -> PageResult:
+        """Czy ogłoszenie nadal istnieje i jaka jest cena (sprawdzanie starych ofert)."""
+        return self.fetch(source, url, check=True)
+
+    def fetch(self, source: str, url: str, title: str = "", *, check: bool = False) -> PageResult:
         if source not in SUPPORTED:
             return PageResult(error="portal nie jest obsługiwany")
         if source in self.blocked_sources:
@@ -156,9 +200,12 @@ class PageFetcher:
                         source, status)
             return PageResult(error=f"portal zablokował pobieranie (HTTP {status})", blocked=True)
         if status == 404 or status == 410:
-            return PageResult(error="ogłoszenie już nie istnieje")
+            return PageResult(error="ogłoszenie już nie istnieje", gone=True)
         if status != 200:
             return PageResult(error=f"HTTP {status}")
+        if check:
+            price, gone = page_price_state(page)
+            return PageResult(gone=gone, price=price)
         description = extract_description(source, page, title)
         return PageResult(description=description, error=None if description else "brak opisu na stronie oferty")
 

@@ -99,5 +99,5 @@ class AllegroLokalnieAdapter(SourceAdapter):
                     out[o.id] = to_raw(o)
                     new += 1
             log.info("Allegro Lokalnie „%s” strona %d: %d ofert (%d nowych)", phrase, page, len(extracted), new)
-            if new == 0:
+            if new == 0 or query.page_done(o.id for o in extracted):  # szybkie odświeżanie: dalej już znane
                 break

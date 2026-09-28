@@ -152,10 +152,16 @@ def test_parts_editor_rejects_bad_price(window, monkeypatch):
 
 
 def test_auto_refresh_timer_follows_settings(window):
+    import copy
+
+    # domyślnie szybkie odświeżanie per portal (stary zegar pełnego pobierania wyłączony)
+    assert not window.refresh_timer.isActive() and "Nowe oferty co ~2 min" in window.auto_label.text()
+    s = copy.deepcopy(window.settings)
+    s.refresh.enabled = False  # stary tryb: pełne pobranie co N minut
+    window.apply_settings(s)
     s = window.settings
     assert window.refresh_timer.isActive() and window.refresh_timer.interval() == s.refresh_minutes * 60_000
     assert "następne" in window.auto_label.text()
-    import copy
 
     new = copy.deepcopy(s)
     new.refresh_minutes = 0

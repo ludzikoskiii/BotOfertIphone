@@ -123,12 +123,15 @@ class OfferRepository:
                 out[r["seller_id"]].append((r["source_id"], r["model"], r["storage_gb"], float(r["price"])))
         return out
 
-    def list(self, *, include_hidden: bool = False, active_only: bool = True) -> list[Offer]:
+    def list(self, *, include_hidden: bool = False, active_only: bool = True,
+             include_archived: bool = False) -> list[Offer]:
         where = []
         if not include_hidden:
             where.append("o.status != 'hidden'")
         if active_only:
             where.append("o.is_active = 1")
+        if not include_archived:
+            where.append("o.archived_at IS NULL")
         sql = _OFFER_SELECT + (f" WHERE {' AND '.join(where)}" if where else "") + " ORDER BY o.id"
         return [_row_to_offer(r) for r in self.conn.execute(sql)]
 
@@ -181,6 +184,51 @@ class OfferRepository:
             (source, _iso(older_than)),
         )
         return cur.rowcount
+
+    def archive_old(self, days: int, now: datetime | None = None) -> int:
+        """Oferty starsze niż ``days`` dni → archiwum (znikają z tabeli, zostają do statystyk i wyceny rynkowej).
+        „Wybrane” (``picked_at``) i obserwowane nie są archiwizowane automatycznie."""
+        if days <= 0:
+            return 0
+        now = now or utcnow()
+        cur = self.conn.execute(
+            "UPDATE offers SET archived_at = ? WHERE archived_at IS NULL AND first_seen < ? AND status != 'watched' "
+            "AND picked_at IS NULL", (_iso(now), _iso(now - timedelta(days=days))))
+        return cur.rowcount
+
+    def for_page_check(self, *, watched_only: bool, limit: int, older_than: datetime | None = None) -> list[Offer]:
+        """Oferty do sprawdzenia na stronie ogłoszenia (czy istnieje, cena): „Wybrane” i obserwowane albo
+        pozostałe aktywne, najdawniej sprawdzane najpierw."""
+        where = ["o.is_active = 1", "o.status != 'hidden'"]
+        params: list = []
+        if watched_only:
+            where.append("(o.status = 'watched' OR (o.picked_at IS NOT NULL AND o.pick_excluded = 0))")
+        else:
+            where.append("o.archived_at IS NULL")
+        if older_than is not None:
+            where.append("(o.checked_at IS NULL OR o.checked_at < ?)")
+            params.append(_iso(older_than))
+        sql = _OFFER_SELECT + f" WHERE {' AND '.join(where)} ORDER BY COALESCE(o.checked_at, '') LIMIT ?"
+        return [_row_to_offer(r) for r in self.conn.execute(sql, (*params, limit))]
+
+    def apply_page_check(self, offer_id: int, *, exists: bool | None, price: float | None,
+                         now: datetime | None = None) -> str:
+        """Wynik sprawdzenia strony oferty: zniknęła → nieaktualna; nowa cena → historia cen.
+        Zwraca: „gone” | „price” | „ok” | „unknown”."""
+        now_iso = _iso(now or utcnow())
+        self.conn.execute("UPDATE offers SET checked_at = ? WHERE id = ?", (now_iso, offer_id))
+        if exists is False:
+            self.conn.execute("UPDATE offers SET is_active = 0 WHERE id = ?", (offer_id,))
+            return "gone"
+        if exists is None:
+            return "unknown"
+        self.conn.execute("UPDATE offers SET last_seen = ? WHERE id = ?", (now_iso, offer_id))
+        row = self.conn.execute("SELECT price FROM offers WHERE id = ?", (offer_id,)).fetchone()
+        if price and row and abs(float(row["price"]) - price) >= 0.01:
+            self.conn.execute("UPDATE offers SET price = ? WHERE id = ?", (price, offer_id))
+            self._add_price(offer_id, price, now_iso)
+            return "price"
+        return "ok"
 
     def purge_inactive(self, older_than_days: int) -> int:
         """Usuwa dawno nieaktywne oferty (i ich historię cen), których nie potrzebuje już wycena rynkowa.

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import reduce
@@ -111,7 +112,7 @@ class EditableTable(QWidget):
 
 
 GENERAL = [
-    Field("refresh_minutes", "Automatyczne odświeżanie co", "int", 0, 1440, 5, " min",
+    Field("refresh_minutes", "Pełne odświeżanie co (gdy szybkie wyłączone)", "int", 0, 1440, 5, " min",
           tip="0 = tylko ręcznie"),
     Field("price_min", "Pobieraj oferty od ceny", "float", 0, 20000, 50, " zł"),
     Field("price_max", "Pobieraj oferty do ceny (0 = bez limitu)", "float", 0, 20000, 50, " zł"),
@@ -351,7 +352,51 @@ class SettingsDialog(QDialog):
         ll.addRow("Rozmiar czcionki:", self.font_spin)
         self._readers.append(lambda st: (setattr(st, "ui_theme", self.theme_combo.currentData()),
                                          setattr(st, "ui_font_pt", self.font_spin.value())))
-        return self._page(loc, look, sources, form)
+        return self._page(loc, look, sources, self._refresh_group(), form)
+
+    def _refresh_group(self) -> QGroupBox:
+        s = self.settings
+        box = QGroupBox("Odświeżanie przyrostowe (tylko nowe oferty)")
+        form = self._form([
+            Field("refresh.enabled", "Szybkie odświeżanie nowych ofert (każdy portal osobno)", "bool"),
+            Field("refresh.interval_s", "Nowe oferty co", "int", 60, 3600, 10, " s"),
+            Field("refresh.jitter_s", "Losowa zmienność odstępu ±", "int", 0, 120, 5, " s"),
+            Field("refresh.known_stop", "Koniec, gdy na stronie tyle znanych ogłoszeń", "int", 1, 20),
+            Field("refresh.watch_check_minutes", "„Wybrane” i obserwowane: sprawdzaj co", "int", 15, 1440, 15, " min"),
+            Field("refresh.nightly_hour", "Pełne pobranie kontrolne i pozostałe oferty — od godziny", "int", 0, 23, 1,
+                  ":00"),
+            Field("refresh.nightly_page_checks", "…najwyżej stron ofert na noc", "int", 0, 3000, 50),
+            Field("refresh.archive_days", "Archiwum: oferty starsze niż (0 = wyłączone)", "int", 0, 60, 1, " dni"),
+            Field("refresh.new_badge_minutes", "Znacznik „NOWE” przez", "int", 0, 1440, 5, " min"),
+        ])
+        steps = QLineEdit(", ".join(str(m) for m in s.refresh.backoff_minutes))
+        steps.setObjectName("refresh_backoff")
+        steps.setToolTip("Po blokadzie (403/429/captcha) kolejne odstępy dla tego portalu; po udanej próbie powrót "
+                         "do normalnego odstępu.")
+        form.addRow("Odstępy po blokadach (min):", steps)
+
+        def read_steps(st: Settings) -> None:
+            vals = [int(x) for x in re.findall(r"\d+", steps.text()) if int(x) > 0]
+            st.refresh.backoff_minutes = vals or [5, 15, 60]
+        self._readers.append(read_steps)
+        self.min_interval_table = EditableTable(
+            ["Portal (klucz)", "Minimalny odstęp (s)"],
+            [[k, str(s.refresh.min_interval_s.get(k, ""))] for k in SOURCE_NAMES])
+        self.min_interval_table.setObjectName("refresh_min_intervals")
+        form.addRow("Minimalny odstęp portalu:", self.min_interval_table)
+
+        def read_min(st: Settings) -> None:
+            t = self.min_interval_table.table
+            out = {}
+            for r in range(t.rowCount()):
+                key = t.item(r, 0).text().strip() if t.item(r, 0) else ""
+                val = t.item(r, 1).text().strip() if t.item(r, 1) else ""
+                if key and val.isdigit() and int(val) > 0:
+                    out[key] = int(val)
+            st.refresh.min_interval_s = out
+        self._readers.append(read_min)
+        box.setLayout(form)
+        return box
 
     def _update_location_label(self) -> None:
         s = self.settings

@@ -42,12 +42,12 @@ def chip_style(kind: str) -> str:
     return f"background:{bg}; color:{fg}; border-radius:9px; padding:2px 8px; font-weight:bold;"
 
 
-def status_text(name: str, kind: str, found: int | None = None) -> str:
+def status_text(name: str, kind: str, found: int | None = None, suffix: str = "") -> str:
     icon, label, *_ = STATUS_STYLE.get(kind, STATUS_STYLE["error"])
     count = f" ({found})" if kind == "ok" and found is not None else ""
     if kind == "disabled":  # wyłączone portale krótko (szczegóły w podpowiedzi) — 6 portali mieści się w pasku
         return f"{icon} {name}"
-    return f"{icon} {name}: {label}{count}"
+    return f"{icon} {name}: {label}{count}" + (f" · {suffix}" if suffix else "")
 
 
 class SourceStatusBar(QWidget):
@@ -73,13 +73,13 @@ class SourceStatusBar(QWidget):
         lay.addWidget(btn)
 
     def set_status(self, key: str, name: str, kind: str, *, found: int | None = None, error: str | None = None,
-                   when: datetime | None = None) -> None:
+                   when: datetime | None = None, note: str = "", suffix: str = "") -> None:
         lbl = self._labels.get(key)
         if lbl is None:
             return
         self.kinds[key] = kind
         hint = STATUS_STYLE.get(kind, STATUS_STYLE["error"])[4]
-        lbl.setText(status_text(name, kind, found))
+        lbl.setText(status_text(name, kind, found, suffix))
         lbl.setStyleSheet(chip_style(kind))
         tip = []
         if when:
@@ -88,6 +88,8 @@ class SourceStatusBar(QWidget):
             tip.append(f"Pobranych ofert: {found}")
         if error:
             tip.append(f"Błąd: {error}")
+        if note:
+            tip.append(f"Odświeżanie: {note}")
         if hint:
             tip.append(hint)
         lbl.setToolTip("\n".join(tip))

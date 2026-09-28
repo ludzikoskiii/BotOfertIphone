@@ -176,5 +176,6 @@ class EbayAdapter(SourceAdapter):
                 floor = self.price_floor(query) or 0
                 if raw.price >= floor and (not query.price_max or raw.price <= query.price_max):
                     out.setdefault(raw.source_id, raw)
-            if len(items) < PAGE or (page + 1) * PAGE >= int(data.get("total") or 0):
+            if len(items) < PAGE or (page + 1) * PAGE >= int(data.get("total") or 0) or query.page_done(
+                    str(it.get("itemId") or "") for it in items):
                 break

@@ -254,6 +254,13 @@ MIGRATIONS: list[str] = [
         created_at  TEXT NOT NULL
     );
     """,
+    # v12 — odświeżanie przyrostowe: archiwum (oferty starsze niż kilka dni znikają z tabeli, zostają do statystyk)
+    # i sprawdzanie starych ofert (kiedy ostatnio sprawdzono stronę oferty)
+    """
+    ALTER TABLE offers ADD COLUMN archived_at TEXT;
+    ALTER TABLE offers ADD COLUMN checked_at TEXT;
+    CREATE INDEX idx_offers_archived ON offers (archived_at);
+    """,
 ]
 
 

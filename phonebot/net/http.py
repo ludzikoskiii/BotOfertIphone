@@ -158,6 +158,8 @@ class HttpClient:
         )
         #: gdy lista — każde zapytanie jest do niej dopisywane (tryb diagnostyki)
         self.trace: list[dict[str, Any]] | None = None
+        #: liczba zapytań wysłanych do portali (do statystyk odświeżania)
+        self.requests = 0
 
     @property
     def cookies(self) -> httpx.Cookies:
@@ -167,6 +169,7 @@ class HttpClient:
         """Pojedyncze zapytanie (z limitem tempa, bez ponawiania i cache) — zwraca pełną odpowiedź."""
         request = self._client.build_request(method, url, **kw)
         await self.limiter.wait(request.url.host)
+        self.requests += 1
         started = time.monotonic()
         try:
             response = await self._client.send(request)
@@ -231,6 +234,7 @@ class HttpClient:
     async def _send(self, request: httpx.Request) -> str:
         host = request.url.host
         await self.limiter.wait(host)
+        self.requests += 1
         started = time.monotonic()
         try:
             response = await self._client.send(request)

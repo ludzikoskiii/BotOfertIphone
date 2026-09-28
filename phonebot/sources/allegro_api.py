@@ -168,6 +168,6 @@ class AllegroAdapter(SourceAdapter):
                 if raw is not None and raw.currency == "PLN":
                     out.setdefault(raw.source_id, raw)
             total = int((data.get("searchMeta") or {}).get("availableCount") or 0)
-            if len(batch) < PAGE or (page + 1) * PAGE >= total:
+            if len(batch) < PAGE or (page + 1) * PAGE >= total or query.page_done(it.get("id") for it in batch):
                 break
 

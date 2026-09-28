@@ -45,6 +45,7 @@ from PySide6.QtWidgets import (
 
 from ..core.dedup import merge_across_portals
 from ..core.models import Mode, Offer, OfferStatus, RowColor, Valuation, Verdict
+from ..core.refresh import RefreshScheduler
 from ..core.selection import SelectionCriteria, is_picked
 from ..core.sorting import MAX_LEVELS, level, spec_from_json, spec_to_json
 from ..core.text import plural
@@ -156,6 +157,7 @@ class MainWindow(QMainWindow):
         self.conn = conn
         self.db_path = db_path
         self._closed = False  # zamknięte na dobre (nie do zasobnika) — zegary nie uruchamiają już zadań
+        self.scheduler: RefreshScheduler | None = None  # odświeżanie przyrostowe (start_refresh_scheduler)
         self.settings_repo = SettingsRepository(conn)
         self.settings = self.settings_repo.load()
         self.limiter = HostRateLimiter(self.settings.request_delay_s)
@@ -204,6 +206,13 @@ class MainWindow(QMainWindow):
             hints.colorSchemeChanged.connect(self._system_scheme_changed)
         self.refresh_timer = QTimer(self)
         self.refresh_timer.timeout.connect(self._auto_refresh)
+        # odświeżanie przyrostowe (core/refresh.py): uruchamiane z app.py przez start_refresh_scheduler()
+        self._quick: dict[str, tuple[ScanWorker, QThread]] = {}  # portal → szybkie odświeżanie w toku
+        self._check_worker = None  # „Wybrane” i obserwowane (co godzinę)
+        self._nightly_worker = None  # pełne pobranie kontrolne + strony pozostałych ofert (w nocy)
+        self._last_watch_check: datetime | None = None
+        self.schedule_timer = QTimer(self, interval=5000)
+        self.schedule_timer.timeout.connect(self._schedule_tick)
         # Telegram: zaległe wiadomości (cisza nocna, limit na godzinę, ponowienia) wysyłane w tle co 5 min
         self._tg_worker = None
         self.telegram_timer = QTimer(self, interval=5 * 60_000)
@@ -641,8 +650,11 @@ class MainWindow(QMainWindow):
                 self.source_status.set_status(key, name, "never")
                 continue
             when = datetime.fromisoformat(row["finished_at"]) if row["finished_at"] else None
+            sched = self.scheduler if self.scheduler is not None and self.settings.refresh.enabled else None
+            note = sched.describe(key, datetime.now(UTC)) if sched else ""
             self.source_status.set_status(key, name, row["status"], found=row["offers_found"],
-                                          error=row["error"], when=when)
+                                          error=row["error"], when=when, note=note,
+                                          suffix=sched.badge(key) if sched else "")
 
     def set_last_refresh(self, when: datetime | None) -> None:
         if when is None:
@@ -737,6 +749,15 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------ auto-odświeżanie ---
 
     def _configure_timer(self) -> None:
+        self.model.new_minutes = self.settings.refresh.new_badge_minutes
+        if self.settings.refresh.enabled:  # szybkie odświeżanie zastępuje pełne pobieranie co N minut
+            self.refresh_timer.stop()
+            self._next_refresh = None
+            if self.scheduler is not None:
+                self.scheduler.cfg = self.settings.refresh
+                self.scheduler.set_sources(self._auto_sources(), datetime.now(UTC))
+            self._update_auto_label()
+            return
         minutes = self.settings.refresh_minutes
         if minutes > 0:
             self.refresh_timer.start(minutes * 60_000)
@@ -747,6 +768,16 @@ class MainWindow(QMainWindow):
         self._update_auto_label()
 
     def _update_auto_label(self) -> None:
+        r = self.settings.refresh
+        if r.enabled:
+            self.auto_label.setText(f"Nowe oferty co ~{r.interval_s // 60} min · pełne nocą ({r.nightly_hour}:00) ")
+            self.auto_label.setToolTip(
+                "Każdy portal sprawdzany osobno, od najnowszych — pobierane są tylko nowe ogłoszenia. Po blokadzie "
+                f"odstęp rośnie ({' → '.join(str(m) for m in [r.interval_s // 60, *r.backoff_minutes])} min). "
+                f"„Wybrane” i obserwowane: co {r.watch_check_minutes} min; pozostałe oferty i pełne pobranie "
+                f"kontrolne — raz na dobę od {r.nightly_hour}:00. Oferty starsze niż {r.archive_days} dni → "
+                "archiwum (poza tabelą, zostają do statystyk).")
+            return
         if self._next_refresh is None:
             self.auto_label.setText("Auto-odświeżanie: wyłączone ")
         else:
@@ -1137,6 +1168,121 @@ class MainWindow(QMainWindow):
         dialog.open()
         return dialog
 
+    # --------------------------------------------- odświeżanie przyrostowe ---
+
+    def _auto_sources(self) -> list[str]:
+        s = self.settings
+        return [k for k, cls in REGISTRY.items() if s.enabled_sources.get(k, cls.default_enabled) and cls.configured(s)]
+
+    def start_refresh_scheduler(self) -> None:
+        """Wołane z app.py (w testach okno nie pobiera niczego samo)."""
+        if self.scheduler is None:
+            self.scheduler = RefreshScheduler(self.settings.refresh, self._auto_sources(), datetime.now(UTC))
+        self.schedule_timer.start()
+
+    def _schedule_tick(self) -> None:
+        if self._closed or self.scheduler is None or not self.settings.refresh.enabled:
+            return
+        now = datetime.now(UTC)
+        if self._thread is None and self._nightly_worker is None:  # w trakcie pełnego pobrania — bez szybkiego
+            for source in self.scheduler.due(now):
+                self._start_quick(source)
+        if self._check_worker is None and self.scheduler.watch_due(now, self._last_watch_check):
+            self._last_watch_check = now
+            self._run_check("watched")
+        last = self.settings_repo.get_value("nightly_last")
+        last_dt = datetime.fromisoformat(last) if last else None
+        if self._nightly_worker is None and not self._quick and self._thread is None \
+                and self.scheduler.nightly_due(now.astimezone(), last_dt.astimezone() if last_dt else None):
+            self.settings_repo.set_value("nightly_last", now.isoformat())
+            self._run_check("nightly")
+        self.refresh_source_status()
+
+    def _start_quick(self, source: str) -> None:
+        self.scheduler.started(source)
+        worker = ScanWorker(self.db_path, copy.deepcopy(self.settings), self.limiter, self.cache, force=True,
+                            sources={source}, incremental=True)
+        worker.finished.connect(self._quick_finished)
+        worker.failed.connect(self._quick_failed)
+        self._quick[source] = (worker, start_in_thread(worker, self))
+
+    def _quick_source(self) -> str | None:
+        worker = self.sender()
+        return next((s for s, (w, _) in self._quick.items() if w is worker), None)
+
+    def _quick_finished(self, report: ScanReport) -> None:
+        source = self._quick_source()
+        self._quick.pop(source, None)
+        kinds = {r.key: r.kind for r in report.sources}
+        if source and self.scheduler is not None:
+            self.scheduler.record(source, kinds.get(source, "ok"), datetime.now(UTC))
+        self.refresh_source_status()
+        post = getattr(report, "post", None)
+        if report.new_count or report.price_drop_ids:
+            names = [f"{r.name}: {r.new} nowych" for r in report.sources if r.new]
+            if names:
+                self._status.setText(f"{datetime.now():%H:%M} · " + "; ".join(names))
+            self._schedule_reload()
+            QTimer.singleShot(2000, self.hash_photos)
+            QTimer.singleShot(500, self.propose_photo_scam_blacklist)
+        if post is not None and getattr(post, "green", None):
+            self.notify_green(post.green)
+
+    def _quick_failed(self, message: str) -> None:
+        source = self._quick_source()
+        self._quick.pop(source, None)
+        if source and self.scheduler is not None:
+            self.scheduler.record(source, "error", datetime.now(UTC))
+        log.warning("Szybkie odświeżanie %s: %s", source, message)
+
+    def _run_check(self, kind: str) -> None:
+        from ..services.offer_checks import nightly, watched_check
+
+        if kind == "nightly":
+            worker = FuncWorker(nightly, self.db_path, copy.deepcopy(self.settings), self.limiter)
+            self._nightly_worker = worker
+        else:
+            worker = FuncWorker(watched_check, self.db_path, copy.deepcopy(self.settings))
+            self._check_worker = worker
+        worker.finished.connect(self._check_done)
+        worker.failed.connect(self._check_failed)
+        start_in_thread(worker, self)
+
+    def _check_done(self, rep) -> None:
+        worker = self.sender()
+        if worker is self._nightly_worker:
+            self._nightly_worker = None
+        else:
+            self._check_worker = None
+        if rep.gone or rep.price_changed or rep.archived or rep.scan is not None:
+            parts = []
+            if rep.gone:
+                parts.append(f"{rep.gone} ofert zniknęło z portali")
+            if rep.price_changed:
+                parts.append(f"{rep.price_changed} zmian cen")
+            if rep.archived:
+                parts.append(f"{rep.archived} do archiwum")
+            if parts:
+                self._status.setText(f"{datetime.now():%H:%M} · Stare oferty: " + ", ".join(parts))
+            self._schedule_reload()
+        post = getattr(rep, "post", None)
+        if post is not None and getattr(post, "green", None):
+            self.notify_green(post.green)
+
+    def _check_failed(self, message: str) -> None:
+        if self.sender() is self._nightly_worker:
+            self._nightly_worker = None
+        else:
+            self._check_worker = None
+        log.warning("Sprawdzanie starych ofert: %s", message)
+
+    def _schedule_reload(self) -> None:
+        """Kilka portali kończy się jeden po drugim — jedno odświeżenie tabeli zamiast kilku."""
+        if not hasattr(self, "_quick_reload_timer"):
+            self._quick_reload_timer = QTimer(self, singleShot=True, interval=1500)
+            self._quick_reload_timer.timeout.connect(self.reload)
+        self._quick_reload_timer.start()
+
     def _mode_changed(self) -> None:
         self.settings.mode = self.mode_combo.currentData()
         self.settings_repo.save(self.settings)
@@ -1396,7 +1542,8 @@ class MainWindow(QMainWindow):
         self.refresh_timer.stop()
         # okno zamknięte na dobre: żadnych zadań w tle z zegarów (ceny referencyjne, zdjęcia, Telegram)
         self._closed = True
-        for timer in (self.telegram_timer, self.reference_timer, self.photo_hash_timer, self.web_timer):
+        for timer in (self.telegram_timer, self.reference_timer, self.photo_hash_timer, self.web_timer,
+                      self.schedule_timer):
             timer.stop()
         self._save_ui_state()
         if self.web is not None:
@@ -1408,6 +1555,9 @@ class MainWindow(QMainWindow):
         if self._thread is not None:
             self._thread.quit()
             self._thread.wait(3000)
+        for _worker, thread in list(self._quick.values()):  # szybkie odświeżanie portali w toku
+            thread.quit()
+            thread.wait(3000)
         if self.ai_worker is not None and self._ai_thread is not None:
             self.ai_worker.stop()  # przerwij analizę zdjęć po bieżącym zdjęciu i pobieranie modelu
             self._ai_thread.quit()

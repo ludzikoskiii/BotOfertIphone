@@ -86,7 +86,7 @@ def test_scan_runs_in_background_thread(window, monkeypatch):
         def __init__(self, *a, **kw):
             pass
 
-        async def run(self, progress, force=False):
+        async def run(self, progress, force=False, **_kw):
             seen_threads.append(threading.current_thread())
             progress("pracuję")
             return ScanReport(sources=[SourceReport("vinted", "Vinted", found=1, saved=1, new=1)])

@@ -7,6 +7,7 @@ Skaner działa w wątku roboczym i ma własne połączenie z bazą.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
 import sqlite3
 import time
@@ -56,6 +57,8 @@ class ScanReport:
     price_drop_ids: list[int] = field(default_factory=list)
     first_scan: bool = False  # baza była pusta przed tym skanem
     post: object = None  # PostScanResult (uzupełnia worker)
+    requests: int = 0  # zapytania do portali w tym przebiegu
+    incremental: bool = False  # szybkie odświeżanie (tylko nowe oferty)
 
     @property
     def new_count(self) -> int:
@@ -78,7 +81,10 @@ class Scanner:
         self.limiter = limiter
         self.cache = cache
         self._adapter_factory = adapter_factory or default_adapters
-        self._http_factory = http_factory or (lambda: HttpClient(limiter, cache))
+        # szybkie odświeżanie bez pamięci podręcznej odpowiedzi (zapamiętana strona sprzed 2 min to nie nowość)
+        factory = http_factory or (lambda: HttpClient(limiter, cache))
+        self._http_factory = lambda incremental=False: (factory() if not incremental or http_factory
+                                                         else HttpClient(limiter, None))
 
     def _cooldowns(self) -> dict[str, datetime]:
         """Portale zablokowane niedawno → do kiedy automat ma ich nie odpytywać."""
@@ -93,23 +99,36 @@ class Scanner:
                     until[key] = end
         return until
 
-    async def run(self, progress: Progress | None = None, *, force: bool = False) -> ScanReport:
-        """``force=True`` (ręczne „Odśwież”) pomija pauzę po blokadzie."""
+    def known_ids(self, source: str) -> set[str]:
+        """Ogłoszenia portalu już znane: zapisane (także archiwalne) i odrzucone przez filtr."""
+        rows = self.conn.execute("SELECT source_id FROM offers WHERE source = ? UNION "
+                                 "SELECT source_id FROM rejected_offers WHERE source = ?", (source, source))
+        return {r[0] for r in rows}
+
+    async def run(self, progress: Progress | None = None, *, force: bool = False, sources: set[str] | None = None,
+                  incremental: bool = False) -> ScanReport:
+        """``force=True`` (ręczne „Odśwież”) pomija pauzę po blokadzie.
+
+        ``incremental`` — szybkie odświeżanie nowych ofert: jedna (najszersza) fraza, wyniki od najnowszych, koniec
+        na pierwszej stronie z kilkoma znanymi ogłoszeniami; bez pamięci podręcznej odpowiedzi i bez oznaczania
+        niewidzianych ofert jako nieaktualnych (to robi pełne pobranie). ``sources`` — tylko te portale."""
         progress = progress or (lambda _msg: None)
         s = self.settings
+        phrases = search_phrases(s.watched_models, s.mode_enum)
         query = SearchQuery(
             mode=s.mode_enum,
-            phrases=search_phrases(s.watched_models, s.mode_enum),
+            phrases=phrases[:1] if incremental else phrases,
             price_min=s.price_min or None,
             price_max=s.price_max or None,
             max_pages=s.max_pages_per_query,
+            known_stop=s.refresh.known_stop,
         )
-        report = ScanReport()
+        report = ScanReport(incremental=incremental)
         report.first_scan = self.conn.execute("SELECT COUNT(*) FROM offers").fetchone()[0] == 0
         OfferGuard(self.conn, s).refilter_stored()  # nowe reguły → sprawdź też oferty zapisane wcześniej
-        async with self._http_factory() as http:
-            adapters = self._adapter_factory(http, s)
-            paused = {} if force else self._cooldowns()
+        async with self._http_factory(incremental) as http:
+            adapters = [a for a in self._adapter_factory(http, s) if sources is None or a.key in sources]
+            paused = {} if force or incremental else self._cooldowns()  # szybkie: odstępy ustala harmonogram
             for a in [a for a in adapters if a.key in paused]:
                 until = paused[a.key].astimezone()
                 report.sources.append(SourceReport(
@@ -120,8 +139,12 @@ class Scanner:
                 progress("Brak portali do odpytania." if report.sources else "Brak włączonych portali.")
                 return report
             progress("Pobieranie: " + ", ".join(a.display_name for a in adapters))
-            results = await asyncio.gather(*(self._run_adapter(a, query, progress) for a in adapters))
-            profiles = await self._lookup_sellers(adapters, results, progress)
+            queries = {a.key: dataclasses.replace(query, known=self.known_ids(a.key)) if incremental else query
+                       for a in adapters}
+            results = await asyncio.gather(*(self._run_adapter(a, queries[a.key], progress) for a in adapters))
+            profiles = await self._lookup_sellers(adapters, results, progress,
+                                                  known={k: q.known for k, q in queries.items() if q.known})
+            report.requests = http.requests
 
         self._save_profiles(profiles)
         runs = FetchRunRepository(self.conn)
@@ -129,18 +152,23 @@ class Scanner:
             run_id = runs.start(adapter.key)
             if raw_offers:
                 self._store(raw_offers, src_report, report, international=adapter.international)
-                OfferRepository(self.conn).deactivate_missing(
-                    adapter.key, utcnow() - timedelta(days=s.offer_stale_days)
-                )
+                if not incremental:  # szybkie odświeżanie widzi tylko najnowsze — nie oznacza innych jako zniknięte
+                    OfferRepository(self.conn).deactivate_missing(
+                        adapter.key, utcnow() - timedelta(days=s.offer_stale_days)
+                    )
             if src_report.ok and src_report.saved == 0:
                 src_report.kind = "empty"  # działa technicznie, ale nic nie zwrócił — możliwa zmiana formatu
             runs.finish(run_id, found=src_report.found, new=src_report.new, error=src_report.error,
                         status=src_report.kind)
             report.sources.append(src_report)
-        # porządki: stare nieaktywne oferty nie są już potrzebne do wyceny (okno rynkowe × 2)
-        purged = OfferRepository(self.conn).purge_inactive(max(s.market_window_days * 2, 60))
-        if purged:
-            log.info("Usunięto %d dawno nieaktywnych ofert", purged)
+        # porządki: stare nieaktywne oferty nie są już potrzebne do wyceny (okno rynkowe × 2); archiwum
+        repo = OfferRepository(self.conn)
+        if not incremental:
+            purged = repo.purge_inactive(max(s.market_window_days * 2, 60))
+            if purged:
+                log.info("Usunięto %d dawno nieaktywnych ofert", purged)
+        if s.refresh.enabled:
+            repo.archive_old(s.refresh.archive_days)
         progress(_summary(report))
         return report
 
@@ -166,8 +194,8 @@ class Scanner:
         rep.seconds = round(time.monotonic() - start, 1)
         return offers, rep
 
-    async def _lookup_sellers(self, adapters: list[SourceAdapter], results: list, progress: Progress
-                              ) -> dict[str, dict[str, SellerProfile]]:
+    async def _lookup_sellers(self, adapters: list[SourceAdapter], results: list, progress: Progress,
+                              known: dict[str, set[str]] | None = None) -> dict[str, dict[str, SellerProfile]]:
         """Kraj sprzedawców (portale międzynarodowe): tylko dla ofert, które przeszły filtr tekstu,
         tylko nieznanych sprzedawców i z limitem zapytań na skan — reszta przy kolejnych skanach."""
         s = self.settings
@@ -181,7 +209,10 @@ class Scanner:
             if not adapter.international or not raw_offers:
                 continue
             ids = []
+            skip = (known or {}).get(adapter.key) or set()  # szybkie odświeżanie: tylko nowe ogłoszenia
             for raw in raw_offers:
+                if raw.source_id in skip:
+                    continue
                 sid = raw.params.get("seller_id")
                 if not sid or detect_language(raw.title).foreign:
                     continue  # tytuł w obcym języku już rozstrzyga (odrzucenie albo flaga) — bez zapytania o profil

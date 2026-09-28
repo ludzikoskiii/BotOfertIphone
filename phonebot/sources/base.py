@@ -21,6 +21,22 @@ class SearchQuery:
     price_min: float | None = None
     price_max: float | None = None
     max_pages: int = 3
+    #: szybkie odświeżanie: ogłoszenia już znane (w bazie albo w „Odrzucone”) — ``None`` = pełne pobranie
+    known: set[str] | None = None
+    #: tyle znanych ogłoszeń na stronie wyników (od najnowszych) = dalej są już tylko stare → koniec
+    known_stop: int = 3
+
+    @property
+    def incremental(self) -> bool:
+        return self.known is not None
+
+    def page_done(self, ids) -> bool:
+        """Po stronie wyników (od najnowszych): czy przerwać, bo dalej są już tylko znane ogłoszenia."""
+        if self.known is None:
+            return False
+        ids = [str(i) for i in ids]
+        known = sum(1 for i in ids if i in self.known)
+        return bool(ids) and known >= min(self.known_stop, len(ids))
 
 
 def search_phrases(watched_models: list[str], mode: Mode) -> list[str]:

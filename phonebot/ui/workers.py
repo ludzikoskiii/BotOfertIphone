@@ -22,9 +22,11 @@ class ScanWorker(QObject):
     failed = Signal(str)
 
     def __init__(self, db_path: Path, settings: Settings, limiter: HostRateLimiter, cache: ResponseCache,
-                 force: bool = False):
+                 force: bool = False, *, sources: set[str] | None = None, incremental: bool = False):
         super().__init__()
         self.force = force
+        self.sources = sources
+        self.incremental = incremental
         self.db_path = db_path
         self.settings = settings
         self.limiter = limiter
@@ -35,7 +37,8 @@ class ScanWorker(QObject):
         conn = connect(self.db_path)
         try:
             scanner = Scanner(conn, self.settings, self.limiter, self.cache)
-            report = asyncio.run(scanner.run(self.progress.emit, force=self.force))
+            report = asyncio.run(scanner.run(self.progress.emit, force=self.force, sources=self.sources,
+                                             incremental=self.incremental))
             try:
                 report.post = run_post_scan(conn, self.settings, report)
             except Exception as e:  # powiadomienia nie mogą zepsuć wyników skanu

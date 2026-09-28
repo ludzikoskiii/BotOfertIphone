@@ -100,6 +100,6 @@ class LentoAdapter(SourceAdapter):
                 if o.price >= floor and (not query.price_max or o.price <= query.price_max):
                     out.setdefault(o.source_id, o)
             log.info("Lento strona %d: %d ogłoszeń", page, len(offers))
-            if not offers or f"page={page + 1}" not in html:
+            if not offers or f"page={page + 1}" not in html or query.page_done(o.source_id for o in offers):
                 break
         return list(out.values())

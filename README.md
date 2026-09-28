@@ -3,7 +3,7 @@
 Aplikacja desktopowa (Windows) do wyszukiwania ofert używanych iPhone'ów na
 Allegro Lokalnie, Vinted i Sprzedajemy.pl, wyceny ich opłacalności i podpowiadania, czy i za ile kupić.
 
-> **Status: wersja 1.14.0.** Trzy portale, wycena, werdykty i negocjacje, filtry, zabezpieczenia werdyktu,
+> **Status: wersja 1.15.0.** Trzy portale, wycena, werdykty i negocjacje, filtry, zabezpieczenia werdyktu,
 > **darmowe lokalne AI** (klasyfikator tytułów, analiza zdjęć, opcjonalnie model językowy w Ollamie),
 > szablony wiadomości do sprzedającego, automatyczne odświeżanie, powiadomienia Windows i Telegram
 > oraz gotowy plik `PhoneBot.exe`. Program nie korzysta z żadnych płatnych usług.
@@ -58,8 +58,39 @@ dist\PhoneBot.exe --self-test             # moduły, lokalne AI (bez pobierania 
 
 ### Automatyczne odświeżanie i praca w tle
 
-- Oferty są pobierane automatycznie co **15 minut**; zmienisz to w Ustawieniach, a wartość 0 wyłącza
-  automat. Pasek stanu pokazuje godzinę następnego odświeżenia.
+- **Odświeżanie przyrostowe** (od wersji 1.15): każdy portal jest sprawdzany osobno, mniej więcej **co 2 minuty**.
+  Odstęp ma losową zmienność ±20 s, żeby zapytania nie szły w równym rytmie.
+  - Program czyta wyniki od najnowszych, tylko jedną, najszerszą frazę („iphone”). Kończy na stronie, na której
+    są już 3 znane ogłoszenia, więc pobiera tylko nowe oferty.
+  - Wolny albo niedziałający portal nie opóźnia pozostałych.
+  - Gdy portal zablokuje pobieranie (403/429/captcha), odstęp dla niego rośnie: 2 → 5 → 15 → 60 min. Po udanej
+    próbie wraca do 2 min. Pasek statusu źródeł pokazuje to na znaczniku portalu (np. „zablokowane · co 15 min”),
+    a podpowiedź podaje, kiedy będzie następna próba.
+  - Minimalny odstęp każdego portalu, kolejne odstępy po blokadach i pozostałe wartości ustawisz w Ustawieniach →
+    Ogólne i pobieranie. Po wyłączeniu szybkiego odświeżania program wraca do pełnego pobierania co N minut.
+  - Nowe oferty mają w kolumnie „Dodano” znacznik **🆕 NOWE** przez 30 minut.
+- **Stare oferty:**
+  - „Wybrane” i obserwowane: co godzinę program sprawdza stronę ogłoszenia, czy nadal istnieje i czy zmieniła się
+    cena. Zmiana trafia do historii cen, a obniżka wywołuje powiadomienie.
+  - Pozostałe oferty: raz na dobę w nocy (od 3:00) program robi **pełne pobranie kontrolne** (wszystkie frazy
+    i strony — wyłapuje oferty pominięte przez szybkie odświeżanie) i sprawdza strony do 300 ofert.
+  - Oferty sprzedane albo usunięte dostają oznaczenie „nieaktualna”.
+  - Strony ofert sprawdzane są na Allegro Lokalnie, Vinted i Sprzedajemy.pl. Na pozostałych portalach zniknięcie
+    wykrywa nocne pełne pobranie.
+- **Archiwum:** oferty starsze niż 3 dni znikają z tabeli, ale zostają w bazie do statystyk i wyceny rynkowej.
+  „Wybrane” i obserwowane nie są archiwizowane.
+- **Porównanie** (`python tools/refresh_benchmark.py`, makieta Vinted, 2000 ogłoszeń, domyślne ustawienia trybu naprawy):
+
+  | | Przed: pełne co 15 min | Po: szybkie co ~2 min |
+  |---|---|---|
+  | Zapytania na jeden przebieg (5 nowych ofert) | 33 | 7 (sesja, 1 strona wyników, 5 profili nowych sprzedawców) |
+  | Czas przebiegu jednego portalu (limit 4 s/zapytanie) | ok. 132 s | ok. 28 s |
+  | 150 nowych naraz | — | 23 zapytania, ok. 92 s |
+  | Średnio po ilu minutach widać nową ofertę | ok. 9,7 min | ok. 1,5 min |
+  | Zapytania na godzinę do jednego portalu | ok. 132 | ok. 211 (+ nocne pełne pobranie) |
+
+  Pojedynczy przebieg jest 4–5 razy lżejszy, a nowe oferty widać kilka razy szybciej. Łącznie na godzinę zapytań
+  jest więcej, bo przebiegów jest więcej. Rozkładają się jednak równomiernie, a przy blokadzie odstęp sam rośnie.
 - Zamknięcie okna chowa aplikację do **zasobnika systemowego** (obok zegara) i odświeżanie działa dalej.
   Kliknij ikonę, aby wrócić. Całkowite zamknięcie: prawy przycisk na ikonie → „Zakończ”.
   To zachowanie wyłączysz w Ustawieniach.

@@ -292,7 +292,8 @@ class VintedAdapter(SourceAdapter):
             pagination = data.get("pagination") if isinstance(data, dict) else None
             total_pages = int((pagination or {}).get("total_pages") or page)
             log.info("Vinted „%s” strona %d: %d przedmiotów", phrase, page, len(items))
-            if not items or page >= total_pages or len(items) < PER_PAGE:
+            if not items or page >= total_pages or len(items) < PER_PAGE or query.page_done(
+                    it.get("id") for it in items):
                 break
 
 

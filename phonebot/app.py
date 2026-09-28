@@ -169,6 +169,7 @@ def main() -> int:
     window.quit_on_close = True
     window.show()
     window.start_ai()  # lokalne AI w osobnym wątku: modele ładowane raz, analiza w tle
+    window.start_refresh_scheduler()  # nowe oferty co ~2 min per portal, stare w tle, pełne pobranie nocą
     code = app.exec()
     try:
         conn.execute("PRAGMA optimize")  # aktualizuje statystyki zapytań SQLite (szybkie, raz przy wyjściu)

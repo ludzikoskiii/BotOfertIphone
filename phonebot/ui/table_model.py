@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import IntEnum
 from typing import Any
 
@@ -12,6 +12,7 @@ from PySide6.QtWidgets import QStyle, QStyledItemDelegate, QStyleOptionViewItem
 
 from ..core.catalog import format_storage
 from ..core.models import Offer, OfferStatus, Severity, Valuation, Verdict
+from ..core.refresh import is_new
 from ..core.sorting import DEFAULT_SORT, SortLevel, level, normalize, sort_rows
 from ..sources import SOURCE_NAMES
 from .images import ThumbnailCache
@@ -20,6 +21,7 @@ from .theme import FLAG_MARK, OUTDATED_MARK, WATCHED_MARK, Palette, current
 OFFER_ROLE = Qt.ItemDataRole.UserRole + 2
 VERDICT_ROLE = Qt.ItemDataRole.UserRole + 3
 
+NEW_MARK = "🆕 NOWE"
 _RIGHT = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
 _CENTER = Qt.AlignmentFlag.AlignCenter
 _LEFT = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
@@ -120,6 +122,8 @@ class OffersTableModel(QAbstractTableModel):
         self._rows_by_photo: dict[str, list[int]] = defaultdict(list)
         self._row_by_id: dict[int, int] = {}
         self._spec: tuple[SortLevel, ...] = DEFAULT_SORT
+        self.new_minutes = 30  # znacznik „NOWE” (Ustawienia → odświeżanie)
+        self._loaded_at = datetime.now(UTC)
         thumbs.ready.connect(self._thumb_ready)
         self._bold = QFont()
         self._bold.setBold(True)
@@ -139,6 +143,7 @@ class OffersTableModel(QAbstractTableModel):
     # --- dane ---
 
     def set_rows(self, rows: list[tuple[Offer, Valuation]]) -> None:
+        self._loaded_at = datetime.now(UTC)
         self.beginResetModel()
         self._rows = list(rows)
         self._apply_sort()
@@ -249,7 +254,8 @@ class OffersTableModel(QAbstractTableModel):
         if role == Qt.ItemDataRole.ForegroundRole:
             return self._foreground(col, offer, val)
         if role == Qt.ItemDataRole.FontRole:
-            if col is Col.PROFIT or (col is Col.MODEL and offer.status is OfferStatus.WATCHED):
+            if col is Col.PROFIT or (col is Col.MODEL and offer.status is OfferStatus.WATCHED) \
+                    or (col is Col.ADDED and self._is_new(offer)):
                 return self._bold
             return None
         if role == Qt.ItemDataRole.DecorationRole and col is Col.PHOTO:
@@ -272,9 +278,15 @@ class OffersTableModel(QAbstractTableModel):
             return self._positive if val.expected_profit > 0 else self._negative
         if col in (Col.MODEL, Col.FLAGS) and val.has_hard_flag:
             return self._negative
+        if col is Col.ADDED and self._is_new(offer):
+            return self._positive
         if col in (Col.SOURCE, Col.ADDED, Col.LOCATION):
             return self._muted
         return None
+
+    def _is_new(self, offer: Offer) -> bool:
+        """Znacznik „NOWE”: oferta pojawiła się niedawno (``new_minutes``, liczone od ostatniego wczytania)."""
+        return is_new(offer.first_seen, self._loaded_at, self.new_minutes)
 
     @staticmethod
     def _tooltip(col: Col, offer: Offer, val: Valuation) -> str | None:
@@ -340,7 +352,8 @@ class OffersTableModel(QAbstractTableModel):
                     return f"{city} ({offer.distance_km:.0f} km)"
                 return city
             case Col.ADDED:
-                return format_dt(added_at(offer))
+                text = format_dt(added_at(offer))
+                return f"{NEW_MARK} · {text}" if self._is_new(offer) else text
             case Col.LINK:
                 return "Otwórz ↗"
             case Col.RISK:
