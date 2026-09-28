@@ -1,0 +1,28 @@
+name: probe-photo-categories
+
+# Kategorie „zdjęcia / plakaty / obrazy / dekoracje / kolekcje” na portalach (wykrywanie sprzedaży zdjęcia
+# zamiast telefonu). Kilkanaście zapytań z odstępami; wynik w logu i w Artifacts.
+on:
+  push:
+    paths:
+      - "scripts/probe_photo_categories.py"
+      - ".github/workflows/probe-photo-categories.yml"
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install httpx tenacity selectolax
+      - run: PYTHONPATH=. python scripts/probe_photo_categories.py probe_photo_categories.txt
+        env:
+          PYTHONIOENCODING: utf-8
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: probe-photo-categories
+          path: probe_photo_categories.txt
