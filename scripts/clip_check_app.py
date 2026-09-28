@@ -20,7 +20,15 @@ from pathlib import Path
 import httpx
 
 from phonebot.core.settings import MlConfig
-from phonebot.ml.photo_model import CLASSES, MODEL_URL, PhotoClassifier, download_model, model_path
+from phonebot.ml.photo_model import (
+    CLASSES,
+    MODEL_URL,
+    SCAM_SCORE,
+    PhotoClassifier,
+    download_model,
+    main_probs,
+    model_path,
+)
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
 PER_CLASS = 20
@@ -139,6 +147,8 @@ def main() -> int:
         f"najwolniejsze {max(warm) * 1000:.0f} ms (pierwsze, z rozgrzewką: {times[0] * 1000:.0f} ms)")
 
     cfg = MlConfig()
+    scam = {title: p.get(SCAM_SCORE, 0.0) for _, title, p in rows}
+    rows = [(lab, title, main_probs(p)) for lab, title, p in rows]  # klasy główne (bez „zdjęcie zamiast tel.”)
     phones = [p for lab, _, p in rows if lab == "smartphone"]
     others = [(lab, p) for lab, _, p in rows if lab != "smartphone"]
     top_ok = sum(1 for lab, _, p in rows if max(p, key=p.get) == lab)
@@ -158,8 +168,17 @@ def main() -> int:
             + ", ".join(f"{c} {caught[c]}/{sum(1 for lab, _ in others if lab == c)}" for c in CLASSES[1:]))
     confirmed = sum(1 for p in phones if p["smartphone"] >= cfg.photo_phone_conf)
     say(f"   telefony potwierdzone (smartfon ≥ {cfg.photo_phone_conf:.0%}): {confirmed}/{len(phones)}")
+    # „zdjęcie zamiast telefonu” (wydruk / plakat / zrzut ekranu): ile prawdziwych zdjęć przekracza próg
+    phone_titles = [title for lab, title, _ in rows if lab == "smartphone"]
+    for thr in (0.6, 0.7, 0.8, 0.9):
+        hits = sum(1 for t in phone_titles if scam[t] >= thr)
+        say(f"   ZDJĘCIE ZAMIAST TELEFONU próg {thr:.0%}: prawdziwe zdjęcia telefonów ponad progiem {hits}/"
+            f"{len(phone_titles)}; akcesoria ponad progiem "
+            f"{sum(1 for lab, t, _ in rows if lab != 'smartphone' and scam[t] >= thr)}")
+    say("   wynik scam:score (telefony): " + ", ".join(f"{scam[t]:.2f}" for t in phone_titles))
     for lab, title, p in rows:
-        say(f"   [{lab:16}] {title[:48]:48} -> " + " ".join(f"{c}:{p[c]:.2f}" for c in CLASSES))
+        say(f"   [{lab:16}] {title[:48]:48} -> " + " ".join(f"{c}:{p[c]:.2f}" for c in CLASSES)
+            + f" | scam:{scam[title]:.2f}")
     return 0
 
 
