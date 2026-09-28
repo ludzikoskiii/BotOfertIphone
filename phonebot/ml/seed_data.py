@@ -1,7 +1,8 @@
 """Zbiór startowy dla klasyfikatora tytułów — żeby model działał od pierwszego uruchomienia.
 
 Klasy: ``phone`` (telefon na sprzedaż, także uszkodzony / na części), ``accessory`` (akcesorium),
-``part`` (pojedyncza część), ``wanted`` (kupię / szukam / zamienię).
+``part`` (pojedyncza część), ``wanted`` (kupię / szukam / zamienię), ``photo`` (zdjęcie / wydruk / plakat
+telefonu zamiast telefonu — oszustwo, ``core.photo_scam``).
 
 * ``handwritten()`` — przykłady pisane ręcznie, po polsku i w językach sąsiednich,
 * ``generated()`` — przykłady z szablonów (deterministycznie: ten sam zbiór przy każdym treningu),
@@ -12,8 +13,9 @@ from __future__ import annotations
 
 import random
 
-LABELS = ("phone", "accessory", "part", "wanted")
-LABEL_NAMES = {"phone": "telefon", "accessory": "akcesorium", "part": "część", "wanted": "kupię / zamienię"}
+LABELS = ("phone", "accessory", "part", "wanted", "photo")
+LABEL_NAMES = {"phone": "telefon", "accessory": "akcesorium", "part": "część", "wanted": "kupię / zamienię",
+               "photo": "zdjęcie zamiast telefonu"}
 
 _HANDWRITTEN: dict[str, list[str]] = {
     "phone": [
@@ -112,6 +114,11 @@ _PARTS = ["wyświetlacz", "ekran LCD", "ekran OLED", "płyta główna", "bateria
           "port ładowania", "taptic engine", "moduł Face ID", "szufladka SIM", "displej", "Akku", "display"]
 _PART_T = ["{P} {m}", "{P} do {m} oryginał", "Oryginalny {p} {m}", "Sam {p} {m}", "{P} {m} zamiennik",
            "Nowy {p} {m}", "{m} {p}", "Tylko {p} {m}"]
+# sprzedaż zdjęcia / wydruku / plakatu zamiast telefonu (tytuły z takim słowem; dopiski w opisie łapie photo_scam)
+_PHOTO = ["zdjęcie", "foto", "fotka", "fotografia", "plakat", "obraz", "obrazek", "wydruk", "grafika", "poster",
+          "photo", "picture", "print", "Bild", "Foto", "fotka", "obrázek", "obrázok", "nuotrauka", "plakát"]
+_PHOTO_T = ["{W} {m}", "{W} {m} {s}GB", "{W} {m} {c}", "{m} — {w}", "{m} {s}GB ({w})", "{W} telefonu {m}",
+            "{W} {m} nowy", "{m} {w} tylko", "Tylko {w} {m}", "{W} of {m}", "{W} vom {m}", "{W} {m} okazja"]
 _WANTED_T = ["Kupię {m}", "Kupię {m} uszkodzony", "Szukam {m}", "Skup {m}", "Zamienię {m} na {m2}",
              "Kupię {m} na części", "Poszukuję {m} {s}GB", "Koupím {m}", "Kaufe {m}", "Wanted {m}"]
 
@@ -143,6 +150,10 @@ def generated(seed: int = 2026) -> list[tuple[str, str]]:
         out.append((pick(_PART_T).format(p=p, P=p[:1].upper() + p[1:], m=pick(_MODELS)), "part"))
     for _ in range(60):
         out.append((pick(_WANTED_T).format(m=pick(_MODELS), m2=pick(_MODELS), s=pick(_STORAGE)), "wanted"))
+    for _ in range(90):  # na końcu — wcześniejsze przykłady (to samo ziarno) zostają bez zmian
+        w = pick(_PHOTO)
+        out.append((pick(_PHOTO_T).format(w=w.lower(), W=w[:1].upper() + w[1:], m=pick(_MODELS), s=pick(_STORAGE),
+                                          c=pick(_COLORS)), "photo"))
     return out
 
 

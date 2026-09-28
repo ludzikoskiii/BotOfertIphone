@@ -5,7 +5,7 @@ import json
 import sqlite3
 from datetime import datetime
 
-from ..core.fraud import FraudAssessment, FraudContext, SellerStats, desc_hash
+from ..core.fraud import SIGNALS, FraudAssessment, FraudContext, SellerStats, Signal, desc_hash
 from ..core.models import Valuation, Verdict
 from ..core.negotiation import color_for
 from ..core.settings import Settings
@@ -83,4 +83,33 @@ def apply_risk(val: Valuation, risk: FraudAssessment, settings: Settings) -> Non
             val.verdict = Verdict.VERIFY
         val.reasons.insert(0, f"Ryzyko oszustwa średnie ({risk.score} pkt): {why} — najwyżej DO WERYFIKACJI.")
     val.score = max(0, val.score - risk.score // 2)
+    val.color = color_for(val.score, settings)
+
+
+PHOTO_SCAM_LABEL = "MOŻLIWE OSZUSTWO: sprzedaż zdjęcia zamiast telefonu"
+
+
+def apply_photo_scam(val: Valuation, result, settings: Settings) -> None:
+    """Sprzedaż zdjęcia zamiast telefonu (``core.photo_scam``): pewne → ODPUŚĆ z etykietą „MOŻLIWE OSZUSTWO”
+    i wysokie ryzyko (poza „Wybrane”, Telegramem i listą — patrz ``Evaluator.evaluate_visible``);
+    słabe → najwyżej DO WERYFIKACJI z wyjaśnieniem."""
+    level = result.level
+    if level == "none":
+        return
+    val.photo_scam = level
+    if level == "certain":
+        val.verdict = Verdict.SKIP
+        val.reasons.insert(0, f"{PHOTO_SCAM_LABEL} — {'; '.join(result.strong[:2])}.")
+        risk = val.risk if isinstance(val.risk, FraudAssessment) else FraudAssessment()
+        points = settings.fraud.weight("photo_sale")
+        risk.signals.insert(0, Signal("photo_sale", SIGNALS["photo_sale"][0], points, "; ".join(result.strong[:2])))
+        risk.score = max(risk.score + points, settings.fraud.high_threshold)
+        risk.level = "high"
+        val.risk = risk
+        val.score = 0
+    else:
+        if val.verdict.rank > Verdict.VERIFY.rank:
+            val.verdict = Verdict.VERIFY
+        val.reasons.insert(0, f"Możliwa sprzedaż samego zdjęcia zamiast telefonu ({'; '.join(result.weak[:2])}) "
+                              "— zapytaj sprzedającego, czy sprzedaje telefon; najwyżej DO WERYFIKACJI.")
     val.color = color_for(val.score, settings)

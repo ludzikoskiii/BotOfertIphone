@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMainWindow,
     QMenu,
+    QMessageBox,
     QPlainTextEdit,
     QPushButton,
     QSplitter,
@@ -154,6 +155,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.conn = conn
         self.db_path = db_path
+        self._closed = False  # zamknięte na dobre (nie do zasobnika) — zegary nie uruchamiają już zadań
         self.settings_repo = SettingsRepository(conn)
         self.settings = self.settings_repo.load()
         self.limiter = HostRateLimiter(self.settings.request_delay_s)
@@ -769,8 +771,13 @@ class MainWindow(QMainWindow):
         repo = OfferRepository(self.conn)
         offers = repo.list(include_hidden=self.show_hidden_action.isChecked())
         offers += repo.list_picked_inactive()  # zniknęły z portalu — w „Wybrane” jako nieaktualne
-        rows = merge_across_portals(Evaluator(self.conn, self.settings).evaluate_all(offers))
+        evaluator = Evaluator(self.conn, self.settings)
+        rows = merge_across_portals(evaluator.evaluate_visible(offers))  # zdjęcie zamiast telefonu → Odrzucone
         self.model.set_rows(rows)
+        if evaluator.moved_photo_scams:
+            self._status.setText(f"Sprzedaż zdjęcia zamiast telefonu: {evaluator.moved_photo_scams} "
+                                 "ofert przeniesiono do „Odrzucone”.")
+            QTimer.singleShot(0, self.propose_photo_scam_blacklist)
         self._mark_picked()
         if getattr(self, "web", None) is not None:
             self.web.app.invalidate()
@@ -913,6 +920,48 @@ class MainWindow(QMainWindow):
         self.reload()
         return moved
 
+    def propose_photo_scam_blacklist(self, ask=None) -> int:
+        """Sprzedający, którzy wystawili „zdjęcie zamiast telefonu” → propozycja czarnej listy (z potwierdzeniem).
+        O każdego pyta raz. ``ask(candidate) -> bool`` (domyślnie okno Tak/Nie). Zwraca liczbę zablokowanych."""
+        from ..services.photo_scam_service import blacklist_candidates, block, mark_proposed
+
+        if ask is None:
+            if self._closed or not self.isVisible() or getattr(self, "_asking_blacklist", False):
+                return 0  # bez okien w tle (testy, zasobnik) i bez dwóch pytań naraz
+            ask = self._ask_block_photo_scammer
+        candidates = blacklist_candidates(self.conn)
+        if not candidates:
+            return 0
+        blocked = 0
+        self._asking_blacklist = True
+        try:
+            for c in candidates:
+                if ask(c):
+                    block(self.conn, c)
+                    blocked += 1
+                mark_proposed(self.conn, [c.identity])
+        finally:
+            self._asking_blacklist = False
+        if blocked:
+            OfferGuard(self.conn, self.settings).refilter_stored(force=True)
+            self._status.setText(f"Czarna lista: dodano {blocked} "
+                                 f"{plural(blocked, 'sprzedającego', 'sprzedających', 'sprzedających').split(' ', 1)[1]}"
+                                 " (sprzedaż zdjęcia zamiast telefonu).")
+            self.reload()
+        return blocked
+
+    def _ask_block_photo_scammer(self, c) -> bool:
+        who = c.raw.params.get("seller") or c.raw.params.get("seller_id") or c.identity.removeprefix("tel:+")
+        box = QMessageBox(QMessageBox.Icon.Warning, "Możliwe oszustwo — czarna lista?",
+                          f"Sprzedający <b>{who}</b> ({SOURCE_NAMES.get(c.raw.source, c.raw.source)}) wystawił "
+                          f"ogłoszenie, w którym sprzedaje <b>zdjęcie zamiast telefonu</b>:<br><br>"
+                          f"„{c.raw.title}” — {c.raw.price:.0f} zł<br><i>{c.reason}</i><br><br>"
+                          "Dodać go do czarnej listy? Jego oferty znikną na wszystkich portalach "
+                          "(zmienisz to w Ustawieniach → Oszustwa).",
+                          QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, self)
+        box.setDefaultButton(QMessageBox.StandardButton.No)
+        return box.exec() == QMessageBox.StandardButton.Yes
+
     def current_offer_id(self) -> int | None:
         index = self.table.currentIndex()
         return self._row_at(index)[0].id if index.isValid() else None
@@ -948,6 +997,7 @@ class MainWindow(QMainWindow):
         self._apply_filter_rules()
         self.reload()
         self.loaded = True
+        QTimer.singleShot(1500, self.propose_photo_scam_blacklist)
 
     def _apply_filter_rules(self) -> int:
         """Nowe reguły filtra (aktualizacja programu lub zmiana ustawień) → sprawdź też zapisane oferty."""
@@ -1145,7 +1195,7 @@ class MainWindow(QMainWindow):
         """Skróty zdjęć (duplikaty między ogłoszeniami, zdjęcia katalogowe) w wątku roboczym."""
         from ..services.photo_hash import hash_in_background
 
-        if self._hash_worker is not None or not self.settings.fraud.enabled:
+        if self._hash_worker is not None or not self.settings.fraud.enabled or self._closed:
             return False
         worker = FuncWorker(hash_in_background, self.db_path, copy.deepcopy(self.settings))
         worker.finished.connect(self._photos_hashed)
@@ -1163,7 +1213,8 @@ class MainWindow(QMainWindow):
         """Ceny referencyjne w wątku roboczym (raz dziennie; błędy nie przeszkadzają w pracy)."""
         from ..services.reference_prices import due, refresh_in_background
 
-        if self._ref_worker is not None or not self.settings.reference_enabled or not (force or due(self.conn)):
+        if self._closed or self._ref_worker is not None or not self.settings.reference_enabled \
+                or not (force or due(self.conn)):
             return False
         worker = FuncWorker(refresh_in_background, self.db_path, copy.deepcopy(self.settings), force)
         worker.finished.connect(self._references_done)
@@ -1180,7 +1231,8 @@ class MainWindow(QMainWindow):
     def flush_telegram(self) -> bool:
         """Wysyła zaległe powiadomienia Telegram w wątku roboczym (nigdy dwa naraz). Zwraca, czy uruchomiono."""
         s = self.settings
-        if self._tg_worker is not None or not (s.telegram_enabled and s.telegram_bot_token and s.telegram_chat_id):
+        if self._closed or self._tg_worker is not None \
+                or not (s.telegram_enabled and s.telegram_bot_token and s.telegram_chat_id):
             return False
         from ..services.telegram_queue import flush_in_background
 
@@ -1219,6 +1271,7 @@ class MainWindow(QMainWindow):
         self._status.setToolTip("\n".join(errors))
         self.reload()
         QTimer.singleShot(2000, self.hash_photos)  # nowe oferty → skróty ich zdjęć w tle
+        QTimer.singleShot(500, self.propose_photo_scam_blacklist)  # „zdjęcie zamiast telefonu” → czarna lista?
         if post is not None and post.green:
             self.notify_green(post.green)
 
@@ -1341,6 +1394,10 @@ class MainWindow(QMainWindow):
                 self._tray_hint_shown = True
             return
         self.refresh_timer.stop()
+        # okno zamknięte na dobre: żadnych zadań w tle z zegarów (ceny referencyjne, zdjęcia, Telegram)
+        self._closed = True
+        for timer in (self.telegram_timer, self.reference_timer, self.photo_hash_timer, self.web_timer):
+            timer.stop()
         self._save_ui_state()
         if self.web is not None:
             self.web.stop()

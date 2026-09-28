@@ -41,6 +41,8 @@ SIGNALS: dict[str, tuple[str, int]] = {  # klucz → (opis, domyślna waga)
     "stock_photo": ("Zdjęcie wygląda na katalogowe (jednolite białe tło), nie na prawdziwe zdjęcie", 15),
     "no_real_photos": ("Brak prawdziwych zdjęć", 15),
     "very_cheap": ("Cena bardzo niska względem rynku", 15),
+    "stock_photo_text": ("„Zdjęcia poglądowe” — ogłoszenie nie pokazuje sprzedawanego telefonu", 15),
+    "photo_sale": ("Możliwa sprzedaż samego zdjęcia / wydruku zamiast telefonu", 60),
 }
 
 SAFETY_TIPS = (
@@ -224,7 +226,8 @@ def _text_signals(text: str) -> tuple[tuple[str, ...], tuple[str, ...], bool, bo
 
 
 def assess(offer: Offer, market_value: float | None, ctx: FraudContext, cfg: FraudConfig,
-           now: datetime | None = None) -> FraudAssessment:
+           now: datetime | None = None, extra: list[tuple[str, str]] | None = None) -> FraudAssessment:
+    """``extra`` — sygnały policzone gdzie indziej, np. („stock_photo_text”, „zdjęcia poglądowe”)."""
     if not cfg.enabled:
         return FraudAssessment()
     raw = offer.raw
@@ -283,6 +286,8 @@ def assess(offer: Offer, market_value: float | None, ctx: FraudContext, cfg: Fra
             add("duplicate_photo", f"też w ogłoszeniu {dup[0]} {dup[1]}")
         if mine[1]:
             add("stock_photo")
+    for extra_key, detail in extra or ():
+        add(extra_key, detail)
     # --- cena ---
     if cheap:
         add("very_cheap", f"{raw.price / market_value:.0%} wartości rynkowej")  # type: ignore[operator]

@@ -26,7 +26,7 @@ from .seed_data import BENCHMARK, LABELS, seed_examples
 
 log = logging.getLogger(__name__)
 
-MODEL_VERSION = 1
+MODEL_VERSION = 2  # 2 — klasa „photo” (zdjęcie zamiast telefonu)
 MODEL_FILE = "text_classifier.joblib"
 INFO_FILE = "text_classifier.json"
 
@@ -34,7 +34,7 @@ INFO_FILE = "text_classifier.json"
 WEIGHTS = {"seed": 1.0, "rejected": 0.5, "user": 3.0, "hidden": 0.3}
 # etap odrzucenia przez reguły → klasa (pozostałe etapy nie mówią, czym jest przedmiot)
 STAGE_TO_LABEL = {"accessory": "accessory", "multi_model": "accessory", "category": "accessory",
-                  "part": "part", "wanted": "wanted"}
+                  "part": "part", "wanted": "wanted", "photo_scam": "photo"}
 
 
 @dataclass

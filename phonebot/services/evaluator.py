@@ -6,14 +6,15 @@ import sqlite3
 from ..core.fraud import assess
 from ..core.geo import road_distance_km
 from ..core.market import estimate_market_value
-from ..core.models import MarketEstimate, MarketObservation, Mode, Offer, Valuation
+from ..core.models import MarketEstimate, MarketObservation, Mode, Offer, OfferStatus, Valuation
 from ..core.parts import PartsCatalog
+from ..core.photo_scam import config_fingerprint, detect
 from ..core.places import find_place
 from ..core.settings import Settings
 from ..core.valuation import evaluate, target_market_class
 from ..ml.desc_model import apply_to_offer
-from ..storage.repositories import OfferRepository, PartsRepository
-from .fraud_service import apply_risk, build_context
+from ..storage.repositories import OfferRepository, PartsRepository, RejectedRepository
+from .fraud_service import apply_photo_scam, apply_risk, build_context
 from .reference_prices import ReferenceRepository, blend, lookup
 
 
@@ -27,6 +28,24 @@ class Evaluator:
         self._obs_cache: dict[str, list[MarketObservation]] = {}
         self._market_cache: dict[tuple, MarketEstimate] = {}
         self.references = ReferenceRepository(conn).all() if settings.reference_enabled else {}
+        self._whitelist: set[tuple[str, str]] | None = None  # „To jest telefon” — bez wykrywania zdjęć
+        self.moved_photo_scams = 0  # ile ofert ``evaluate_visible`` przeniosło do „Odrzucone”
+        self._photo_fp = config_fingerprint(settings.photo_scam)
+
+    def _whitelisted(self, offer: Offer) -> bool:
+        if self._whitelist is None:
+            self._whitelist = RejectedRepository(self.conn).whitelist()
+        return (offer.raw.source, offer.raw.source_id) in self._whitelist
+
+    def photo_scam(self, offer: Offer, market_value: float | None):
+        """Sprzedaż zdjęcia zamiast telefonu: tekst, kategoria, zdjęcie (CLIP) i cena."""
+        s = self.settings.photo_scam
+        clip = (offer.layers.photo_probs or {}).get("scam:score") if offer.layers else None
+        raw = offer.raw
+        result = detect(raw.title, raw.description, s, category=raw.params.get("category"),
+                        category_id=raw.params.get("category_id"), source=raw.source, clip_score=clip,
+                        fingerprint=self._photo_fp)
+        return result.with_price(raw.price, market_value, s)
 
     def _observations(self, model: str) -> list[MarketObservation]:
         if model not in self._obs_cache:
@@ -56,11 +75,34 @@ class Evaluator:
             lat, lon = (place.lat, place.lon) if place else (None, None)
         offer.distance_km = road_distance_km(s.home_lat, s.home_lon, lat, lon)
         val = evaluate(offer, self.market_for(offer, mode), self.parts, s, mode)
+        photo = None
+        if s.photo_scam.enabled and not self._whitelisted(offer):
+            photo = self.photo_scam(offer, val.market.value)
         if s.fraud.enabled:
             if self._fraud_ctx is None:
                 self._fraud_ctx = build_context(self.conn, s)
-            apply_risk(val, assess(offer, val.market.value, self._fraud_ctx, s.fraud), s)
+            extra = [("stock_photo_text", f"„{photo.stock_photos}”")] if photo and photo.stock_photos else None
+            apply_risk(val, assess(offer, val.market.value, self._fraud_ctx, s.fraud, extra=extra), s)
+        if photo is not None:
+            apply_photo_scam(val, photo, s)
         return val
 
     def evaluate_all(self, offers: list[Offer], mode: Mode | None = None) -> list[tuple[Offer, Valuation]]:
         return [(o, self.evaluate(o, mode)) for o in offers]
+
+    def evaluate_visible(self, offers: list[Offer], mode: Mode | None = None) -> list[tuple[Offer, Valuation]]:
+        """Jak ``evaluate_all``, ale oferty z pewnym wykryciem sprzedaży zdjęcia (np. dopiero po analizie zdjęcia
+        albo z nową ceną rynkową) trafiają do „Odrzucone” i znikają z listy (także z wersji na telefon).
+        Obserwowane zostają (Twoja decyzja) — z werdyktem ODPUŚĆ i etykietą „MOŻLIWE OSZUSTWO”."""
+        rows = self.evaluate_all(offers, mode)
+        moved = [(o, v) for o, v in rows if v.photo_scam == "certain" and o.status is not OfferStatus.WATCHED
+                 and o.id is not None]
+        if not moved:
+            return rows
+        rejected = RejectedRepository(self.conn)
+        for offer, val in moved:
+            reason = val.reasons[0].rstrip(".") if val.reasons else "sprzedaż zdjęcia zamiast telefonu"
+            rejected.reject_stored(offer, "photo_scam", reason, None)
+        gone = {id(o) for o, _ in moved}
+        self.moved_photo_scams = len(moved)
+        return [(o, v) for o, v in rows if id(o) not in gone]

@@ -16,6 +16,7 @@ from .fraud import FraudConfig
 from .listing_filter import ListingFilterConfig
 from .messages import DEFAULT_TEMPLATES, OLD_NEGOTIATE_TEMPLATE
 from .models import Mode, RedFlag
+from .photo_scam import PhotoScamConfig
 from .sanity import SanityConfig
 from .selection import SelectionCriteria
 from .view_filter import ViewFilter
@@ -219,6 +220,8 @@ class Settings:
     sanity: SanityConfig = field(default_factory=SanityConfig)
     # --- wykrywanie oszustw (wagi i progi) ---
     fraud: FraudConfig = field(default_factory=FraudConfig)
+    # --- sprzedaż zdjęcia iPhone'a zamiast telefonu (frazy, kategorie, CLIP) ---
+    photo_scam: PhotoScamConfig = field(default_factory=PhotoScamConfig)
     # --- lista „Wybrane”: kryteria automatyczne ---
     selection: SelectionCriteria = field(default_factory=SelectionCriteria)
     # --- lokalne AI (etap 2) ---

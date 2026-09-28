@@ -116,11 +116,35 @@ def diagnose_cli() -> int:
     return 0
 
 
+def photo_scam_report_cli() -> int:
+    """PhoneBot.exe --photo-scam-report: ile ofert w bazie oznaczono jako „zdjęcie zamiast telefonu” + przykłady."""
+    import os
+
+    from .paths import data_dir
+    from .services.photo_scam_service import report_cli
+
+    setup_logging()
+    conn = open_database(db_path())
+    try:
+        text = report_cli(conn)
+    finally:
+        conn.close()
+    path = data_dir() / "zdjecie_zamiast_telefonu.txt"
+    path.write_text(text, encoding="utf-8")
+    if sys.platform == "win32":
+        os.startfile(path)  # type: ignore[attr-defined]
+    elif sys.stdout is not None:
+        print(text)
+    return 0
+
+
 def main() -> int:
     if "--self-test" in sys.argv:
         return self_test()
     if "--diagnose" in sys.argv:
         return diagnose_cli()
+    if "--photo-scam-report" in sys.argv:
+        return photo_scam_report_cli()
     setup_logging()
     log.info("PhoneBot %s — start", __version__)
     path = db_path()

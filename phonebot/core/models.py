@@ -328,6 +328,7 @@ class Valuation:
     flags: list[RedFlag]
     reasons: list[str]
     risk: object | None = None  # core.fraud.FraudAssessment (ryzyko oszustwa) — ustawiane przez Evaluator
+    photo_scam: str = ""  # „certain” | „weak” — sprzedaż zdjęcia zamiast telefonu (core.photo_scam)
 
     @property
     def has_hard_flag(self) -> bool:

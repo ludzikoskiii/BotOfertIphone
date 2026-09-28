@@ -647,7 +647,8 @@ class AiRepository:
 
     def save_photo(self, source: str, source_id: str, url: str, probs: dict[str, float] | None, model: str,
                    error: str | None = None) -> None:
-        label = max(probs, key=probs.get) if probs else None
+        main = {k: v for k, v in (probs or {}).items() if not k.startswith("scam:")}  # bez „zdjęcie zamiast tel.”
+        label = max(main, key=main.get) if main else None
         self.conn.execute(
             """
             INSERT INTO ai_results (source, source_id, photo_url, photo_label, photo_conf, photo_probs, photo_model,

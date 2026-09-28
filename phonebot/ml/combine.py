@@ -15,7 +15,8 @@ from dataclasses import dataclass, field
 from ..core.catalog import format_storage
 from ..core.models import AiLayers, Defect, RedFlag
 
-TEXT_NAMES = {"phone": "telefon", "accessory": "akcesorium", "part": "część", "wanted": "kupię / zamienię"}
+TEXT_NAMES = {"phone": "telefon", "accessory": "akcesorium", "part": "część", "wanted": "kupię / zamienię",
+              "photo": "zdjęcie zamiast telefonu"}
 PHOTO_NAMES = {"smartphone": "smartfon", "case": "etui", "screen_protector": "szkło ochronne", "box": "pudełko"}
 
 AGREE, CONFLICT, UNSURE, MISSING = "zgodne", "sprzeczne", "niepewne", "brak"
@@ -65,9 +66,10 @@ def photo_layer(ai: AiLayers | None, phone_conf: float, conflict_conf: float, *,
     if ai is None or not ai.photo_probs:
         reason = f"nie udało się: {ai.photo_error}" if ai is not None and ai.photo_error else "nie analizowano"
         return Layer("Zdjęcie (CLIP)", MISSING, reason)
-    p_phone = ai.photo_probs.get("smartphone", 0.0)
-    p_other = max((v for k, v in ai.photo_probs.items() if k != "smartphone"), default=0.0)
-    summary = _fmt(ai.photo_probs, PHOTO_NAMES)
+    probs = {k: v for k, v in ai.photo_probs.items() if not k.startswith("scam:")}  # „zdjęcie zamiast telefonu”
+    p_phone = probs.get("smartphone", 0.0)
+    p_other = max((v for k, v in probs.items() if k != "smartphone"), default=0.0)
+    summary = _fmt(probs, PHOTO_NAMES)
     if p_other >= conflict_conf:
         return Layer("Zdjęcie (CLIP)", CONFLICT, summary)
     if p_phone >= phone_conf:

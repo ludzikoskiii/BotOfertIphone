@@ -3,7 +3,7 @@
 Aplikacja desktopowa (Windows) do wyszukiwania ofert używanych iPhone'ów na
 Allegro Lokalnie, Vinted i Sprzedajemy.pl, wyceny ich opłacalności i podpowiadania, czy i za ile kupić.
 
-> **Status: wersja 1.13.0.** Trzy portale, wycena, werdykty i negocjacje, filtry, zabezpieczenia werdyktu,
+> **Status: wersja 1.14.0.** Trzy portale, wycena, werdykty i negocjacje, filtry, zabezpieczenia werdyktu,
 > **darmowe lokalne AI** (klasyfikator tytułów, analiza zdjęć, opcjonalnie model językowy w Ollamie),
 > szablony wiadomości do sprzedającego, automatyczne odświeżanie, powiadomienia Windows i Telegram
 > oraz gotowy plik `PhoneBot.exe`. Program nie korzysta z żadnych płatnych usług.
@@ -349,6 +349,59 @@ Oznaczenia widać też na telefonie i w wiadomościach Telegram.
 **Czarna lista:** „⛔ Zablokuj sprzedającego” (prawy przycisk na ofercie albo menu „To nie jest telefon”)
 ukrywa jego oferty na wszystkich portalach — ten sam login, ID albo numer telefonu z ogłoszenia (trafiają
 do „Odrzucone” z powodem). Listę przejrzysz i zmienisz w Ustawienia → Oszustwa; usunięcie przywraca oferty.
+
+### Sprzedaż zdjęcia iPhone'a zamiast telefonu
+
+Oszustwo wygląda tak: ogłoszenie ma tytuł z modelem iPhone'a i niską cenę, a przedmiotem sprzedaży jest
+tylko zdjęcie, wydruk albo plakat telefonu. Zwykle zdradza to drobny dopisek na końcu opisu.
+PhoneBot wykrywa to lokalnie i za darmo (`core/photo_scam.py`).
+
+**Pewne wykrycie** (każdy z tych sygnałów wystarczy):
+- **jednoznaczne sformułowanie** w tytule albo opisie:
+  - polski: „to jest tylko zdjęcie”, „przedmiotem sprzedaży jest zdjęcie”, „nie jest to telefon”;
+  - angielski: „photo only”, „picture of iPhone”;
+  - niemiecki: „nur Foto”, „kein Handy”;
+  - czeski i słowacki: „jen fotka”, „len fotka”;
+  - litewski: „tik nuotrauka”.
+- **ukryty dopisek**: rozstrzelone litery („t y l k o  z d j ę c i e”), kropki między literami, znaki
+  niewidoczne, małe kapitaliki, cyrylica udająca łacinę, emoji 📷 i 🖼;
+- **słowo „zdjęcie / foto / plakat / obraz” w tytule przed nazwą modelu** („Zdjęcie iPhone 15 Pro”);
+- **kategoria portalu ze zdjęciami lub sztuką**, na przykład Allegro Lokalnie „Kolekcje i sztuka > Sztuka >
+  Fotografia” (ID 321811), sprawdzone sondą na portalu. „Elektronika > Fotografia” (aparaty) nie jest oznaczana.
+
+**Słabe sygnały**:
+- takie słowo w tytule **po** nazwie modelu;
+- „wydruk / plakat / obrazek” w opisie;
+- kategoria ogólna (dekoracje, kolekcje, sztuka);
+- analiza zdjęcia (CLIP) wskazuje wydruk, plakat albo zrzut ekranu ogłoszenia.
+
+Jeden słaby sygnał daje werdykt najwyżej **DO WERYFIKACJI** z wyjaśnieniem. **Bardzo niska cena** (domyślnie
+poniżej 45% wartości rynkowej) razem z którymkolwiek słabym sygnałem albo **dwa słabe sygnały** dają pewne
+wykrycie.
+
+**Co się dzieje z pewnymi wykryciami:**
+- oferta trafia do widoku **„Odrzucone”** z powodem „MOŻLIWE OSZUSTWO: sprzedaż zdjęcia zamiast telefonu”;
+- znika z głównej tabeli, listy „Wybrane”, wersji na telefon i powiadomień Telegram;
+- przycisk „To jest telefon” działa jak dotąd, a przywrócona oferta nie jest już sprawdzana;
+- program **proponuje dodanie sprzedającego do czarnej listy**. Pyta o każdego raz i niczego nie robi
+  bez Twojej zgody.
+
+**Bez fałszywych alarmów:**
+- samo słowo „zdjęcie” niczego nie przesądza: „więcej zdjęć na priv”, „zdjęcia prawdziwe”, „stan jak na
+  zdjęciach”, „wyślę zdjęcie telefonu z IMEI”, „to nie jest tylko zdjęcie” nie są oznaczane;
+- „zdjęcia poglądowe” to osobny sygnał ryzyka w ochronie przed oszustwami, a nie sprzedaż zdjęcia.
+
+**Ustawienia:** wszystkie listy fraz, słów, wykluczeń i kategorii (także ID) edytujesz w Ustawieniach →
+Oszustwa. Przykłady takich ogłoszeń uczą też klasyfikator tytułów (klasa „zdjęcie zamiast telefonu”).
+
+**Raport z Twojej bazy:** `PhoneBot.exe --photo-scam-report` pokazuje, ile ofert oznaczono, z przykładami.
+
+**Ograniczenia:**
+- Allegro Lokalnie i Sprzedajemy.pl są przeszukiwane w kategorii telefonów, a Allegro Lokalnie nie podaje
+  kategorii w wynikach. Dlatego kategoria rozstrzyga głównie wtedy, gdy portal ją podaje.
+- Na Vinted nie udało się pobrać drzewa kategorii (API zwraca 404).
+- Nowe etykiety CLIP dotyczą zdjęć analizowanych od tej wersji. Nie zostały jeszcze sprawdzone na prawdziwych
+  zdjęciach oszustw, dlatego są tylko słabym sygnałem z wysokim progiem (80%).
 
 ### Sprzedawcy seryjni
 

@@ -136,6 +136,7 @@ STAGE_LABELS = {
     "seller": "sprzedawca seryjny",
     "manual": "odrzucona ręcznie",
     "blacklist": "sprzedający na czarnej liście",
+    "photo_scam": "MOŻLIWE OSZUSTWO: sprzedaż zdjęcia zamiast telefonu",
 }
 
 # ------------------------------------------------------------ pomocnicze ---

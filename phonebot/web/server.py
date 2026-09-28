@@ -119,7 +119,10 @@ class WebApp:
         try:
             repo = OfferRepository(conn)
             offers = repo.list() + repo.list_picked_inactive()
-            rows = merge_across_portals(Evaluator(conn, self.settings).evaluate_all(offers))
+            rows = Evaluator(conn, self.settings).evaluate_all(offers)
+            # sprzedaż zdjęcia zamiast telefonu (pewne wykrycie) — nie na telefonie; do „Odrzucone” przenosi okno
+            rows = merge_across_portals([(o, v) for o, v in rows if v.photo_scam != "certain"
+                                         or o.status.value == "watched"])
         finally:
             conn.close()
         with self._lock:

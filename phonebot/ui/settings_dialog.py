@@ -1143,7 +1143,78 @@ class SettingsDialog(QDialog):
         bl.addWidget(self.blacklist_table)
         bl.addWidget(remove)
         bl.addWidget(hint)
-        return self._page(intro, general, weights, black)
+        return self._page(intro, general, weights, self._photo_scam_group(), black)
+
+    _PHOTO_SCAM_LISTS = (
+        ("strong_phrases", "Jednoznaczne sformułowania (pewne; „$” = koniec zdania)"),
+        ("photo_words", "Słowa „zdjęcie / plakat…” w tytule (przed modelem: pewne, po: słabe)"),
+        ("desc_words", "Słowa w opisie (słabe)"),
+        ("exclusions", "Zwykłe znaczenie — pomijaj („więcej zdjęć”, „zdjęcia prawdziwe”…)"),
+        ("guard_words", "Słowa przed frazą, które zmieniają sens („wyślę”, „nie”…)"),
+        ("stock_phrases", "„Zdjęcia poglądowe” (sygnał ryzyka, nie sprzedaż zdjęcia)"),
+        ("strong_categories", "Kategorie portalu — pewne (fragment nazwy)"),
+        ("weak_categories", "Kategorie portalu — słabe (fragment nazwy)"),
+        ("equipment_words", "Kategorie sprzętu foto — nie oznaczaj („aparat”, „obiektyw”…)"),
+    )
+
+    def _photo_scam_group(self) -> QGroupBox:
+        cfg = self.settings.photo_scam
+        box = QGroupBox("Sprzedaż zdjęcia iPhone'a zamiast telefonu")
+        lay = QVBoxLayout(box)
+        info = QLabel(
+            "Ogłoszenie wygląda jak oferta telefonu, ale sprzedawane jest zdjęcie, wydruk albo plakat (zwykle drobny "
+            "dopisek na końcu opisu — program odkrywa też rozstrzelone litery, kropki, emoji i znaki niewidoczne). "
+            "<b>Pewne</b> wykrycie → „Odrzucone” z powodem „MOŻLIWE OSZUSTWO” i propozycja czarnej listy; "
+            "<b>jeden słaby sygnał</b> → najwyżej DO WERYFIKACJI z wyjaśnieniem; bardzo niska cena albo dwa słabe "
+            "sygnały → pewne. Samo słowo „zdjęcie” niczego nie przesądza. Pozycje bez polskich znaków, "
+            "każda w osobnej linii; ostatnie słowo frazy może mieć dowolną końcówkę.")
+        info.setWordWrap(True)
+        info.setTextFormat(Qt.TextFormat.RichText)
+        lay.addWidget(info)
+        lay.addLayout(self._form([
+            Field("photo_scam.enabled", "Wykrywaj sprzedaż zdjęcia zamiast telefonu", "bool"),
+            Field("photo_scam.cheap_ratio", "„Bardzo niska cena” — poniżej", "pct", 5, 100, 5, " % wartości rynkowej"),
+            Field("photo_scam.clip_threshold", "Zdjęcie (CLIP): wydruk / plakat / zrzut ekranu od", "pct", 50, 100, 1,
+                  " % pewności"),
+        ]))
+        grid = QHBoxLayout()
+        columns = [QVBoxLayout(), QVBoxLayout(), QVBoxLayout()]
+        self.photo_scam_edits: dict[str, QPlainTextEdit] = {}
+        for i, (attr, label) in enumerate(self._PHOTO_SCAM_LISTS):
+            sub = QGroupBox(label)
+            edit = QPlainTextEdit("\n".join(getattr(cfg, attr)))
+            edit.setObjectName(f"photo_scam_{attr}")
+            edit.setMinimumHeight(100)
+            QVBoxLayout(sub).addWidget(edit)
+            columns[i % 3].addWidget(sub)
+            self.photo_scam_edits[attr] = edit
+        for col in columns:
+            grid.addLayout(col)
+        lay.addLayout(grid)
+        ids = QGroupBox("ID kategorii portali (portal: pewne ID; słabe ID) — sprawdzone sondą na portalach")
+        self.photo_scam_ids = QPlainTextEdit("\n".join(
+            f"{src}: {', '.join(v.get('strong', []))}; {', '.join(v.get('weak', []))}"
+            for src, v in cfg.category_ids.items()))
+        self.photo_scam_ids.setObjectName("photo_scam_category_ids")
+        self.photo_scam_ids.setMaximumHeight(70)
+        QVBoxLayout(ids).addWidget(self.photo_scam_ids)
+        lay.addWidget(ids)
+        self._readers.append(self._read_photo_scam)
+        return box
+
+    def _read_photo_scam(self, s: Settings) -> None:
+        for attr, edit in self.photo_scam_edits.items():
+            words = [w.strip() for w in edit.toPlainText().splitlines() if w.strip()]
+            setattr(s.photo_scam, attr, list(dict.fromkeys(words)))
+        ids: dict[str, dict[str, list[str]]] = {}
+        for line in self.photo_scam_ids.toPlainText().splitlines():
+            if ":" not in line:
+                continue
+            src, rest = line.split(":", 1)
+            strong, _, weak = rest.partition(";")
+            ids[src.strip()] = {"strong": [x.strip() for x in strong.split(",") if x.strip()],
+                                "weak": [x.strip() for x in weak.split(",") if x.strip()]}
+        s.photo_scam.category_ids = ids
 
     def _blacklist_remove(self) -> None:
         row = self.blacklist_table.currentRow()

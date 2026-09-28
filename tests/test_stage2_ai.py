@@ -112,7 +112,8 @@ def test_text_classifier_save_load(trained, tmp_path):
     assert loaded.predict(titles) == trained.predict(titles)
     # inna wersja modelu albo uszkodzony plik → trening od nowa zamiast błędu
     info = (tmp_path / text_model.INFO_FILE).read_text(encoding="utf-8")
-    (tmp_path / text_model.INFO_FILE).write_text(info.replace('"version": 1', '"version": 999'), encoding="utf-8")
+    other = info.replace(f'"version": {text_model.MODEL_VERSION}', '"version": 999')
+    (tmp_path / text_model.INFO_FILE).write_text(other, encoding="utf-8")
     assert TextClassifier.load(tmp_path) is None
     (tmp_path / text_model.INFO_FILE).write_text(info, encoding="utf-8")
     (tmp_path / text_model.MODEL_FILE).write_bytes(b"to nie jest model")
@@ -341,8 +342,12 @@ def test_preprocess_like_clip():
 def test_photo_classifier_runs_onnx_model(tmp_path):
     clf = PhotoClassifier.load(tiny_vision_model(tmp_path))
     probs = clf.classify(sample_jpeg())
-    assert set(probs) == set(CLASSES) and sum(probs.values()) == pytest.approx(1)
-    assert max(probs, key=probs.get) == "smartphone" and probs["smartphone"] > 0.5
+    main = photo_model.main_probs(probs)  # klasy główne — bez zmian; wyniki „zdjęcie zamiast telefonu” osobno
+    assert set(main) == set(CLASSES) and sum(main.values()) == pytest.approx(1)
+    assert max(main, key=main.get) == "smartphone" and main["smartphone"] > 0.5
+    scam = {k: v for k, v in probs.items() if k.startswith(photo_model.SCAM_PREFIX)}
+    assert set(scam) == {photo_model.SCAM_SCORE, *(photo_model.SCAM_PREFIX + c for c in photo_model.SCAM_CLASSES)}
+    assert 0 <= probs[photo_model.SCAM_SCORE] <= 1
 
 
 class FakeSession:

@@ -88,6 +88,56 @@ _EMB_B64 = (
 )
 EMB_SHA256 = "e87d99b3dbb9e5adb96b925f4fbee75395657c5ae27d2ca9c09e42cf5a6a9056"
 
+# Sprzedaż zdjęcia zamiast telefonu: osobne porównanie „prawdziwy smartfon” vs wydruk / plakat / zrzut ekranu.
+# Wektory policzone oryginalnym modelem tekstowym (scripts/clip_scam_prepare.py, workflow clip-scam); wektor
+# „smartphone” jest ten sam co wyżej (sprawdzone sumą w CI). Osobny softmax — wyniki klas głównych bez zmian.
+SCAM_CLASSES = ("printed_photo", "poster", "listing_screenshot")
+SCAM_PREFIX = "scam:"
+SCAM_SCORE = SCAM_PREFIX + "score"  # 1 − P(prawdziwy smartfon) w porównaniu z trzema klasami powyżej
+_SCAM_EMB_B64 = (
+    "nRQ2LdurDCeaFN0gxaCxqLiiKyI0pPurXib1oTYgYqt3KGIkc5F9oFIrgKdSKpkiqKetJ0GmBylvJJSj0qDmJZchqyXUqOqk3KCFpl6k"
+    "lxyToG8lLBNyJC4pxpbXKPslFCQLpbQapo/VJAQjXKm8qe6N/h+AqaoptiKgqDOlBKTdH1+j8aioI7WgKKdapDSrh6geKrkaCaJ0oRKk"
+    "DaRMqCyhIqZKJ2uoVhkUnM8rMaifIr8m6yfwqBuwWie6Gx+g/iZnopUol6VDJpuVVpm6IDmjSKmqG58lSSojpUyqVq1hKXOkO6lmFLEm"
+    "qCPKJvOgaiqqq5UeSadsGu6mrQzanwepEyyeKUSeMKkvOBIkkifIJOWqxB1DozKdaCe9plkmpKWKInQj2axbJ1QfIiYIoVacEaDkImqd"
+    "jB+iqyyo4SCEIG8ir6SCpKGrW52TKOGjyaGGII6gmaNpmucdi6hHoDom/idMJXwitqrVJKGrb6GEqZgoCqh8q8adEil3IKwprCbVJO4i"
+    "LSfTpOMj6ZhDp8OdIqEuIlEroSd2p/Akq6QVKSwpLwAOLNqjwyUiomGVGSUNpTCpK5DUKGyo85Foon0h3asppP+mcyq6qECh7Z0Jqk4i"
+    "4qHXpaefCSs9pAEg06iwLFybN6hyGA2oNinCKL2p4Z6xqPmkzhz4JLqioaUrpvycPZwDKeKpSykGqFslsSRdnYykwiixnTqfrqqwJcUk"
+    "rR9cqZMcjqN1KewVWZqhKOMcMiL3H1ilkahnpT0k/iv6orsmDSd7qCmdE6McqDonaKMvoEwlOx9ipfAlriDcIhKq5KbCJUwpmhj0IWOh"
+    "MTj0ot0kYaWBI74d7ysqHySbkShIJlIk3qmJmHadfKOEp76t8KIrJhQmIaa5nnSmzikeKQydYad0II+goCgSpI4RzqdPJ+sdsR3vqLso"
+    "JKRxpdIo96sNqK2cFysFIo0jc6W6qXEWSabLoo4k6ycYKcKlFRrUISUkBKhrLXaqlKdGJu0hNqjDoO0r3CSoJpalsxyvmkgfQh93qZwi"
+    "AKXlJmSoeyNSJHMihKi/qBiluqbUHXAnWSizJCKo0B94qTGnFaHcpNgmTScymx4qASYNJ5MlPanpIVuolZWWqAYng6shJBchz6gvqEWa"
+    "HiCyoL6ZJBThoael0Ku+n1kmRKmeI4AaRaxQoUeUuxVlGAIfvaqMkrUhsZu6I4MmFCbiicChpSK2nCyqualiIl0j0KDeJuQl8ycsqcio"
+    "WiUNIjckyKS6Jx4aGyVQHg0jiZ+yptcihaUXrB0qzBj3Kd8eP58zox4ngyCIoUOleyjULpofyCY4K6QdCqGlHN4mG6Y6og4jDS9zHhYo"
+    "06M0H4WrJaj4pSMoSykKqQsjPCREJCqfaquQnrMiYabVpmsshSX4ntiilpwFh8Qgv6VnLNCoticuIKmbDCGInxaRZyIDHH0VAyAlK1Ma"
+    "T6xUoJWhwKSrHOKkByjhJXUlw52NKEskVSc0JfQk8JtgKYQVqSNcoRSo/6CsmUMcV6ZsJmcexalVopqmH6U8pYap2CQFILOlbaLwq5ip"
+    "iiriFyKdsSWnpnqil5zdJ0Kn1ilupB4nT6QFKFQUxqZgKgApsx0msCoqqyNxi0ApwaAgKuekzSatKcOhdaWAopinLKJ2oacoiqLnq8qp"
+    "pyhdpAOmbJ06I4QZPo4oIdIoU6pJJKEmTCZkqACqWiFro80sTitkH/apIziUGBSahCjKqAGjRZisJqskB6XLKjal3Ke/KbippybEmiAk"
+    "Gg2eJ+GbFBz5pWOloKqxH5OQZaGyICioqqPcqR0iYyk1od+QY6Q5Hgqkf6GmJiSpK6g1KcwosyRrJGSqfaeNqI+fk6XKJ0mqT6RaIxsk"
+    "GqDzKO8oPaGpnDIo8iHkJUqUk6hXJL6iJSo5KbMjwiLAGkKg7iulJeqhgSuOH2iULKiOpG8kMahcoXoWESztp2YivagfpJ6luyYnpNsn"
+    "E6hToTsgSJtaH8Gk9p46HvMl7J5HJPyloikXoWGoWyhPpbEnvCHPq6ymY6mTpouiWh49pSYoOaM/o0+gHCmAqN0gY6h4IMEc1iHMmD8n"
+    "g6HtJ0GlPinrJr+qxaiimRAiUCowJWqkrCn5IH4jJCnDqBqokqZYKPspGaggIpMZRJ7lHjKheqbqJHgalqWQGumeFKaFKqEMQyO0qMep"
+    "AyUVIpWkFCRHGSU47SHqKQIaV6iAFYgoEZtYJNwkzCixIJup26R2pYaqq6n6sDiWjSg8omyq2iP5pesmVyiTI0SlcB4QnccoqiJ0Ix2q"
+    "jQD8KBCk6qdKKZOhB6eMKQesyqifKQAtLCUypJKmSajEIWOoiRaHJ/8kzCvJGoIoIaQWJOAcfyl+qOCoKiWOJOWqAZ1PKX0hfCH6qd+k"
+    "lR3SH+CXkKBaJVuoiSUJpRopVCukI0ecUKBAqTus957ZJPomzpyPl6WhhqdlpGslLKmcmlknAqj5JGwojyvdoMKVYZzgp+6gTKUeKhOq"
+    "Nyn8F8un0xp+oQKh56iIpqKkIyBUpjybqaY7HJylJxEFrIWqAaeZoZYiyiPTp9uqpqa6JzQjeh38KDgnaCafozWbhSBlqSKqiCeQJ6mo"
+    "aSf/mXISQ5/lmNGdkqCdJkolJic/po4nJiK6nJufx6VVI/ahEa1oIo2hGyqSp3KlBKJ4GYeYYijGJNcplCwuJKAn/ySsoBmcRaWzFvWi"
+    "/KGfHPwvVp3iKimoOaR3q7Oo4KoipK4omSAaIDAh4CTMHa+iESpcoNYmVaLgKJebdY6Glr8nYqUDIG6okBpnqvyXKac8p/YqT5gQIlSe"
+    "RJpwJVgYb5w6Gsel46NynDeaWKYCpGOl8Z5tF7clTiomIpwdYCBCpIIlLyYEn8Ya/6Zspd8k06WYmmideChNp8qc0xFZpG+k8ac+p7Kd"
+    "6Rs5pQsijKqMozccBimsndShT6WhkZ6k3BqBqCAe6Jn4JXIl5aWAp34k9w0Zp8mkxq0yKPcWbShEGOgpJxxLpnqYCyeFp1qbZKcNqHSr"
+    "EyR5JhKfoJ3+qtslmSf9pQ8mkRwUIkIgJadbK2OhK59spJgl5SEVqNima6UpJQolRKbgoZU416TDpF6jEKcQqFgVYokMoJum3ibppbuO"
+    "kCV+qj8lvCFAIbsaIiYToM+io6DFIM+ag6StJRegXaUaqYmo8aOskXgojKFZn5GhqaknIqkmZCOuqWWopyyBIaYpRKFrGZukEiUEIxeo"
+    "Iyd+ISmmiBfdKJoddSQ7IYkg/yG6nV4fbirbpA+m6CEXpVQh9yhgGKGmxByoFAYXSyTZl28k/4vUnQylHaF7JZyZRCiiIPUqI6nQpPCm"
+    "1yfGnjoleiA1IaGrehedHKKZDquwJqWoAxjTnuGphiHYHvUjQR60pZQk3yRcGSgm8KDUqBmkJx0iJIok+RZaoQuplCXspOAn/J1tpHCl"
+    "8CEEJQCi9h2gpgcgXhFTp/UmPh8OqNumXSMcFQ0lEYkyrBMkbiEaou8ljajYJYke3qI5mjWgJyaLJ90gXpAMIHQkn5/HHgEZ9CBIorok"
+    "J6HGpImlVqiZov0iwyBupripdyeXOK4o+yr6JFgoVyZzpNQelZu8KGQoEavSpCOnV6fQpVmmqq1/KRAnHyViqb8oJp29oiUoICUiJ8ck"
+    "f6eMGT4rziaspcUcmSbiJ1il26hSG/gnYiaGraenQpHlKLKiqKfqJfGozhsMJwaufqbNJdon2R11J+sjcyfsIacYFiYWpPcnRqaOq/Mk"
+    "T5dyJLcobqjVH3Oo/JoBqD2mAyRGj5IfUqJEKDYlSyUtJhYo6KbvrE4jzCbmJBUpCCUDHTOkGqjjI5KmF6eaJSeUniQmnNMlGp/QGxyf"
+    "FqR4oY6lcSSwqNUljaT5FUmlcKzKo/8g/ioiGn+c0h1sqBGcoiKsITqhwBmNmkwpoKjaFSmdCae6qeuo2B1uqCsk3BkPJ04eOSSlnb0q"
+    "PRDroHUoyie1pcIcyx5dHQclDKCupMAgGiQAJ+wplKPXJ9uYTCQarHiUryOHI9yutaA/H9wl5KRnHa6ktye1JlGdU6HUJCEv6aQVEzAj"
+    "liOsnCoifCKvJdyg3iquKeiYcaQfDF8gYqfAnwuj"
+)
+SCAM_EMB_SHA256 = "ddf47b04b0cf4bc7f1c2c34b420e2067b3ba8cdc1cfcee04879438efec2885cd"
+
 _MEAN = (0.48145466, 0.4578275, 0.40821073)
 _STD = (0.26862954, 0.26130258, 0.27577711)
 SIZE = 224
@@ -105,6 +155,18 @@ def class_embeddings():
         raise PhotoModelError("uszkodzone wektory opisów klas")
     emb = np.frombuffer(data, dtype=np.float16).astype(np.float32).reshape(len(CLASSES), -1)
     return emb / np.linalg.norm(emb, axis=1, keepdims=True)
+
+
+def scam_embeddings():
+    """Wektory: [smartfon (z klas głównych), wydruk, plakat, zrzut ekranu ogłoszenia]."""
+    import numpy as np
+
+    data = base64.b64decode(_SCAM_EMB_B64)
+    if hashlib.sha256(data).hexdigest() != SCAM_EMB_SHA256:
+        raise PhotoModelError("uszkodzone wektory opisów „zdjęcie zamiast telefonu”")
+    emb = np.frombuffer(data, dtype=np.float16).astype(np.float32).reshape(len(SCAM_CLASSES), -1)
+    emb = emb / np.linalg.norm(emb, axis=1, keepdims=True)
+    return np.vstack([class_embeddings()[CLASSES.index("smartphone")][None], emb])
 
 
 def preprocess(data: bytes):
@@ -127,6 +189,18 @@ def preprocess(data: bytes):
     return arr.transpose(2, 0, 1)[None]
 
 
+def _softmax(logits):
+    import numpy as np
+
+    e = np.exp(logits - logits.max())
+    return e / e.sum()
+
+
+def main_probs(probs: dict[str, float]) -> dict[str, float]:
+    """Tylko klasy główne (bez wyników „zdjęcie zamiast telefonu”)."""
+    return {k: v for k, v in probs.items() if not k.startswith(SCAM_PREFIX)}
+
+
 class PhotoClassifier:
     def __init__(self, session):
         self.session = session
@@ -136,6 +210,7 @@ class PhotoClassifier:
         names = [o.name for o in session.get_outputs()]
         self._output = names.index("image_embeds") if "image_embeds" in names else 0
         self._emb = class_embeddings()
+        self._scam_emb = scam_embeddings()
 
     @classmethod
     def load(cls, path: Path) -> PhotoClassifier:
@@ -155,10 +230,12 @@ class PhotoClassifier:
             pix = pix.astype(np.float16)
         vec = np.asarray(self.session.run(None, {self._input: pix})[self._output], dtype=np.float32).reshape(-1)
         vec = vec / (np.linalg.norm(vec) or 1.0)
-        logits = LOGIT_SCALE * (self._emb @ vec)
-        e = np.exp(logits - logits.max())
-        p = e / e.sum()
-        return {c: float(x) for c, x in zip(CLASSES, p, strict=True)}
+        out = {c: float(x) for c, x in zip(CLASSES, _softmax(LOGIT_SCALE * (self._emb @ vec)), strict=True)}
+        # zdjęcie telefonu zamiast telefonu (wydruk / plakat / zrzut ekranu) — osobne porównanie, klucze „scam:”
+        scam = _softmax(LOGIT_SCALE * (self._scam_emb @ vec))
+        out.update({SCAM_PREFIX + c: float(x) for c, x in zip(SCAM_CLASSES, scam[1:], strict=True)})
+        out[SCAM_SCORE] = float(1.0 - scam[0])
+        return out
 
 
 def model_path(directory: Path) -> Path:

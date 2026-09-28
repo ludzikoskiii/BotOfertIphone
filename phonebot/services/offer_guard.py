@@ -8,7 +8,10 @@ zapisanych w bazie, gdy zmienią się reguły (``refilter_stored``). Reguły:
    spoza Polski → flaga „Sprzedawca z zagranicy” (domyślnie) albo odrzucenie (tryb „tylko z Polski”);
    po włączeniu ofert z zagranicy oferty odrzucone wcześniej za kraj wracają do wyników,
 3. sprzedawcy seryjni: jeden sprzedawca z wieloma tanimi „iPhone'ami” → ukrycie jego ofert,
-4. test ceny względem mediany rynkowej (``ListingFilter.check_price``).
+4. test ceny względem mediany rynkowej (``ListingFilter.check_price``),
+5. sprzedaż zdjęcia iPhone'a zamiast telefonu (``core.photo_scam``): pewne wykrycie → „Odrzucone” (etap
+   „photo_scam”, powód „MOŻLIWE OSZUSTWO: sprzedaż zdjęcia zamiast telefonu”); słaby sygnał + bardzo niska
+   cena → też odrzucenie; sam słaby sygnał → oferta zostaje z werdyktem najwyżej DO WERYFIKACJI (wycena).
 """
 from __future__ import annotations
 
@@ -25,6 +28,7 @@ from ..core.language import detect_language
 from ..core.listing_filter import FilterDecision, ListingFilter
 from ..core.models import ParsedInfo, RawOffer, RedFlag
 from ..core.normalizer import parse_offer
+from ..core.photo_scam import PhotoScamResult, detect
 from ..core.settings import Settings
 from ..sources import REGISTRY
 from ..storage.repositories import (
@@ -41,7 +45,7 @@ from ..storage.repositories import (
 log = logging.getLogger(__name__)
 
 # zmiana logiki reguł (nie tylko ustawień) → ponowne sprawdzenie zapisanych ofert
-RULES_VERSION = 2
+RULES_VERSION = 3  # 3 — sprzedaż zdjęcia zamiast telefonu
 _SIGNATURE_KEY = "filter_signature"
 
 
@@ -64,6 +68,7 @@ class Prepared:
     raw: RawOffer
     parsed: ParsedInfo
     decision: FilterDecision
+    photo: PhotoScamResult | None = None  # sprzedaż zdjęcia zamiast telefonu (sygnały bez ceny)
 
 
 class OfferGuard:
@@ -84,12 +89,19 @@ class OfferGuard:
         """Rozpoznanie + filtr tekstu + minimalna cena."""
         s = self.settings
         parsed = parse_offer(raw, battery_threshold=s.battery_health_threshold)
+        photo = None
+        if s.photo_scam.enabled and not self.whitelisted(raw):
+            photo = detect(raw.title, raw.description, s.photo_scam, category=raw.params.get("category"),
+                           category_id=raw.params.get("category_id"), source=raw.source)
+            if photo.level == "certain":  # przed filtrem akcesoriów — właściwy powód w „Odrzucone”
+                return Prepared(raw, parsed, FilterDecision(False, "photo_scam", photo.reason(), photo.keyword),
+                                photo)
         decision = self.listing_filter.check(raw.title, model=parsed.model, category=raw.params.get("category"),
                                              source=raw.source, source_id=raw.source_id)
         if decision.accepted and raw.price < s.min_valid_price:
             decision = FilterDecision(False, "price", f"cena {raw.price:.0f} zł poniżej minimalnej "
                                                       f"({s.min_valid_price:.0f} zł) — zwykle „za darmo” lub zamiana")
-        return Prepared(raw, parsed, decision)
+        return Prepared(raw, parsed, decision, photo)
 
     def whitelisted(self, raw: RawOffer) -> bool:
         return (raw.source, raw.source_id) in self.whitelist
@@ -138,9 +150,22 @@ class OfferGuard:
             self._medians[key] = statistics.median(use) if len(use) >= 3 else None
         return self._medians[key]
 
+    def photo_price_decision(self, p: Prepared) -> FilterDecision | None:
+        """Słaby sygnał „zdjęcie zamiast telefonu” + bardzo niska cena (względem mediany) = odrzucenie."""
+        if p.photo is None or p.photo.level != "weak" or not p.parsed.model:
+            return None
+        median = self.market_median(p.parsed.model, p.parsed.storage_gb)
+        upgraded = p.photo.with_price(p.raw.price, median, self.settings.photo_scam)
+        if upgraded.level == "certain":
+            return FilterDecision(False, "photo_scam", upgraded.reason(), upgraded.keyword)
+        return None
+
     def price_decision(self, p: Prepared) -> FilterDecision:
         if not p.parsed.model:
             return p.decision
+        photo = self.photo_price_decision(p)
+        if photo is not None:
+            return photo
         median = self.market_median(p.parsed.model, p.parsed.storage_gb)
         return self.listing_filter.check_price(p.raw.price, median, p.raw.description,
                                                source=p.raw.source, source_id=p.raw.source_id)
@@ -194,7 +219,8 @@ class OfferGuard:
         payload = {"rules": RULES_VERSION, "filter": json.loads(json.dumps(s.listing_filter.__dict__, default=str)),
                    "country": s.vinted_country_mode, "min_price": s.min_valid_price,
                    "serial": [s.sanity.serial_enabled, s.sanity.serial_min_offers, s.sanity.serial_price_ratio],
-                   "blacklist": BlacklistRepository(self.conn).version()}
+                   "blacklist": BlacklistRepository(self.conn).version(),
+                   "photo_scam": json.loads(json.dumps(s.photo_scam.__dict__, default=str))}
         return hashlib.sha1(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
     def refilter_stored(self, *, force: bool = False) -> int:
@@ -228,6 +254,8 @@ class OfferGuard:
                     decision = p.decision
                     if decision.accepted:
                         decision = self.seller_decision(p, known, serial, international) or decision
+                    if decision.accepted:
+                        decision = self.photo_price_decision(p) or decision
                     if not decision.accepted and not self.whitelisted(p.raw):
                         still_there = self.conn.execute("SELECT 1 FROM offers WHERE id = ?", (offer.id,)).fetchone()
                         if still_there:
