@@ -22,6 +22,7 @@ from .refresh import RefreshConfig
 from .sanity import SanityConfig
 from .selection import SelectionCriteria
 from .view_filter import ViewFilter
+from .work_time import WorkTimeConfig
 
 MIN_PROFIT_MODES = ("amount", "percent", "max", "min")
 MIN_PROFIT_MODE_LABELS = {
@@ -238,6 +239,8 @@ class Settings:
     refresh: RefreshConfig = field(default_factory=RefreshConfig)
     # magazyn części: wycena z Twojej ceny zakupu, premia „masz część”, niski stan (core/inventory.py)
     inventory: InventoryConfig = field(default_factory=InventoryConfig)
+    # czas pracy: naprawa + obsługa, zysk na godzinę, próg i stawka (core/work_time.py)
+    work: WorkTimeConfig = field(default_factory=WorkTimeConfig)
     minimize_to_tray: bool = True
     notify_desktop: bool = True
     notify_price_drops: bool = True

@@ -1,4 +1,4 @@
-"""Tabela cen części i usług (edytowalna w aplikacji).
+"""Tabela cen części i usług oraz czasu pracy przy naprawie (edytowalna w aplikacji).
 
 Wartości domyślne to ORIENTACYJNE ceny dobrych zamienników w PLN przy
 samodzielnej naprawie. Po pierwszym uruchomieniu trafiają do bazy, gdzie
@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .models import Defect
+from .work_time import DEFAULT_REPAIR_MINUTES
 
 ANY_MODEL = "*"
 
@@ -21,12 +22,14 @@ class PartPrice:
     price: float
     note: str = ""
     id: int | None = None
+    minutes: int | None = None  # czas pracy przy tej naprawie (None = domyślny dla rodzaju, core.work_time)
 
 
 class PartsCatalog:
     def __init__(self, rows: list[PartPrice], stock=None):
         self._rows = {(r.model, r.part): r for r in rows}
         self.stock = stock  # core.inventory.Stock — Twój magazyn (cena zakupu najstarszej sztuki)
+        self.time_adjust = None  # poprawka czasu naprawy z faktycznych czasów z transakcji (core.work_time.Adjust)
 
     def lookup(self, model: str | None, part: Defect) -> PartPrice | None:
         if model and (model, part) in self._rows:
@@ -97,7 +100,8 @@ def default_parts() -> list[PartPrice]:
         for part, price in zip(order, prices, strict=True):
             if part is Defect.BACK_GLASS and price == 0:
                 continue  # starsze modele mają aluminiowy tył
-            rows.append(PartPrice(model, part, float(price), _NOTES.get(part, "")))
+            rows.append(PartPrice(model, part, float(price), _NOTES.get(part, ""),
+                                  minutes=DEFAULT_REPAIR_MINUTES.get(part)))
         for part, price in _CHEAP_PARTS.items():
-            rows.append(PartPrice(model, part, float(price), ""))
+            rows.append(PartPrice(model, part, float(price), "", minutes=DEFAULT_REPAIR_MINUTES.get(part)))
     return rows

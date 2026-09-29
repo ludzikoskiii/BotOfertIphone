@@ -287,6 +287,14 @@ MIGRATIONS: list[str] = [
     );
     CREATE INDEX idx_usage_tx ON inventory_usage (transaction_id);
     """,
+    """
+    -- v14: czas pracy przy naprawie (minuty) w tabeli części, NULL = czas domyślny dla rodzaju naprawy
+    ALTER TABLE parts_prices ADD COLUMN minutes INTEGER;
+    UPDATE parts_prices SET minutes = CASE part
+        WHEN 'screen' THEN 45 WHEN 'battery' THEN 30 WHEN 'charging_port' THEN 60 WHEN 'back_glass' THEN 90
+        WHEN 'camera' THEN 40 WHEN 'camera_lens' THEN 20 WHEN 'speaker' THEN 30 WHEN 'microphone' THEN 45
+        WHEN 'buttons' THEN 45 WHEN 'housing' THEN 150 END;
+    """,
 ]
 
 

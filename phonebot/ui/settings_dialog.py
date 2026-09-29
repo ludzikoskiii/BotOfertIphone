@@ -125,7 +125,9 @@ BUYING = [
     Field("buy_shipping_cost", "Wysyłka telefonu do Ciebie", suffix=" zł"),
     Field("pickup_cost_per_km", "Dojazd po odbiór (za km, w obie strony)", "float", 0, 10, 0.1, " zł", 2),
     Field("pickup_flat_cost", "Odbiór osobisty, gdy odległość nieznana", suffix=" zł"),
-    Field("own_labor_cost", "Własna robocizna za naprawę", suffix=" zł"),
+    Field("own_labor_cost", "Własna robocizna za naprawę", suffix=" zł",
+          tip="Stała kwota odejmowana od zysku przy każdej naprawie (domyślnie 0). Czas pracy i stawkę "
+              "godzinową ustawisz niżej, w grupie „Czas pracy” — tam koszt czasu jest pokazywany osobno."),
     Field("parts_shipping_cost", "Wysyłka części", suffix=" zł"),
     Field("unknown_defect_risk_cost", "Ryzyko przy usterce o nieznanym koszcie", suffix=" zł"),
     Field("battery_health_threshold", "Bateria do wymiany poniżej", "int", 50, 100, 1, " %"),
@@ -481,7 +483,32 @@ class SettingsDialog(QDialog):
             Field("inventory.frequent_uses", "…części zużytej co najmniej", "int", 1, 50, 1, " razy"),
             Field("inventory.frequent_days", "…w ostatnich", "int", 7, 365, 1, " dniach"),
         ]))
-        return self._page(form, fees, parts, inv)
+        work = QGroupBox("Czas pracy (kolumny „Czas pracy” i „Zysk na godzinę”)")
+        work_form = self._form([
+            Field("work.enabled", "Licz czas pracy i zysk na godzinę", "bool"),
+            Field("work.hourly_rate", "Stawka godzinowa (wartość Twojego czasu)", "float", 0, 1000, 5, " zł/h",
+                  tip="Koszt czasu = czas × stawka. Pokazywany osobno w wyliczeniu, nie odejmowany od zysku."),
+            Field("work.min_profit_per_hour", "Minimalny zysk na godzinę", "float", 0, 1000, 5, " zł/h",
+                  tip="Oferty poniżej progu dostają niższy werdykt: maksymalna cena zakupu jest liczona tak, "
+                      "żeby zysk na godzinę sięgnął progu. 0 = bez progu."),
+            Field("work.parcel_minutes", "Odbiór paczki (zakup z wysyłką)", "int", 0, 600, 5, " min"),
+            Field("work.meeting_minutes", "Odbiór osobisty: spotkanie (plus dojazd)", "int", 0, 600, 5, " min"),
+            Field("work.drive_kmh", "Średnia prędkość dojazdu", "float", 5, 150, 5, " km/h",
+                  tip="Czas dojazdu = 2 × odległość / prędkość."),
+            Field("work.pickup_unknown_minutes", "Odbiór osobisty, gdy odległość nieznana", "int", 0, 600, 5, " min"),
+            Field("work.check_minutes", "Sprawdzenie telefonu", "int", 0, 600, 5, " min"),
+            Field("work.listing_minutes", "Zdjęcia i wystawienie ogłoszenia", "int", 0, 600, 5, " min"),
+            Field("work.selling_minutes", "Sprzedaż (rozmowy, pakowanie, nadanie)", "int", 0, 600, 5, " min"),
+            Field("work.unknown_repair_minutes", "Naprawa o nieznanym zakresie (Face ID, zalanie…)", "int", 0, 1440,
+                  5, " min"),
+        ])
+        hint = QLabel("Czas samej naprawy ustawisz dla każdej pozycji w „Tabeli cen części” (kolumna "
+                      "„Czas pracy”).")
+        hint.setWordWrap(True)
+        hint.setObjectName("muted")
+        work_form.addRow(hint)
+        work.setLayout(work_form)
+        return self._page(form, fees, parts, inv, work)
 
     def _market_tab(self) -> QWidget:
         s = self.settings

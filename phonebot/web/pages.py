@@ -11,6 +11,7 @@ from ..core.models import Offer, OfferStatus, Severity, Valuation, Verdict
 from ..core.selection import pick_reason
 from ..core.settings import Settings
 from ..core.sorting import FIELDS, describe
+from ..core.work_time import format_minutes
 from ..ml.seed_data import LABEL_NAMES
 from ..sources import SOURCE_NAMES
 
@@ -198,6 +199,8 @@ def details_page(offer: Offer, val: Valuation, settings: Settings, *, csrf: str,
     neg = val.negotiation
     rows = [("Cena", zl(offer.price)), ("Szacowany zysk", _profit(val.expected_profit)),
             ("Max cena zakupu", _money(val.max_buy_price)), ("Wartość rynkowa", _money(val.market.value)),
+            ("Czas pracy", format_minutes(val.work_minutes)),
+            ("Zysk na godzinę", "—" if val.profit_per_hour is None else f"{val.profit_per_hour:.0f} zł/h"),
             ("Ocena", f"{val.score}/100"), ("Portal", escape(SOURCE_NAMES.get(offer.raw.source, offer.raw.source))),
             ("Miejsce", escape(_place(offer)))]
     if val.verdict is Verdict.NEGOTIATE:

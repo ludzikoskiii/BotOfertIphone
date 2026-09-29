@@ -302,6 +302,12 @@ class CostItem:
 
 
 @dataclass
+class TimeItem:
+    label: str
+    minutes: int
+
+
+@dataclass
 class Negotiation:
     worth_it: bool
     opening_price: float | None
@@ -330,6 +336,11 @@ class Valuation:
     risk: object | None = None  # core.fraud.FraudAssessment (ryzyko oszustwa) — ustawiane przez Evaluator
     photo_scam: str = ""  # „certain” | „weak” — sprzedaż zdjęcia zamiast telefonu (core.photo_scam)
     parts_in_stock: list = field(default_factory=list)  # usterki, do których masz część w magazynie
+    time_items: list[TimeItem] = field(default_factory=list)  # czas pracy: naprawa + obsługa (core.work_time)
+    work_minutes: int | None = None  # łączny czas pracy (None = czas pracy wyłączony)
+    profit_per_hour: float | None = None  # przewidywany zysk / czas pracy
+    time_cost: float | None = None  # czas × stawka godzinowa (pokazywany osobno, nie odejmowany od zysku)
+    time_limited: bool = False  # wymagany zysk wynika z progu zysku na godzinę (a nie z reguły kwota/procent)
 
     @property
     def has_hard_flag(self) -> bool:

@@ -357,23 +357,25 @@ class PartsRepository:
             return 0
         rows = default_parts()
         self.conn.executemany(
-            "INSERT INTO parts_prices (model, part, price, note) VALUES (?, ?, ?, ?)",
-            [(r.model, r.part.value, r.price, r.note) for r in rows],
+            "INSERT INTO parts_prices (model, part, price, note, minutes) VALUES (?, ?, ?, ?, ?)",
+            [(r.model, r.part.value, r.price, r.note, r.minutes) for r in rows],
         )
         return len(rows)
 
     def all(self) -> list[PartPrice]:
         rows = self.conn.execute("SELECT * FROM parts_prices ORDER BY model, part")
         return [
-            PartPrice(r["model"], Defect(r["part"]), float(r["price"]), r["note"], int(r["id"]))
+            PartPrice(r["model"], Defect(r["part"]), float(r["price"]), r["note"], int(r["id"]),
+                      None if r["minutes"] is None else int(r["minutes"]))
             for r in rows if r["part"] in Defect._value2member_map_
         ]
 
     def upsert(self, row: PartPrice) -> None:
         self.conn.execute(
-            """INSERT INTO parts_prices (model, part, price, note) VALUES (?, ?, ?, ?)
-               ON CONFLICT (model, part) DO UPDATE SET price = excluded.price, note = excluded.note""",
-            (row.model, row.part.value, row.price, row.note),
+            """INSERT INTO parts_prices (model, part, price, note, minutes) VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT (model, part) DO UPDATE SET price = excluded.price, note = excluded.note,
+                                                       minutes = excluded.minutes""",
+            (row.model, row.part.value, row.price, row.note, row.minutes),
         )
 
     def delete(self, model: str, part: Defect) -> None:

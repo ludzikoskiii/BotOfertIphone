@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 from ..core.catalog import model_names
 from ..core.models import Defect
 from ..core.parts import ANY_MODEL, PartPrice
+from ..core.work_time import DEFAULT_REPAIR_MINUTES
 from ..storage.repositories import PartsRepository
 
 ALL = "— wszystkie modele —"
@@ -63,21 +64,23 @@ class PartsEditor(QDialog):
     def __init__(self, repo: PartsRepository, parent=None):
         super().__init__(parent)
         self.repo = repo
-        self.setWindowTitle("Tabela cen części i usług")
-        self.resize(760, 620)
+        self.setWindowTitle("Tabela cen części i czasu napraw")
+        self.resize(860, 620)
         self._deleted: set[tuple[str, str]] = set()
 
         info = QLabel("Ceny części przy samodzielnej naprawie. Wiersz z modelem „*” to cena domyślna dla modeli "
                       "bez własnego wpisu. Usterki bez ceny (np. Face ID, zalanie) liczone są jako ryzyko "
-                      "z ustawień. Wartości startowe są orientacyjne — popraw je według swojego dostawcy.")
+                      "z ustawień. „Czas pracy” to Twój czas samej naprawy w minutach (puste = czas domyślny "
+                      "dla rodzaju naprawy) — liczy się do zysku na godzinę. Wartości startowe są orientacyjne — "
+                      "popraw je według swojego dostawcy i własnej wprawy.")
         info.setWordWrap(True)
 
         self.model_filter = QComboBox()
         self.model_filter.addItems([ALL, ANY_MODEL, *model_names()])
         self.model_filter.currentTextChanged.connect(self._apply_filter)
 
-        self.table = QTableWidget(0, 4)
-        self.table.setHorizontalHeaderLabels(["Model", "Część / usługa", "Cena zł", "Uwagi"])
+        self.table = QTableWidget(0, 5)
+        self.table.setHorizontalHeaderLabels(["Model", "Część / usługa", "Cena zł", "Czas pracy (min)", "Uwagi"])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table.verticalHeader().hide()
         self.table.setSortingEnabled(False)
@@ -122,7 +125,9 @@ class PartsEditor(QDialog):
         self.table.setItem(r, 0, model_item)
         self.table.setItem(r, 1, part_item)
         self.table.setItem(r, 2, QTableWidgetItem(f"{row.price:g}" if row else "0"))
-        self.table.setItem(r, 3, QTableWidgetItem(row.note if row else ""))
+        minutes = row.minutes if row else DEFAULT_REPAIR_MINUTES.get(part)
+        self.table.setItem(r, 3, QTableWidgetItem("" if minutes is None else str(minutes)))
+        self.table.setItem(r, 4, QTableWidgetItem(row.note if row else ""))
         return r
 
     def _add_new(self) -> None:
@@ -156,8 +161,15 @@ class PartsEditor(QDialog):
                 price = float(self.table.item(r, 2).text().replace(",", "."))
             except ValueError as e:
                 raise ValueError(f"Niepoprawna cena w wierszu {r + 1}: {self.table.item(r, 2).text()!r}") from e
-            note = self.table.item(r, 3).text() if self.table.item(r, 3) else ""
-            out.append((PartPrice(model, part, price, note), self.table.item(r, 0).data(ORIGINAL)))
+            text = (self.table.item(r, 3).text() if self.table.item(r, 3) else "").strip()
+            try:
+                minutes = int(float(text.replace(",", "."))) if text else None
+            except ValueError as e:
+                raise ValueError(f"Niepoprawny czas pracy w wierszu {r + 1}: {text!r} (podaj minuty)") from e
+            if minutes is not None and minutes < 0:
+                raise ValueError(f"Czas pracy w wierszu {r + 1} nie może być ujemny.")
+            note = self.table.item(r, 4).text() if self.table.item(r, 4) else ""
+            out.append((PartPrice(model, part, price, note, minutes=minutes), self.table.item(r, 0).data(ORIGINAL)))
         return out
 
     def _save(self) -> None:

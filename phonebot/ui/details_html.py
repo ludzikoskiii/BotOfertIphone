@@ -13,6 +13,8 @@ from ..core.models import Offer, OfferStatus, RedFlag, Severity, Valuation
 from ..core.sanity import SANITY_FLAGS
 from ..core.selection import pick_reason
 from ..core.settings import Settings
+from ..core.work_time import format_minutes
+from ..core.work_time import summary as time_summary
 from ..ml.combine import AGREE, CONFLICT, MISSING, UNSURE
 from ..ml.combine import combine as combine_layers
 from ..sources import SOURCE_NAMES
@@ -74,6 +76,38 @@ def _layers_html(offer: Offer, val: Valuation, settings: Settings, pal: Palette)
         rows.append(f'<tr><td width="34%">{escape(layer.name)}</td><td>{state(layer.state, layer.summary)}</td></tr>')
     rows.append(f'<tr class="total"><td>Łącznie</td><td>{state(combo.state, combo.note)}</td></tr>')
     return "<h3>Ocena warstw (reguły + lokalne AI)</h3><table class='calc'>" + "".join(rows) + "</table>"
+
+
+def _time_html(val: Valuation, settings: Settings, pal: Palette) -> str:
+    """Czas pracy: naprawa + obsługa, zysk na godzinę, koszt czasu wg stawki (osobno, nie w zysku)."""
+    if val.work_minutes is None:
+        return ""
+    cfg = settings.work
+    out = ["<h3>Czas pracy</h3>"]
+    if val.profit_per_hour is not None and val.expected_profit is not None:
+        low = cfg.min_profit_per_hour and val.profit_per_hour < cfg.min_profit_per_hour
+        color = pal.negative if val.profit_per_hour <= 0 else pal.warning if low else pal.positive
+        line = time_summary(val.expected_profit, val.work_minutes, val.profit_per_hour)
+        out.append(f'<p><b style="color:{color}">{escape(line)}</b>')
+        if cfg.min_profit_per_hour:
+            out.append(f' <span class="muted">(próg: {cfg.min_profit_per_hour:.0f} zł/h)</span>')
+        out.append("</p>")
+    out.append('<table class="calc">')
+    for item in val.time_items:
+        out.append(_row(escape(item.label), format_minutes(item.minutes)))
+    out.append(_row("Razem", f"<b>{format_minutes(val.work_minutes)}</b>", "total"))
+    if val.time_cost is not None and cfg.hourly_rate:
+        out.append(_row(f"Koszt Twojego czasu ({cfg.hourly_rate:.0f} zł/h)", zl(-val.time_cost)))
+        if val.expected_profit is not None:
+            rest = round(val.expected_profit - val.time_cost, 2)
+            color = pal.positive if rest > 0 else pal.negative
+            out.append(_row("Zysk po opłaceniu Twojego czasu",
+                            f'<span style="color:{color}">{zl(rest, True)}</span>'))
+    out.append("</table>")
+    out.append('<p class="muted">Koszt czasu nie jest odejmowany od przewidywanego zysku — pokazuje, ile z zysku '
+               "to zapłata za Twoją pracę. Czasy napraw zmienisz w „Tabeli części”, czas obsługi w "
+               "Ustawieniach → Czas pracy.</p>")
+    return "".join(out)
 
 
 def build_details_html(
@@ -160,10 +194,15 @@ def build_details_html(
         parts.append(_row("Przewidywany zysk", f'<span style="color:{color}">{zl(val.expected_profit, True)}{roi}</span>',
                           "total"))
         rule = settings.profit_rule(mode)
-        parts.append(_row(f"Wymagany zysk (min. {rule.min_amount:.0f} zł / {rule.min_percent:g}%)",
-                          zl(val.required_profit)))
+        if val.time_limited and val.work_minutes:
+            label = (f"Wymagany zysk (min. {settings.work.min_profit_per_hour:.0f} zł/h × "
+                     f"{format_minutes(val.work_minutes)})")
+        else:
+            label = f"Wymagany zysk (min. {rule.min_amount:.0f} zł / {rule.min_percent:g}%)"
+        parts.append(_row(label, zl(val.required_profit)))
         parts.append(_row("Maksymalna cena zakupu", f"<b>{zl(val.max_buy_price)}</b>"))
     parts.append("</table>")
+    parts.append(_time_html(val, settings, pal))
 
     # --- warstwy oceny: reguły + lokalne AI ---
     parts.append(_layers_html(offer, val, settings, pal))

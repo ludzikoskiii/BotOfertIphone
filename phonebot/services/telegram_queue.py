@@ -70,7 +70,8 @@ def format_offer(offer: Offer, val: Valuation, settings: Settings, *, kind: str 
              + (f" · {escape(format_storage(p.storage_gb))}" if p.storage_gb else "")
              + f" · cena <b>{zl(offer.price)}</b>",
              f"Szacowany zysk: <b>{zl(val.expected_profit) if val.expected_profit is not None else '—'}</b>"
-             f" · ocena {val.score}/100"]
+             + (f" · {val.profit_per_hour:.0f} zł/h" if val.profit_per_hour is not None else "")
+             + f" · ocena {val.score}/100"]
     place = offer.raw.city or "lokalizacja nieznana"
     if offer.distance_km is not None:
         place += f" ({offer.distance_km:.0f} km)"

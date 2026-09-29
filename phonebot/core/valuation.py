@@ -21,6 +21,7 @@ from .models import (
     Negotiation,
     Offer,
     RedFlag,
+    TimeItem,
     Valuation,
     Verdict,
 )
@@ -28,6 +29,9 @@ from .negotiation import color_for, compute_score, floor10, negotiation_margin, 
 from .parts import PartsCatalog
 from .sanity import verdict_cap
 from .settings import ProfitRule, Settings
+from .work_time import estimate as estimate_time
+from .work_time import per_hour
+from .work_time import summary as time_summary
 
 
 def target_market_class(offer: Offer, mode: Mode) -> str:
@@ -174,6 +178,8 @@ def evaluate(offer: Offer, market: MarketEstimate, parts: PartsCatalog, settings
     buy_total = sum(i.amount for i in buy_items)
     rule = settings.profit_rule(mode)
 
+    time_items, minutes, time_cost = work_time(offer, parts, settings, mode)
+
     mode_mismatch = mode is Mode.RESELL and any(not d.cosmetic for d in offer.parsed.defects) or (
         mode is Mode.RESELL and offer.parsed.condition is Condition.FOR_PARTS
     )
@@ -190,6 +196,7 @@ def evaluate(offer: Offer, market: MarketEstimate, parts: PartsCatalog, settings
             verdict=Verdict.SKIP, negotiation=Negotiation(False, None, None, "Brak danych do negocjacji."),
             score=score, color=color_for(score, settings), flags=flags, reasons=reasons,
             parts_in_stock=parts_in_stock(offer, parts),
+            time_items=time_items, work_minutes=minutes, time_cost=time_cost,
         )
 
     value = market.value
@@ -212,7 +219,16 @@ def evaluate(offer: Offer, market: MarketEstimate, parts: PartsCatalog, settings
     price_dependent_fee = fee_item.amount - fee_fixed if fee_item else 0.0
     fixed_costs = total_costs - price_dependent_fee
     max_outlay = max_buy_price(value - fixed_costs, repair_total + acquisition.amount + fee_fixed, rule)
+    rule_max_buy = floor10(max_outlay / (1 + fee_rate))
+    # minimalny zysk na godzinę: zysk ≥ próg × czas  →  wydatek na zakup ≤ V − koszty − próg × czas
+    min_rate = settings.work.min_profit_per_hour if minutes else 0.0
+    time_required = round(min_rate * minutes / 60, 2) if min_rate else 0.0
+    if time_required:
+        max_outlay = min(max_outlay, max(0.0, value - fixed_costs - time_required))
     max_buy = floor10(max_outlay / (1 + fee_rate))
+    time_limited = time_required > required
+    required = max(required, time_required)
+    rate = per_hour(profit, minutes)
 
     damaged = offer.parsed.condition.market_class == "damaged"
     sanity = settings.sanity
@@ -231,6 +247,11 @@ def evaluate(offer: Offer, market: MarketEstimate, parts: PartsCatalog, settings
         flags.append(RedFlag.STORAGE_UNKNOWN)
 
     verdict, negotiation = recommend(price, max_buy, offer.parsed.negotiable, settings)
+    time_lowered: tuple[Verdict, Verdict] | None = None  # (bez progu, z progiem)
+    if max_buy < rule_max_buy:  # bez progu zysku na godzinę werdykt byłby lepszy?
+        without_time, _ = recommend(price, rule_max_buy, offer.parsed.negotiable, settings)
+        if without_time.rank > verdict.rank:
+            time_lowered = (without_time, verdict)
     if mode_mismatch:
         verdict = Verdict.SKIP
         negotiation = Negotiation(False, None, None, "Tryb szybkiego resellu: telefon wymaga naprawy.")
@@ -250,6 +271,13 @@ def evaluate(offer: Offer, market: MarketEstimate, parts: PartsCatalog, settings
     if capped_from is not None:
         why = ", ".join(f.label for f in limiting)
         reasons.insert(1, f"Werdykt obniżony z {capped_from.value} na {verdict.value}: {why}.")
+    if rate is not None:
+        line = time_summary(profit, minutes, rate)
+        if min_rate and rate < min_rate:
+            line += f" To poniżej progu {min_rate:.0f} zł/h"
+            line += (f" — werdykt obniżony z {time_lowered[0].value} na {time_lowered[1].value}."
+                     if time_lowered is not None else ".")
+        reasons.insert(0 if mode_mismatch else 1 + (capped_from is not None), line)
     if repair_items:
         reasons.append(f"Naprawa: {', '.join(d.label for d in offer.parsed.defects) or 'nieokreślona'} "
                        f"— koszt ok. {repair_total:.0f} zł.")
@@ -275,7 +303,20 @@ def evaluate(offer: Offer, market: MarketEstimate, parts: PartsCatalog, settings
         cost_items=cost_items, total_costs=total_costs, expected_profit=profit, roi_pct=roi,
         required_profit=required, max_buy_price=max_buy, verdict=verdict, negotiation=negotiation,
         score=score, color=color_for(score, settings), flags=flags, reasons=reasons, parts_in_stock=in_stock,
+        time_items=time_items, work_minutes=minutes, profit_per_hour=rate, time_cost=time_cost,
+        time_limited=time_limited,
     )
+
+
+def work_time(offer: Offer, parts: PartsCatalog, settings: Settings,
+              mode: Mode) -> tuple[list[TimeItem], int | None, float | None]:
+    """Czas pracy (naprawa + obsługa), łączne minuty i koszt czasu wg stawki godzinowej."""
+    cfg = settings.work
+    if not cfg.enabled:
+        return [], None, None
+    items = estimate_time(offer, parts, cfg, mode, getattr(parts, "time_adjust", None))
+    minutes = sum(i.minutes for i in items)
+    return items, minutes, round(minutes / 60 * cfg.hourly_rate, 2)
 
 
 def parts_in_stock(offer: Offer, parts: PartsCatalog) -> list:

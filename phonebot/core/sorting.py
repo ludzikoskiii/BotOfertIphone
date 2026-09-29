@@ -87,6 +87,8 @@ FIELDS: dict[str, SortField] = {f.key: f for f in (
     SortField("photos", "Liczba zdjęć", DESC, "najmniej", "najwięcej", lambda o, v: len(o.raw.photos)),
     SortField("risk", "Ryzyko oszustwa", DESC, "najmniejsze", "największe",
               lambda o, v: getattr(v.risk, "score", None)),
+    SortField("work_time", "Czas pracy", ASC, "najkrótszy", "najdłuższy", lambda o, v: v.work_minutes),
+    SortField("per_hour", "Zysk na godzinę", DESC, "najmniejszy", "największy", lambda o, v: v.profit_per_hour),
 )}
 
 
@@ -113,6 +115,7 @@ DEFAULT_SORT: tuple[SortLevel, ...] = (SortLevel("verdict", DESC), SortLevel("pr
 PRESETS: dict[str, tuple[SortLevel, ...]] = {
     "Najlepsze okazje: werdykt, potem zysk": DEFAULT_SORT,
     "Największy zysk": (SortLevel("profit", DESC),),
+    "Najlepszy zysk na godzinę": (SortLevel("per_hour", DESC), SortLevel("profit", DESC)),
     "Najwyższa ocena": (SortLevel("score", DESC), SortLevel("profit", DESC)),
     "Najtańsze": (SortLevel("price", ASC),),
     "Model i pamięć (generacje)": (SortLevel("model", ASC), SortLevel("price", ASC)),

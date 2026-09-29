@@ -85,6 +85,7 @@ from .style import MARGIN, apply_theme, system_prefers_dark
 from .table_model import (
     ALWAYS_VISIBLE,
     COL_FIELD,
+    DEFAULT_ORDER,
     DEFAULT_WIDTHS,
     FIELD_COL,
     FRAUD_LABEL,
@@ -355,6 +356,8 @@ class MainWindow(QMainWindow):
             default = max(DEFAULT_WIDTHS[col], self._min_widths[col])
             width = self.settings.column_widths.get(col_key(col), default)
             view.setColumnWidth(col, max(width, self._min_widths[col]) if col is Col.VERDICT else width)
+        for i, col in enumerate(DEFAULT_ORDER):
+            header.moveSection(header.visualIndex(col), i)
         hidden = {c for c in map(col_from_key, self.settings.hidden_columns) if c is not None} - ALWAYS_VISIBLE
         for col in Col:
             view.setColumnHidden(col, col in hidden)
@@ -522,8 +525,9 @@ class MainWindow(QMainWindow):
         from ..core.settings import DEFAULT_HIDDEN_COLUMNS
 
         header = self.table.horizontalHeader()
+        for i, col in enumerate(DEFAULT_ORDER):
+            header.moveSection(header.visualIndex(col), i)
         for col in Col:
-            header.moveSection(header.visualIndex(col), col)
             self.table.setColumnWidth(col, max(DEFAULT_WIDTHS[col], self._min_widths[col]))
             self.table.setColumnHidden(col, col_key(col) in DEFAULT_HIDDEN_COLUMNS)
         self.settings.hidden_columns = list(DEFAULT_HIDDEN_COLUMNS)
@@ -765,6 +769,7 @@ class MainWindow(QMainWindow):
 
     def _configure_timer(self) -> None:
         self.model.new_minutes = self.settings.refresh.new_badge_minutes
+        self.model.min_per_hour = self.settings.work.min_profit_per_hour if self.settings.work.enabled else 0.0
         if self.settings.refresh.enabled:  # szybkie odświeżanie zastępuje pełne pobieranie co N minut
             self.refresh_timer.stop()
             self._next_refresh = None

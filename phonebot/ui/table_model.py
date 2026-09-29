@@ -14,6 +14,7 @@ from ..core.catalog import format_storage
 from ..core.models import Offer, OfferStatus, Severity, Valuation, Verdict
 from ..core.refresh import is_new
 from ..core.sorting import DEFAULT_SORT, SortLevel, level, normalize, sort_rows
+from ..core.work_time import format_minutes
 from ..sources import SOURCE_NAMES
 from .images import ThumbnailCache
 from .theme import FLAG_MARK, OUTDATED_MARK, WATCHED_MARK, Palette, current
@@ -46,6 +47,8 @@ class Col(IntEnum):
     ADDED = 14
     LINK = 15
     RISK = 16
+    WORK_TIME = 17
+    PER_HOUR = 18
 
 
 HEADERS = {
@@ -66,8 +69,14 @@ HEADERS = {
     Col.ADDED: "Dodano",
     Col.LINK: "Link",
     Col.RISK: "Ryzyko",
+    Col.WORK_TIME: "Czas pracy",
+    Col.PER_HOUR: "Zysk na godzinę",
 }
-NUMERIC = {Col.PRICE, Col.MARKET, Col.PROFIT, Col.MAX_BUY, Col.BATTERY, Col.SCORE}
+# kolejność kolumn na ekranie (czas pracy i zysk na godzinę zaraz po zysku)
+DEFAULT_ORDER = (Col.PHOTO, Col.MODEL, Col.STORAGE, Col.PRICE, Col.PROFIT, Col.WORK_TIME, Col.PER_HOUR,
+                 Col.MAX_BUY, Col.VERDICT, Col.SOURCE, Col.CONDITION, Col.BATTERY, Col.MARKET, Col.SCORE,
+                 Col.FLAGS, Col.LOCATION, Col.ADDED, Col.LINK, Col.RISK)
+NUMERIC = {Col.PRICE, Col.MARKET, Col.PROFIT, Col.MAX_BUY, Col.BATTERY, Col.SCORE, Col.WORK_TIME, Col.PER_HOUR}
 _COLS = tuple(Col)
 _NCOLS = len(_COLS)
 _COL_ALIGN = {c: _RIGHT if c in NUMERIC else _CENTER if c in (Col.VERDICT, Col.PHOTO) else _LEFT for c in Col}
@@ -78,14 +87,15 @@ ALWAYS_VISIBLE = {Col.MODEL}
 COL_FIELD = {Col.PHOTO: "photos", Col.MODEL: "model", Col.STORAGE: "storage", Col.PRICE: "price",
              Col.PROFIT: "profit", Col.MAX_BUY: "max_buy", Col.VERDICT: "verdict", Col.SOURCE: "source",
              Col.CONDITION: "condition", Col.BATTERY: "battery", Col.MARKET: "market", Col.SCORE: "score",
-             Col.FLAGS: "flags", Col.LOCATION: "distance", Col.ADDED: "added", Col.RISK: "risk"}
+             Col.FLAGS: "flags", Col.LOCATION: "distance", Col.ADDED: "added", Col.RISK: "risk",
+             Col.WORK_TIME: "work_time", Col.PER_HOUR: "per_hour"}
 FIELD_COL = {f: c for c, f in COL_FIELD.items()}
 FRAUD_LABEL = "MOŻLIWE OSZUSTWO"  # werdykt przy wysokim ryzyku oszustwa (czerwona etykieta)
 _SUPERSCRIPT = {2: "²", 3: "³"}
 DEFAULT_WIDTHS = {Col.PHOTO: 84, Col.MODEL: 150, Col.STORAGE: 80, Col.PRICE: 95, Col.PROFIT: 110,
                   Col.MAX_BUY: 140, Col.VERDICT: 115, Col.SOURCE: 130, Col.CONDITION: 125, Col.BATTERY: 85,
                   Col.MARKET: 140, Col.SCORE: 75, Col.FLAGS: 220, Col.LOCATION: 170, Col.ADDED: 110, Col.LINK: 80,
-                  Col.RISK: 110}
+                  Col.RISK: 110, Col.WORK_TIME: 105, Col.PER_HOUR: 135}
 
 
 def col_key(col: Col) -> str:
@@ -124,6 +134,7 @@ class OffersTableModel(QAbstractTableModel):
         self._row_by_id: dict[int, int] = {}
         self._spec: tuple[SortLevel, ...] = DEFAULT_SORT
         self.new_minutes = 30  # znacznik „NOWE” (Ustawienia → odświeżanie)
+        self.min_per_hour = 0.0  # próg zysku na godzinę (Ustawienia → Czas pracy) — poniżej: kolor ostrzeżenia
         self._loaded_at = datetime.now(UTC)
         thumbs.ready.connect(self._thumb_ready)
         self._bold = QFont()
@@ -255,7 +266,7 @@ class OffersTableModel(QAbstractTableModel):
         if role == Qt.ItemDataRole.ForegroundRole:
             return self._foreground(col, offer, val)
         if role == Qt.ItemDataRole.FontRole:
-            if col is Col.PROFIT or (col is Col.MODEL and offer.status is OfferStatus.WATCHED) \
+            if col in (Col.PROFIT, Col.PER_HOUR) or (col is Col.MODEL and offer.status is OfferStatus.WATCHED) \
                     or (col is Col.ADDED and self._is_new(offer)):
                 return self._bold
             return None
@@ -277,6 +288,15 @@ class OffersTableModel(QAbstractTableModel):
             if val.expected_profit is None:
                 return self._muted
             return self._positive if val.expected_profit > 0 else self._negative
+        if col is Col.PER_HOUR:
+            rate = val.profit_per_hour
+            if rate is None:
+                return self._muted
+            if rate <= 0:
+                return self._negative
+            return self._warning if self.min_per_hour and rate < self.min_per_hour else self._positive
+        if col is Col.WORK_TIME:
+            return self._muted if val.work_minutes is None else None
         if col in (Col.MODEL, Col.FLAGS) and val.has_hard_flag:
             return self._negative
         if col is Col.ADDED and self._is_new(offer):
@@ -308,6 +328,12 @@ class OffersTableModel(QAbstractTableModel):
             if risk is None or not risk.signals:
                 return "Brak sygnałów oszustwa"
             return f"Ryzyko oszustwa: {risk.label} ({risk.score} pkt)\n" + "\n".join(f"• {r}" for r in risk.reasons())
+        if col in (Col.WORK_TIME, Col.PER_HOUR) and val.time_items:
+            lines = [f"{i.label}: {format_minutes(i.minutes)}" for i in val.time_items]
+            head = f"Czas pracy: {format_minutes(val.work_minutes)}"
+            if val.profit_per_hour is not None:
+                head += f" · zysk na godzinę: {val.profit_per_hour:.0f} zł/h"
+            return head + "\n" + "\n".join(f"• {line}" for line in lines)
         if col is Col.SOURCE and offer.also_on:
             return "Ta sama oferta także na:\n" + "\n".join(
                 f"{SOURCE_NAMES.get(src, src)} — {money(price)}" for src, _, price in offer.also_on)
@@ -360,6 +386,10 @@ class OffersTableModel(QAbstractTableModel):
                 return f"{NEW_MARK} · {text}" if self._is_new(offer) else text
             case Col.LINK:
                 return "Otwórz ↗"
+            case Col.WORK_TIME:
+                return format_minutes(val.work_minutes)
+            case Col.PER_HOUR:
+                return "—" if val.profit_per_hour is None else f"{val.profit_per_hour:,.0f} zł/h".replace(",", " ")
             case Col.RISK:
                 risk = val.risk
                 if risk is None:

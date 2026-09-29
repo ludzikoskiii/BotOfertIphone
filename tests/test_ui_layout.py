@@ -19,7 +19,8 @@ from phonebot.ui.table_model import Col  # noqa: E402
 
 from .sample_data import build_sample_db  # noqa: E402
 
-DEFAULT_VISIBLE = [Col.MODEL, Col.STORAGE, Col.PRICE, Col.PROFIT, Col.MAX_BUY, Col.VERDICT, Col.SOURCE, Col.RISK]
+DEFAULT_VISIBLE = [Col.MODEL, Col.STORAGE, Col.PRICE, Col.PROFIT, Col.MAX_BUY, Col.VERDICT, Col.SOURCE, Col.RISK,
+                   Col.WORK_TIME, Col.PER_HOUR]
 
 
 @pytest.fixture(scope="module")

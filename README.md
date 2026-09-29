@@ -3,7 +3,7 @@
 Aplikacja desktopowa (Windows) do wyszukiwania ofert używanych iPhone'ów na
 Allegro Lokalnie, Vinted i Sprzedajemy.pl, wyceny ich opłacalności i podpowiadania, czy i za ile kupić.
 
-> **Status: wersja 1.16.0.** Trzy portale, wycena, werdykty i negocjacje, filtry, zabezpieczenia werdyktu,
+> **Status: wersja 1.17.0.** Trzy portale, wycena, werdykty i negocjacje, filtry, zabezpieczenia werdyktu,
 > **darmowe lokalne AI** (klasyfikator tytułów, analiza zdjęć, opcjonalnie model językowy w Ollamie),
 > szablony wiadomości do sprzedającego, automatyczne odświeżanie, powiadomienia Windows i Telegram
 > oraz gotowy plik `PhoneBot.exe`. Program nie korzysta z żadnych płatnych usług.
@@ -617,6 +617,31 @@ edytujesz dwuklikiem.
 - **Niski stan:** gdy część zużywasz często (domyślnie 2× w 60 dni), a zostało jej 1 szt. lub mniej,
   nad tabelą pojawia się ostrzeżenie.
 
+### Czas pracy i zysk na godzinę
+
+Każda oferta ma policzony **czas pracy** i **zysk na godzinę** — nowe kolumny „Czas pracy” i „Zysk na godzinę”
+w tabeli (sortowanie kliknięciem nagłówka albo gotowy zestaw „Najlepszy zysk na godzinę”).
+
+![Czas pracy w szczegółach oferty](docs/screenshots/czas_pracy.png)
+
+- **Czas naprawy:** każda pozycja „Tabeli cen części” ma kolumnę **„Czas pracy (min)”** (np. ekran 45 min,
+  bateria 30 min, port 60 min, tylna szyba 90 min). Puste pole = czas domyślny dla rodzaju naprawy. Usterka
+  o nieznanym zakresie (Face ID, zalanie, „nie włącza się”, „na części”) liczy się jako czas ryzyka
+  (domyślnie 90 min).
+- **Stały czas obsługi** przy każdym telefonie (**Ustawienia → Zakup i naprawa → Czas pracy**): odbiór paczki
+  (10 min) albo dojazd po odbiór — liczony z odległości (tam i z powrotem, 50 km/h) plus spotkanie (15 min),
+  sprawdzenie telefonu (20 min), wystawienie ogłoszenia (20 min), sprzedaż: rozmowy, pakowanie, nadanie (30 min).
+- **Zysk na godzinę** = przewidywany zysk ÷ czas. W wyliczeniu widać to zdaniem, np.
+  **„Zysk 150 zł, czas 3 h, czyli 50 zł/h”**, a pod nim rozbicie czasu na pozycje.
+- **Stawka godzinowa** (domyślnie 50 zł/h): koszt Twojego czasu pokazywany **osobno** („Koszt Twojego czasu”
+  i „Zysk po opłaceniu Twojego czasu”) — nie jest odejmowany od przewidywanego zysku.
+- **Minimalny zysk na godzinę** (domyślnie 40 zł/h, 0 = bez progu): oferty poniżej progu dostają niższy
+  werdykt. Maksymalna cena zakupu jest liczona tak, żeby zysk na godzinę sięgnął progu, więc KUPUJ może spaść
+  na NEGOCJUJ (z ceną, przy której się opłaca) albo na ODPUŚĆ. W uzasadnieniu pojawia się np. „To poniżej progu
+  60 zł/h — werdykt obniżony z KUPUJ na NEGOCJUJ.”
+- Zysk na godzinę jest też w powiadomieniach Telegram i w szczegółach oferty na telefonie.
+- Korekta czasów napraw z faktycznych czasów z Twoich transakcji przyjdzie razem z zakładką „Transakcje”.
+
 ### Listy „Wszystkie oferty” i „Wybrane”
 
 Nad tabelą są dwie zakładki z licznikami, np. **„Wszystkie oferty (16)” · „Wybrane (4)”**. Liczniki
@@ -752,6 +777,8 @@ Każde ogłoszenie przechodzi przez następujące kroki:
 5. **Maksymalna cena zakupu** to najwyższa cena, przy której zysk jest nie
    mniejszy niż wymagany: kwota (np. 150 zł) i/lub procent od zainwestowanej
    kwoty (np. 20%). Tryb łączenia tych progów ustawisz w opcjach.
+   Dochodzi do tego próg **minimalnego zysku na godzinę** (`core/work_time.py`): zysk musi też
+   wynosić co najmniej próg × czas pracy (naprawa z tabeli części + stały czas obsługi).
 6. **Werdykt i negocjacje** (`core/negotiation.py`):
    - **KUPUJ**: cena ≤ max. Dostajesz sugestię delikatnej propozycji niższej ceny.
    - **NEGOCJUJ**: cena do 15% powyżej max (do 25%, gdy w ogłoszeniu jest
@@ -770,7 +797,7 @@ Ceny części (`core/parts.py`) i prowizje portali (`core/settings.py`) to
 **wartości orientacyjne**. Po uruchomieniu GUI można je edytować w aplikacji.
 Sprawdź zwłaszcza:
 
-- ceny części u swojego dostawcy,
+- ceny części u swojego dostawcy i czasy napraw według własnej wprawy,
 - aktualny cennik OLX, jeśli tam sprzedajesz (opłaty za ogłoszenia w kategorii Telefony),
 - prowizję Allegro dla smartfonów (domyślnie 8% + 1 zł).
 
@@ -785,7 +812,9 @@ phonebot/
     normalizer.py    model / pojemność / stan / usterki / bateria / negocjacje
     red_flags.py     czerwone flagi
     market.py        wartość rynkowa (mediana, IQR, fallbacki)
-    parts.py         domyślna tabela cen części
+    parts.py         domyślna tabela cen części (z czasem pracy przy naprawie)
+    inventory.py     magazyn części: partie, zgodność modeli, FIFO, niski stan
+    work_time.py     czas pracy (naprawa + obsługa), zysk na godzinę i próg
     valuation.py     koszty, zysk, max cena zakupu
     negotiation.py   werdykt, negocjacje, ocena i kolor
     settings.py      wszystkie ustawienia (JSON w bazie)
@@ -810,7 +839,7 @@ phonebot/
                  extract.py (odporne wyciąganie ofert z JSON osadzonego w stronach)
   ui/            GUI PySide6: main_window.py, table_model.py, offer_details.py (+ details_html.py),
                  images.py (miniatury), workers.py (wątek), theme.py (kolory), filters_panel.py,
-                 settings_dialog.py, parts_editor.py, location_dialog.py
+                 settings_dialog.py, parts_editor.py, location_dialog.py, inventory_tab.py (magazyn)
 tests/           testy jednostkowe (+ fixtures z przykładowymi odpowiedziami portali)
 tools/           screenshot.py — zrzut okna na danych testowych
 scripts/         clip_prepare.py (wektory opisów klas CLIP), clip_check_app.py (test analizy zdjęć na
