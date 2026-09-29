@@ -940,6 +940,24 @@ class TransactionRepository:
             self.conn.execute(f"UPDATE transactions SET {sets} WHERE id = ?", (*values, tx.id))
         return tx.id
 
+    def save_with_parts(self, tx, wanted: list[tuple[Defect, int]], cfg) -> list[Defect]:
+        """Zapis transakcji razem z częściami z magazynu (atomowo). Zwraca części, których zabrakło — wtedy nic
+        nie jest zapisywane (nowa transakcja nie powstaje)."""
+        new = tx.id is None
+        self.conn.execute("BEGIN")
+        try:
+            self.save(tx)
+            missing = self.set_parts(tx.id, tx.model, wanted, cfg, when=tx.bought_at)
+            self.conn.execute("ROLLBACK" if missing else "COMMIT")
+        except Exception:
+            self.conn.execute("ROLLBACK")
+            missing = None
+            raise
+        finally:
+            if new and missing != []:
+                tx.id = None
+        return missing
+
     def get(self, tx_id: int):
         r = self.conn.execute("SELECT * FROM transactions WHERE id = ?", (tx_id,)).fetchone()
         return self._tx(r) if r else None

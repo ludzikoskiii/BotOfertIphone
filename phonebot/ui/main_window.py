@@ -1376,6 +1376,8 @@ class MainWindow(QMainWindow):
         if self.web is not None and self.web.app.changes != self._web_changes:
             self._web_changes = self.web.app.changes
             self.reload()
+            self.inventory_tab.refresh()  # „Kupiłem” z telefonu: zużyte części i nowa transakcja
+            self.transactions_tab.refresh()
 
     def hash_photos(self) -> bool:
         """Skróty zdjęć (duplikaty między ogłoszeniami, zdjęcia katalogowe) w wątku roboczym."""

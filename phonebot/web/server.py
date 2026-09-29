@@ -22,6 +22,7 @@ import socket
 import sqlite3
 import threading
 import time
+from datetime import UTC, datetime, timedelta
 from http import cookies
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlencode, urlparse
@@ -140,6 +141,102 @@ class WebApp:
         finally:
             conn.close()
 
+    # --- magazyn, rynek, transakcje (nowe połączenie na zapytanie — serwer jest wielowątkowy) ---
+
+    def purchase_info(self, offer: Offer) -> tuple[object | None, list[tuple[str, float]]]:
+        """Transakcja kupionej oferty albo części, które „Kupiłem” zdejmie z magazynu: [(nazwa, cena)]."""
+        from ..storage.repositories import InventoryRepository, TransactionRepository
+
+        conn = self.connect()
+        try:
+            tx = TransactionRepository(conn).for_offer(offer.id) if offer.id is not None else None
+            if tx is not None or not self.settings.inventory.enabled:
+                return tx, []
+            stock = InventoryRepository(conn).stock(self.settings.inventory)
+            out = []
+            for d in dict.fromkeys(offer.parsed.defects):
+                lot = stock.oldest(offer.parsed.model, d)
+                if lot is not None:
+                    out.append((d.label, lot.unit_price))
+            return None, out
+        finally:
+            conn.close()
+
+    def record_purchase(self, offer: Offer, val: Valuation, price: float, take_parts: bool) -> str:
+        """„Kupiłem” z telefonu: transakcja z wyceną z tej chwili (+ części z magazynu). Zwraca komunikat."""
+        from ..core.transactions import from_offer
+        from ..storage.repositories import InventoryRepository, TransactionRepository
+
+        conn = self.connect()
+        try:
+            repo = TransactionRepository(conn)
+            if offer.id is not None and repo.for_offer(offer.id) is not None:
+                return "Ta oferta jest już zapisana jako kupiona."
+            tx = from_offer(offer, val, self.settings.learning, datetime.now(UTC))
+            tx.buy_price = price
+            wanted = []
+            if take_parts and self.settings.inventory.enabled:
+                stock = InventoryRepository(conn).stock(self.settings.inventory)
+                wanted = [(d, 1) for d in tx.defects if stock.oldest(tx.model, d) is not None]
+            missing = repo.save_with_parts(tx, wanted, self.settings.inventory)
+            if missing:
+                return "Brakuje na stanie: " + ", ".join(d.label for d in missing) + " — nic nie zapisano."
+            used = f" Z magazynu: {', '.join(d.label for d, _ in wanted)}." if wanted else ""
+            return f"Zapisano zakup: {tx.model or offer.raw.title} za {price:,.0f} zł.".replace(",", " ") + used
+        finally:
+            conn.close()
+
+    def inventory(self):
+        from ..core.inventory import low_stock
+        from ..storage.repositories import InventoryRepository
+
+        conn = self.connect()
+        try:
+            repo = InventoryRepository(conn)
+            lots = repo.lots()
+            cfg = self.settings.inventory
+            warnings = [w.message(cfg.frequent_days) for w in low_stock(lots, repo.usage(), cfg, datetime.now(UTC))]
+            return lots, warnings, repo.value()
+        finally:
+            conn.close()
+
+    def market(self, params: dict[str, str]) -> str:
+        from ..core.market_stats import ALL_STORAGE, CLASSES, TOO_LITTLE, usable_points
+        from ..services.market_stats import MarketStatsRepository
+
+        conn = self.connect()
+        try:
+            repo = MarketStatsRepository(conn)
+            models = repo.models()
+            model = params.get("model") if params.get("model") in models else (models[0] if models else "")
+            cls = params.get("stan") if params.get("stan") in CLASSES else "used"
+            try:
+                days = int(params.get("dni") or 30)
+            except ValueError:
+                days = 30
+            days = days if days in (7, 30, 90) else 30
+            cfg = self.settings.market_stats
+            first = datetime.now().astimezone().date() - timedelta(days=days - 1)
+            rows = repo.daily(model, ALL_STORAGE, cls, first) if model else []
+            points = usable_points(rows, cfg)
+            if len(points) < min(cfg.min_points, max(2, days // 2)):
+                points = []
+            found = repo.trend_for(model, None, cls) if model else None
+            trend_text = f"{found[0].arrow} {found[0].label}".strip() if found else TOO_LITTLE
+            at = repo.active_time(model) if model else None
+            active_text = f"~{at.median_days:.0f} dni" if at and at.median_days is not None else TOO_LITTLE
+            best = repo.best_times(model) if model else None
+            if best is None or not best.enough:
+                best = repo.best_times(None)
+            when = repo.computed_at()
+            computed = (f"Policzone {when.astimezone():%d.%m %H:%M}" if when else "Statystyki jeszcze niepoliczone")
+            return pages.market_page(models=models, model=model, cls=cls, days=days, points=points,
+                                     trend_text=trend_text, active_text=active_text,
+                                     new_count=sum(r.new_count for r in rows),
+                                     best_lines=best.describe() if best else [], computed=computed)
+        finally:
+            conn.close()
+
     def icon(self, size: int) -> bytes:
         if size not in self._icons:
             self._icons[size] = _draw_icon(size)
@@ -234,6 +331,8 @@ def make_handler(app: WebApp):
                 return self._send(200, app.icon(192 if "192" in path else 512), "image/png", cache=True)
             if path == "/health":
                 return self._send(200, "ok", "text/plain; charset=utf-8")
+            if path == "/offline":  # zapisywana w pamięci telefonu (PWA) — bez danych, bez logowania
+                return self._send(200, pages.offline_page())
             if path == "/login":
                 nxt = parse_qs(url.query).get("next", ["/"])[0]
                 return self._send(200, pages.login_page(locked_for=app.throttle.locked_for(), next_url=nxt))
@@ -243,13 +342,19 @@ def make_handler(app: WebApp):
             params = {k: v[0] for k, v in parse_qs(url.query).items()}
             if path == "/":
                 return self._send(200, self._list(params, session))
+            if path == "/magazyn":
+                return self._send(200, pages.inventory_page(*app.inventory()))
+            if path == "/rynek":
+                return self._send(200, app.market(params))
             m = _OFFER_PATH.match(path)
             if m and not m.group(2):
                 found = app.offer(int(m.group(1)))
                 if found is None:
                     return self._send(404, pages.message_page("Tej oferty już nie ma w bazie."))
+                tx, stock_parts = app.purchase_info(found[0])
                 return self._send(200, pages.details_page(*found, app.settings, csrf=csrf_token(session),
-                                                          style=params.get("styl"), key=params.get("szablon")))
+                                                          style=params.get("styl"), key=params.get("szablon"),
+                                                          transaction=tx, stock_parts=stock_parts))
             return self._send(404, pages.message_page("Nie ma takiej strony."))
 
         def _list(self, params: dict[str, str], session: str) -> str:
@@ -330,8 +435,19 @@ def make_handler(app: WebApp):
             found = app.offer(offer_id)
             if found is None:
                 return self._send(404, pages.message_page("Tej oferty już nie ma w bazie."))
-            offer, _ = found
+            offer, val = found
             action = form.get("a", "")
+            if action == "bought":
+                try:
+                    price = float((form.get("price") or str(offer.price)).replace(",", ".").replace(" ", ""))
+                except ValueError:
+                    return self._send(400, pages.message_page("Niepoprawna cena.", back=f"/oferta/{offer_id}"))
+                if not 0 < price < 100_000:
+                    return self._send(400, pages.message_page("Niepoprawna cena.", back=f"/oferta/{offer_id}"))
+                text = app.record_purchase(offer, val, price, form.get("parts") == "1")
+                app.invalidate()
+                app.changes += 1  # okno programu odświeży tabelę, magazyn i transakcje
+                return self._send(200, pages.message_page(text, back=f"/oferta/{offer_id}"))
             conn = app.connect()
             try:
                 if action in ("watch", "unwatch", "hide", "unhide"):
@@ -363,9 +479,14 @@ _MANIFEST = {
     "icons": [{"src": "/icon-192.png", "sizes": "192x192", "type": "image/png"},
               {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"}],
 }
-# bez zapisywania stron w pamięci telefonu (zawsze aktualne dane); obsługa „fetch” jest potrzebna do instalacji
-_SERVICE_WORKER = "self.addEventListener('install',e=>self.skipWaiting());" \
-                  "self.addEventListener('fetch',e=>{});"
+# dane zawsze z komputera (strony nie są zapisywane w pamięci telefonu); w pamięci tylko strona „brak połączenia”,
+# pokazywana, gdy komputer albo Tailscale są niedostępne. Obsługa „fetch” jest też potrzebna do instalacji (PWA).
+_SERVICE_WORKER = """const C='phonebot-offline-v1';
+self.addEventListener('install',e=>{e.waitUntil(caches.open(C).then(c=>c.add('/offline')));self.skipWaiting()});
+self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(k=>Promise.all(k.filter(n=>n!==C)
+.map(n=>caches.delete(n)))));self.clients.claim()});
+self.addEventListener('fetch',e=>{if(e.request.mode==='navigate'){e.respondWith(fetch(e.request)
+.catch(()=>caches.match('/offline')))}});"""
 
 
 # --------------------------------------------------------------- serwer ---

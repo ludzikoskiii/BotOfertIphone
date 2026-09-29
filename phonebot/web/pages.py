@@ -20,10 +20,10 @@ VERDICT_CLASS = {Verdict.BUY: "buy", Verdict.NEGOTIATE: "neg", Verdict.VERIFY: "
 CSS = """
 :root{--bg:#f4f5f7;--card:#fff;--text:#1d1f23;--muted:#6b7280;--line:#e3e5e8;--accent:#1c7ed6;
 --buy:#2b8a3e;--buy-bg:#d3f9d8;--neg:#a15c00;--neg-bg:#fff3bf;--ver:#495057;--ver-bg:#e9ecef;
---skip:#c92a2a;--skip-bg:#ffe3e3;--pos:#2b8a3e;--negv:#c92a2a}
+--skip:#c92a2a;--skip-bg:#ffe3e3;--pos:#2b8a3e;--negv:#c92a2a;--series:#2a78d6}
 @media (prefers-color-scheme:dark){:root{--bg:#141517;--card:#1f2124;--text:#e9ecef;--muted:#9aa0a6;
 --line:#2e3136;--accent:#4dabf7;--buy:#8ce99a;--buy-bg:#1f3a26;--neg:#ffd43b;--neg-bg:#3d3312;--ver:#ced4da;
---ver-bg:#2e3136;--skip:#ff8787;--skip-bg:#3d1f1f;--pos:#8ce99a;--negv:#ff8787}}
+--ver-bg:#2e3136;--skip:#ff8787;--skip-bg:#3d1f1f;--pos:#8ce99a;--negv:#ff8787;--series:#3987e5}}
 *{box-sizing:border-box}body{margin:0;font:16px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
 background:var(--bg);color:var(--text);-webkit-text-size-adjust:100%}
 a{color:var(--accent)}header{position:sticky;top:0;z-index:5;background:var(--card);
@@ -55,6 +55,14 @@ table.kv td:last-child{text-align:right;font-weight:600}.actions{display:grid;gr
 border-radius:12px;padding:10px 12px;margin:10px 0}.flag{color:var(--negv)}.soft{color:var(--neg)}
 textarea{min-height:210px}.note{background:var(--neg-bg);color:var(--neg);padding:8px 10px;border-radius:10px}
 .more{display:block;text-align:center;margin:12px 0}
+nav.main{display:flex;gap:4px;margin:0 0 6px}nav.main a{flex:1;text-align:center;padding:6px;font-size:14px;
+text-decoration:none;color:var(--muted);border-bottom:2px solid transparent}nav.main a.on{color:var(--text);
+border-color:var(--accent);font-weight:700}.tiles{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:10px 0}
+.tile{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:8px 10px}
+.tile b{display:block;font-size:20px}svg.chart{width:100%;height:auto;display:block}
+svg.chart .band{fill:var(--series);opacity:.18}svg.chart .line{fill:none;stroke:var(--series);stroke-width:2;
+stroke-linejoin:round;stroke-linecap:round}svg.chart .grid{stroke:var(--line)}svg.chart text{fill:var(--muted);
+font-size:11px}svg.chart .bar{fill:var(--series)}.warn{color:var(--neg)}
 """
 
 COPY_JS = """
@@ -66,6 +74,16 @@ function(){if(ok)done()})}else if(ok){done()}else{document.getElementById('copie
 function done(){document.getElementById('copied').textContent='✓ Skopiowano — wklej w portalu.'}
 if('serviceWorker' in navigator&&window.isSecureContext){navigator.serviceWorker.register('/sw.js')}
 """
+
+
+SECTIONS = {"oferty": ("Oferty", "/"), "magazyn": ("Magazyn", "/magazyn"), "rynek": ("Rynek", "/rynek")}
+
+
+def main_nav(active: str) -> str:
+    """Przełącznik działów: oferty / magazyn części / rynek."""
+    return '<nav class="main">' + "".join(
+        f'<a class="{"on" if key == active else ""}" href="{url}">{label}</a>'
+        for key, (label, url) in SECTIONS.items()) + "</nav>"
 
 
 def page(title: str, body: str, *, header: str = "") -> str:
@@ -113,7 +131,8 @@ def _place(offer: Offer) -> str:
 
 
 def card(offer: Offer, val: Valuation) -> str:
-    marks = ("⌛ " if not offer.active else "") + ("★ " if offer.status is OfferStatus.WATCHED else "")
+    marks = ("⌛ " if not offer.active else "") + ("★ " if offer.status is OfferStatus.WATCHED else "") \
+        + ("🛒 " if offer.transaction_id is not None else "")
     flags = f' · <span class="flag">⚑{len(set(val.flags))}</span>' if val.flags else ""
     level = getattr(val.risk, "level", "low")
     if level != "low":
@@ -122,6 +141,8 @@ def card(offer: Offer, val: Valuation) -> str:
     portal = SOURCE_NAMES.get(offer.raw.source, offer.raw.source)
     if offer.also_on:
         portal += " + " + ", ".join(SOURCE_NAMES.get(src, src) for src, _, _ in offer.also_on)
+    if val.parts_in_stock:
+        flags += " · 🧩 masz część"
     return (f'<a class="card{" out" if not offer.active else ""}" href="/oferta/{offer.id}">'
             f'<div class="row"><span class="model">{marks}{escape(_name(offer))}</span>'
             f'<span class="badge {VERDICT_CLASS[val.verdict]}">{escape(verdict)}</span></div>'
@@ -140,7 +161,8 @@ def list_page(rows: list[tuple[Offer, Valuation]], *, list_key: str, counts: dic
     tabs = (f'<nav class="tabs"><a class="{all_on}" href="{all_url}">Wszystkie ({counts.get("all", 0)})</a>'
             f'<a class="{picked_on}" href="{picked_url}">Wybrane ({counts.get("picked", 0)})</a></nav>')
     header = (f'<header><div class="row"><h1>PhoneBot</h1><form method="post" action="/logout">'
-              f'<input type="hidden" name="csrf" value="{csrf}"><button>Wyloguj</button></form></div>{tabs}</header>')
+              f'<input type="hidden" name="csrf" value="{csrf}"><button>Wyloguj</button></form></div>'
+              f"{main_nav('oferty')}{tabs}</header>")
     sort_opts = "".join(f'<option value="{k}"{" selected" if sort_spec and sort_spec[0].field == k else ""}>'
                         f"{escape(f.label)}</option>" for k, f in FIELDS.items())
     first = sort_spec[0] if sort_spec else None
@@ -176,7 +198,10 @@ def list_page(rows: list[tuple[Offer, Valuation]], *, list_key: str, counts: dic
 
 
 def details_page(offer: Offer, val: Valuation, settings: Settings, *, csrf: str, style: str | None = None,
-                 key: str | None = None, back: str = "/") -> str:
+                 key: str | None = None, back: str = "/", transaction=None,
+                 stock_parts: list[tuple[str, float]] | None = None) -> str:
+    """``transaction`` — zapisana transakcja tej oferty (kupiona); ``stock_parts`` — części, które „Kupiłem”
+    zdejmie z magazynu: [(nazwa, cena)]."""
     style = style if style in NEGOTIATION_STYLES else settings.negotiation_style
     if key not in TEMPLATE_KEYS:
         key = "verify" if getattr(val.risk, "level", "low") != "low" else None
@@ -203,6 +228,12 @@ def details_page(offer: Offer, val: Valuation, settings: Settings, *, csrf: str,
             ("Zysk na godzinę", "—" if val.profit_per_hour is None else f"{val.profit_per_hour:.0f} zł/h"),
             ("Ocena", f"{val.score}/100"), ("Portal", escape(SOURCE_NAMES.get(offer.raw.source, offer.raw.source))),
             ("Miejsce", escape(_place(offer)))]
+    if val.trend_text:
+        rows.append(("Trend ceny", escape(val.trend_text)))
+    if val.active_days is not None:
+        rows.append(("Ogłoszenia modelu aktywne", f"~{val.active_days:.0f} dni"))
+    if val.parts_in_stock:
+        rows.append(("Magazyn", "🧩 masz część: " + escape(", ".join(d.label for d in val.parts_in_stock))))
     if val.verdict is Verdict.NEGOTIATE:
         rows.insert(1, ("Proponowana cena", f"<b>{zl(opening_price(offer, val))}</b>"
                         + (f' <span class="muted">(maks. {zl(neg.max_price)})</span>' if neg.max_price else "")))
@@ -234,6 +265,7 @@ def details_page(offer: Offer, val: Valuation, settings: Settings, *, csrf: str,
         + f'</select></label></form><textarea id="msg">{escape(text)}</textarea>'
         f'<p><button class="primary" type="button" onclick="copyMsg()" style="width:100%">📋 Kopiuj</button></p>'
         f'<p id="copied" class="muted"></p></div>')
+    parts.append(_bought_box(offer, csrf, transaction, stock_parts or []))
     # akcje
     watched = offer.status is OfferStatus.WATCHED
 
@@ -258,6 +290,134 @@ def details_page(offer: Offer, val: Valuation, settings: Settings, *, csrf: str,
     return page(_name(offer), "".join(parts), header=header)
 
 
+def _bought_box(offer: Offer, csrf: str, transaction, stock_parts: list[tuple[str, float]]) -> str:
+    """„Kupiłem”: zapis transakcji z telefonu (z wyceną z tej chwili); kupiona oferta — status transakcji."""
+    if transaction is not None:
+        when = f" {transaction.bought_at.astimezone():%d.%m}" if transaction.bought_at else ""
+        return (f'<div class="box">🛒 <b>Kupiona{when}</b> za {zl(transaction.buy_price)} — status: '
+                f"{escape(transaction.status_label)}. Naprawę i sprzedaż wpiszesz w zakładce „Transakcje” "
+                "na komputerze.</div>")
+    checks = ""
+    if stock_parts:
+        names = ", ".join(f"{escape(n)} ({zl(p)})" for n, p in stock_parts)
+        checks = (f'<label style="flex-direction:row;align-items:center;gap:8px;color:var(--text);grid-column:1/-1">'
+                  f'<input type="checkbox" name="parts" value="1" checked style="width:auto"> zdejmij z magazynu: '
+                  f"{names}</label>")
+    return (f'<div class="box"><b>🛒 Kupiłem</b><form class="grid" method="post" action="/oferta/{offer.id}/akcja">'
+            f'<input type="hidden" name="csrf" value="{csrf}"><input type="hidden" name="a" value="bought">'
+            f'<label>Cena zakupu (zł)<input name="price" inputmode="decimal" value="{offer.price:g}"></label>'
+            f'<button class="primary" style="align-self:end">Zapisz zakup</button>{checks}</form>'
+            '<p class="muted">Transakcja trafi do zakładki „Transakcje” na komputerze — z wyceną z tej chwili '
+            "(do porównania po sprzedaży).</p></div>")
+
+
 def message_page(text: str, back: str = "/") -> str:
     return page("PhoneBot", f'<div class="box"><p>{escape(text)}</p><a class="btn primary" href="{escape(back)}">'
                             f"← Wróć</a></div>")
+
+
+def _section_header(active: str, title: str) -> str:
+    return f'<header><div class="row"><h1>{escape(title)}</h1></div>{main_nav(active)}</header>'
+
+
+def inventory_page(lots, warnings: list[str], value: float) -> str:
+    """Magazyn części (podgląd): co masz na stanie, po ile, i czego zaraz zabraknie."""
+    from ..core.inventory import QUALITIES
+
+    pieces = sum(max(0, lt.qty) for lt in lots)
+    parts = [f'<div class="tiles"><div class="tile"><span class="muted">Na stanie</span><b>{pieces} szt.</b></div>'
+             f'<div class="tile"><span class="muted">Wartość</span><b>{zl(value)}</b></div></div>']
+    if warnings:
+        parts.append('<div class="box"><b class="warn">⚠ Kończą się części, które często zużywasz</b><ul>'
+                     + "".join(f"<li>{escape(w)}</li>" for w in warnings) + "</ul></div>")
+    in_stock = [lt for lt in lots if lt.qty > 0]
+    if not in_stock:
+        parts.append('<p class="muted">Magazyn jest pusty. Części dodasz w programie na komputerze (zakładka '
+                     "„Magazyn części”).</p>")
+    for lt in sorted(in_stock, key=lambda x: (x.part.label, x.bought_at or 0)):
+        when = f" · kupione {lt.bought_at.astimezone():%d.%m.%Y}" if lt.bought_at else ""
+        supplier = f" · {escape(lt.supplier)}" if lt.supplier else ""
+        parts.append(f'<div class="card"><div class="row"><span class="model">{escape(lt.part.label)}</span>'
+                     f'<span class="price">{lt.qty} szt.</span></div><div class="row"><span>'
+                     f"{escape(', '.join(lt.models))}</span><span>{zl(lt.unit_price)}/szt.</span></div>"
+                     f'<div class="muted">{escape(QUALITIES.get(lt.quality, lt.quality))}{when}{supplier}</div></div>')
+    parts.append('<p class="muted">Podgląd. Dodawanie i edycja części — w programie na komputerze.</p>')
+    return page("PhoneBot — magazyn", "".join(parts), header=_section_header("magazyn", "Magazyn części"))
+
+
+def price_svg(points, width: int = 340, height: int = 150) -> str:
+    """Mediana (linia) i typowy zakres (pasmo) jako SVG — bez skryptów i bibliotek. ``points``: DayStat."""
+    if len(points) < 2:
+        return ""
+    left, right, top, bottom = 44, 8, 8, 20
+    lo = min(p.p10 for p in points)
+    hi = max(p.p90 for p in points)
+    if hi <= lo:
+        hi = lo + 1
+    first, last = points[0].day, points[-1].day
+    span = max(1, (last - first).days)
+    w, h = width - left - right, height - top - bottom
+
+    def x(d) -> float:
+        return left + (d - first).days / span * w
+
+    def y(v) -> float:
+        return top + (hi - v) / (hi - lo) * h
+
+    band = " ".join(f"{x(p.day):.1f},{y(p.p90):.1f}" for p in points) + " " + \
+        " ".join(f"{x(p.day):.1f},{y(p.p10):.1f}" for p in reversed(points))
+    line = " ".join(f"{x(p.day):.1f},{y(p.median):.1f}" for p in points)
+    labels = (f'<text x="{left - 4}" y="{top + 8}" text-anchor="end">{hi:,.0f}</text>'
+              f'<text x="{left - 4}" y="{top + h}" text-anchor="end">{lo:,.0f}</text>').replace(",", " ")
+    labels += (f'<text x="{left}" y="{height - 4}">{first:%d.%m}</text>'
+               f'<text x="{width - right}" y="{height - 4}" text-anchor="end">{last:%d.%m}</text>')
+    grid = (f'<line class="grid" x1="{left}" y1="{top}" x2="{width - right}" y2="{top}"/>'
+            f'<line class="grid" x1="{left}" y1="{top + h}" x2="{width - right}" y2="{top + h}"/>')
+    return (f'<svg class="chart" viewBox="0 0 {width} {height}" role="img" aria-label="Ceny ogłoszeń: mediana i '
+            f'zakres">{grid}<polygon class="band" points="{band}"/><polyline class="line" points="{line}"/>'
+            f"{labels}</svg>")
+
+
+def market_page(*, models: list[str], model: str, cls: str, days: int, points, trend_text: str,
+                active_text: str, new_count: int, best_lines: list[str], computed: str) -> str:
+    """Rynek (uproszczony): trend, mediana, czas aktywności, podaż, wykres cen, najlepsze pory."""
+    from ..core.market_stats import CLASSES, TOO_LITTLE
+
+    model_opts = "".join(f'<option{" selected" if m == model else ""}>{escape(m)}</option>' for m in models)
+    cls_opts = "".join(f'<option value="{k}"{" selected" if k == cls else ""}>{escape(v)}</option>'
+                       for k, v in CLASSES.items())
+    day_opts = "".join(f'<option value="{d}"{" selected" if d == days else ""}>{n}</option>'
+                       for d, n in ((7, "tydzień"), (30, "miesiąc"), (90, "3 miesiące")))
+    form = (f'<form class="grid" method="get" action="/rynek"><label>Model<select name="model" '
+            f'onchange="this.form.submit()">{model_opts}</select></label><label>Stan<select name="stan" '
+            f'onchange="this.form.submit()">{cls_opts}</select></label><label>Zakres<select name="dni" '
+            f'onchange="this.form.submit()">{day_opts}</select></label>'
+            f'<noscript><button class="primary">Pokaż</button></noscript></form>')
+    if not models:
+        body = (f'<p class="muted">{TOO_LITTLE} — statystyki liczą się w tle, gdy program zbierze oferty '
+                "z kilku dni.</p>")
+        return page("PhoneBot — rynek", body, header=_section_header("rynek", "Rynek"))
+    last = points[-1] if points else None
+    median = zl(last.median) if last else "—"
+    tiles = (f'<div class="tiles"><div class="tile"><span class="muted">Trend ceny</span><b>{escape(trend_text)}'
+             f'</b></div><div class="tile"><span class="muted">Mediana ({last.n if last else 0} ofert)</span>'
+             f'<b>{median}</b></div><div class="tile"><span class="muted">Ogłoszenie aktywne</span>'
+             f'<b>{escape(active_text)}</b></div><div class="tile"><span class="muted">Nowe ogłoszenia ({days} dni)'
+             f"</span><b>{new_count}</b></div></div>")
+    chart = price_svg(points) or f'<p class="muted">{TOO_LITTLE} na wykres cen w tym zakresie.</p>'
+    best = "".join(f"<p>{escape(line)}</p>" for line in best_lines) or f'<p class="muted">{TOO_LITTLE}</p>'
+    body = (f'<div class="box">{form}</div>{tiles}<div class="box"><b>Ceny ogłoszeń</b> '
+            f'<span class="muted">mediana (linia) i zakres 80% ofert (pasmo)</span>{chart}</div>'
+            f'<div class="box"><b>Najlepsze pory na zakupy</b>{best}</div>'
+            f'<p class="muted">{escape(computed)}. Pełne wykresy — zakładka „Rynek” na komputerze.</p>')
+    return page("PhoneBot — rynek", body, header=_section_header("rynek", "Rynek"))
+
+
+def offline_page() -> str:
+    """Strona z pamięci telefonu (PWA), gdy komputer jest niedostępny."""
+    body = ('<div class="box"><h1>Brak połączenia z PhoneBot</h1><p>Telefon nie może połączyć się z programem '
+            "na komputerze. Sprawdź:</p><ul><li>czy komputer jest włączony i PhoneBot działa (także w zasobniku),"
+            "</li><li>czy na telefonie jest włączony <b>Tailscale</b>,</li><li>czy w programie jest włączona "
+            "wersja na telefon (Ustawienia → Telefon).</li></ul><p><a class=\"btn primary\" href=\"/\">"
+            "Spróbuj ponownie</a></p></div>")
+    return page("PhoneBot — brak połączenia", body)

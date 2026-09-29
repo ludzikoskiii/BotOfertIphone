@@ -438,24 +438,7 @@ class TransactionDialog(QDialog):
     def save(self) -> list[Defect]:
         """Zapisuje transakcję i zdejmuje części z magazynu. Zwraca części, których zabrakło (nic nie zapisano)."""
         wanted = self.wanted_parts()
-        tx = self.read()
-        new = tx.id is None
-        self.conn.execute("BEGIN")
-        try:
-            self.repo.save(tx)
-            missing = self.repo.set_parts(tx.id, tx.model, wanted, self.settings.inventory, when=tx.bought_at)
-            if missing:
-                self.conn.execute("ROLLBACK")
-                if new:
-                    tx.id = None
-                return missing
-            self.conn.execute("COMMIT")
-        except Exception:
-            self.conn.execute("ROLLBACK")
-            if new:
-                tx.id = None
-            raise
-        return []
+        return self.repo.save_with_parts(self.read(), wanted, self.settings.inventory)
 
     def _accept(self) -> None:
         try:

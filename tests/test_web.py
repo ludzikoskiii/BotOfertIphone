@@ -190,6 +190,13 @@ def test_window_switch_pin_and_phone_changes(tmp_path):
         win._web_poll()  # zmiana z telefonu → tabela w oknie odświeżona
         row = win.model.row_of(offer_id)
         assert win.model.row_at(row)[0].status is OfferStatus.WATCHED
+        with httpx.Client(base_url=win.web.local_url(), follow_redirects=True, trust_env=False) as c:
+            _login(c, "135790")
+            page = c.get(f"/oferta/{offer_id}").text
+            csrf = re.search(r'name="csrf" value="([0-9a-f]+)"', page).group(1)
+            c.post(f"/oferta/{offer_id}/akcja", data={"a": "bought", "price": "500", "csrf": csrf})
+        win._web_poll()  # „Kupiłem” z telefonu → zakładka „Transakcje” w oknie odświeżona
+        assert win.transactions_tab.table.rowCount() == 1
         # PIN zapisany zaszyfrowanym polem, nie w JSON-ie ustawień
         from phonebot.storage.repositories import SettingsRepository
 
@@ -203,3 +210,60 @@ def test_window_switch_pin_and_phone_changes(tmp_path):
         win.close()
         conn.close()
         app.processEvents()
+
+
+# ------------------------------------------------ zadanie 6: dokończenie ---
+
+def test_kupilem_from_phone_consumes_stock_and_no_duplicates(server):
+    from datetime import UTC, datetime
+
+    from phonebot.core.inventory import Lot
+    from phonebot.core.models import Defect
+    from phonebot.storage.repositories import InventoryRepository, TransactionRepository
+
+    srv, conn = server
+    InventoryRepository(conn).save(Lot(None, Defect.SCREEN, ["iPhone 13"], "replacement", 2, 290.0, datetime.now(UTC)))
+    offer = next(o for o in OfferRepository(conn).list()
+                 if o.parsed.model == "iPhone 13" and Defect.SCREEN in o.parsed.defects)
+    with _client(srv) as c:
+        _login(c)
+        page = c.get(f"/oferta/{offer.id}")
+        assert "🛒 Kupiłem" in page.text and "zdejmij z magazynu: Wyświetlacz / szyba (290 zł)" in page.text
+        assert "masz część" in page.text
+        csrf = re.search(r'name="csrf" value="([0-9a-f]+)"', page.text).group(1)
+        assert c.post(f"/oferta/{offer.id}/akcja", data={"a": "bought", "price": "650"}).status_code == 403  # CSRF
+        assert c.post(f"/oferta/{offer.id}/akcja", data={"a": "bought", "price": "abc", "csrf": csrf}).status_code == 400
+        r = c.post(f"/oferta/{offer.id}/akcja", data={"a": "bought", "price": "650", "parts": "1", "csrf": csrf})
+        assert "Zapisano zakup: iPhone 13 za 650 zł. Z magazynu: Wyświetlacz / szyba." in r.text
+        tx = TransactionRepository(conn).for_offer(offer.id)
+        assert tx.buy_price == 650 and tx.snapshot is not None and len(tx.parts) == 1
+        assert [lt.qty for lt in InventoryRepository(conn).lots()] == [1] and srv.app.changes >= 1
+        again = c.post(f"/oferta/{offer.id}/akcja", data={"a": "bought", "price": "650", "csrf": csrf})
+        assert "już zapisana jako kupiona" in again.text
+        page = c.get(f"/oferta/{offer.id}")
+        assert "🛒 <b>Kupiona" in page.text and "status: kupiony" in page.text
+        assert "🛒 " in c.get("/").text  # znacznik na liście
+
+
+def test_inventory_market_offline_pages_and_pwa(server):
+    from phonebot.services.market_stats import compute
+
+    from .sample_market import fill_market
+
+    srv, conn = server
+    with _client(srv) as c:
+        assert c.get("/magazyn").url.path == "/login"  # podgląd magazynu i rynku też za PIN-em
+        assert c.get("/offline").status_code == 200  # strona „brak połączenia” — bez danych, bez logowania
+        _login(c)
+        mag = c.get("/magazyn")
+        assert "Magazyn jest pusty" in mag.text and 'class="on" href="/magazyn"' in mag.text
+        assert "za mało danych" in c.get("/rynek").text  # statystyki jeszcze niepoliczone
+        fill_market(conn)
+        compute(conn, Settings())
+        rynek = c.get("/rynek", params={"model": "iPhone 13", "dni": "30"})
+        assert "↘ spada" in rynek.text and '<svg class="chart"' in rynek.text and "we wtorek" in rynek.text
+        assert "za mało danych" in c.get("/rynek", params={"model": "iPhone 13", "stan": "new"}).text
+        assert "Brak połączenia" in c.get("/offline").text
+        sw = c.get("/sw.js").text
+        assert "caches.match('/offline')" in sw and "navigate" in sw
+        assert c.get("/manifest.webmanifest").json()["display"] == "standalone"

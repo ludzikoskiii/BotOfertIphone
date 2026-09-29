@@ -3,7 +3,7 @@
 Aplikacja desktopowa (Windows) do wyszukiwania ofert używanych iPhone'ów na
 Allegro Lokalnie, Vinted i Sprzedajemy.pl, wyceny ich opłacalności i podpowiadania, czy i za ile kupić.
 
-> **Status: wersja 1.19.0.** Trzy portale, wycena, werdykty i negocjacje, filtry, zabezpieczenia werdyktu,
+> **Status: wersja 1.20.0.** Trzy portale, wycena, werdykty i negocjacje, filtry, zabezpieczenia werdyktu,
 > **darmowe lokalne AI** (klasyfikator tytułów, analiza zdjęć, opcjonalnie model językowy w Ollamie),
 > szablony wiadomości do sprzedającego, automatyczne odświeżanie, powiadomienia Windows i Telegram
 > oraz gotowy plik `PhoneBot.exe`. Program nie korzysta z żadnych płatnych usług.
@@ -139,11 +139,26 @@ uruchomieniu.
 ### PhoneBot na telefonie (przez Tailscale)
 
 Program może udostępnić lekką stronę dla telefonu — ten sam stan co w oknie (ta sama baza):
-zakładki **Wszystkie / Wybrane** z licznikami, sortowanie i filtry (model, portal, werdykt, cena, zysk,
-wyszukiwanie), kolorowe werdykty, szczegóły oferty z wyliczeniem, **gotową wiadomością do sprzedającego
-i przyciskiem „Kopiuj”**, oraz akcje: ★ Obserwuj, Ukryj, To jest / To nie jest telefon, Otwórz ogłoszenie.
-Zmiany z telefonu od razu widać w oknie programu. Linki „Szczegóły w PhoneBot” w powiadomieniach
-Telegram otwierają ofertę na tej stronie. Stronę można dodać do ekranu głównego (PWA).
+
+- **Oferty:** zakładki **Wszystkie / Wybrane** z licznikami, sortowanie i filtry (model, portal, werdykt, cena,
+  zysk, wyszukiwanie), kolorowe werdykty, znaczniki ★ obserwowane, 🛒 kupione, 🧩 masz część;
+- **szczegóły oferty:** wyliczenie (zysk, max cena, czas pracy, zysk na godzinę, trend ceny, czas aktywności
+  ogłoszeń), **gotowa wiadomość do sprzedającego z przyciskiem „Kopiuj”**, „Otwórz ogłoszenie”;
+- **akcje:** ★ Obserwuj, Ukryj, To jest / To nie jest telefon oraz **🛒 Kupiłem** — zapisuje transakcję
+  (z ceną, którą wpiszesz, i wyceną z tej chwili) i zdejmuje z magazynu pasujące części; resztę (naprawa,
+  sprzedaż) wpisujesz w zakładce „Transakcje” na komputerze;
+- **Magazyn** (podgląd): części na stanie, ceny, ostrzeżenia o kończących się częściach;
+- **Rynek** (uproszczony): trend, mediana, czas aktywności ogłoszeń, nowe ogłoszenia, wykres cen (mediana
+  i zakres), najlepsze pory na zakupy;
+- **aplikacja na ekranie głównym (PWA)**; gdy komputer albo Tailscale są niedostępne, zamiast błędu
+  przeglądarki pojawia się strona „Brak połączenia z PhoneBot” z listą rzeczy do sprawdzenia.
+
+Zmiany z telefonu od razu widać w oknie programu (tabela, magazyn, transakcje). Linki „Szczegóły w PhoneBot”
+w powiadomieniach Telegram otwierają ofertę na tej stronie.
+
+| Szczegóły oferty | Magazyn | Rynek |
+|---|---|---|
+| ![Szczegóły na telefonie](docs/screenshots/telefon_szczegoly.png) | ![Magazyn na telefonie](docs/screenshots/telefon_magazyn.png) | ![Rynek na telefonie](docs/screenshots/telefon_rynek.png) |
 
 **Bezpieczeństwo — serwer nie jest wystawiany do internetu:**
 
@@ -151,29 +166,44 @@ Telegram otwierają ofertę na tej stronie. Stronę można dodać do ekranu gł�
   (np. `0.0.0.0`, sieć domowa) są zablokowane w kodzie;
 - logowanie PIN-em (zapisany jako skrót PBKDF2, zaszyfrowany jak token Telegrama), sesje na 30 dni,
   ochrona formularzy (CSRF), blokada na 5 minut po 5 błędnych PIN-ach, sprawdzanie adresu (ochrona
-  przed „DNS rebinding”), nagłówki bezpieczeństwa;
-- **nigdy nie używaj `tailscale funnel`** ani przekierowania portu na routerze.
+  przed „DNS rebinding”), nagłówki bezpieczeństwa; wszystkie strony z danymi (oferty, magazyn, rynek)
+  wymagają PIN-u;
+- **nigdy nie używaj `tailscale funnel`** ani przekierowania portu na routerze — to wystawiłoby stronę publicznie.
 
-**Konfiguracja krok po kroku:**
+**Konfiguracja krok po kroku — komputer (Windows):**
 
-1. Na komputerze zainstaluj **Tailscale** (<https://tailscale.com/download>, Windows) i zaloguj się
-   (konto Google, Microsoft albo GitHub; plan Personal jest darmowy).
-2. Na telefonie zainstaluj aplikację **Tailscale** (Google Play / App Store) i zaloguj się **tym samym
-   kontem**. Komputer i telefon są teraz w Twojej prywatnej sieci (tailnet).
-3. W PhoneBot: **⚙ Ustawienia → Telefon** — ustaw **PIN** (min. 4 znaki, najlepiej 6+ cyfr), zaznacz
-   „Włącz wersję na telefon”, zostaw „Tylko ten komputer” i zapisz. Na pasku stanu pojawi się „📱 Telefon: działa”.
-4. Na komputerze w **Wierszu polecenia** (cmd) wpisz `tailscale serve --bg 8765`. Tailscale udostępni
-   program pod adresem `https://NAZWA-KOMPUTERA.NAZWA-SIECI.ts.net` **tylko w Twojej sieci Tailscale**
-   (z certyfikatem HTTPS). Adres pokaże `tailscale serve status`. Za pierwszym razem Tailscale może
-   poprosić o włączenie certyfikatów HTTPS w panelu — potwierdź.
-5. Wklej ten adres w **Ustawienia → Telefon → Adres dla telefonu** (dla linków z Telegrama).
-6. Na telefonie (z włączonym Tailscale) otwórz adres i podaj PIN. Chrome: menu ⋮ → **„Dodaj do ekranu
-   głównego”**; Safari: Udostępnij → **„Do ekranu początkowego”**.
+1. Zainstaluj **Tailscale** z <https://tailscale.com/download> i zaloguj się (konto Google, Microsoft
+   albo GitHub; plan Personal jest darmowy). Ikona Tailscale pojawi się przy zegarze.
+2. W PhoneBot: **⚙ Ustawienia → Telefon** — wpisz **PIN** dwa razy (min. 4 znaki, najlepiej 6+ cyfr),
+   zaznacz **„Włącz wersję na telefon”** (to jest włącznik serwera), zostaw dostęp „Tylko ten komputer”
+   i zapisz. Na pasku stanu pojawi się „📱 Telefon: działa”.
+3. Otwórz **Wiersz polecenia** (Start → wpisz `cmd`) i wpisz `tailscale serve --bg 8765`. Tailscale
+   udostępni program pod adresem `https://NAZWA-KOMPUTERA.NAZWA-SIECI.ts.net` **tylko w Twojej sieci
+   Tailscale**, z certyfikatem HTTPS. Za pierwszym razem Tailscale może pokazać link do włączenia
+   certyfikatów HTTPS w panelu — otwórz go i potwierdź. Adres sprawdzisz poleceniem `tailscale serve status`.
+   To ustawienie zostaje po restarcie komputera.
+4. Wklej ten adres w **Ustawienia → Telefon → Adres dla telefonu** (dla linków z Telegrama) i zapisz.
+
+**Konfiguracja krok po kroku — telefon:**
+
+5. Zainstaluj aplikację **Tailscale** (App Store / Google Play), zaloguj się **tym samym kontem** co na
+   komputerze i włącz przełącznik połączenia (iPhone zapyta o zgodę na VPN — zezwól).
+6. Otwórz w przeglądarce adres z punktu 3 i podaj PIN.
+7. Dodaj stronę do ekranu głównego: **iPhone (Safari)** — przycisk Udostępnij → **„Do ekranu początkowego”**;
+   **Android (Chrome)** — menu ⋮ → **„Zainstaluj aplikację”** albo „Dodaj do ekranu głównego”.
+   Od teraz PhoneBot otwiera się jak aplikacja, na pełnym ekranie.
+
+**Gdy nie działa:**
+
+- „Brak połączenia z PhoneBot” — sprawdź, czy komputer jest włączony, PhoneBot działa (także zminimalizowany
+  do zasobnika), a na telefonie Tailscale jest włączony (w aplikacji Tailscale komputer ma status „Connected”).
+- Strona się nie otwiera po zmianie portu w ustawieniach — powtórz `tailscale serve --bg NOWY-PORT`.
+- Zapomniany PIN — ustaw nowy w Ustawienia → Telefon (wszystkie telefony zostaną wylogowane).
 
 Bez `tailscale serve`: wybierz dostęp „Adres Tailscale 100.x.y.z” i otwórz `http://100.x.y.z:8765`
 (adres komputera widać w aplikacji Tailscale). Ruch i tak jest szyfrowany przez Tailscale, ale bez HTTPS
-Android nie zainstaluje strony jako aplikacji (działa zwykły skrót), a „Kopiuj” zaznacza tekst zamiast
-kopiować w tle na części przeglądarek.
+Android nie zainstaluje strony jako aplikacji (działa zwykły skrót), strona „Brak połączenia” nie działa,
+a „Kopiuj” zaznacza tekst zamiast kopiować w tle na części przeglądarek.
 
 Serwer działa tylko, gdy działa PhoneBot (także zminimalizowany do zasobnika).
 
