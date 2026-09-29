@@ -61,7 +61,8 @@ def test_first_scan_is_silent(tmp_path):
 
 def test_new_green_offer_triggers_notifications(tmp_path):
     conn, _ = build_sample_db(tmp_path / "db.sqlite3")
-    settings = Settings(telegram_enabled=True, telegram_bot_token="t", telegram_chat_id="1")
+    settings = Settings(telegram_enabled=True, telegram_bot_token="t", telegram_chat_id="1",
+                        telegram_quiet_enabled=False)  # test niezależny od pory dnia
     TelegramQueue(conn, settings).ensure_since()  # powiadomienia włączone przed pojawieniem się ofert
     repo = OfferRepository(conn)
     from phonebot.core.normalizer import parse_offer
