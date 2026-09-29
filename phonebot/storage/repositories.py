@@ -887,3 +887,120 @@ class InventoryRepository:
 
     def value(self) -> float:
         return float(self.conn.execute("SELECT COALESCE(SUM(qty * unit_price), 0) FROM inventory_lots").fetchone()[0])
+
+
+class TransactionRepository:
+    """Transakcje (kupione telefony). Części z magazynu: zużycie z ``transaction_id`` (``InventoryRepository``)."""
+
+    def __init__(self, conn: sqlite3.Connection):
+        self.conn = conn
+        self.inventory = InventoryRepository(conn)
+
+    def _tx(self, r: sqlite3.Row):
+        from ..core.models import Condition
+        from ..core.transactions import CostEntry, Snapshot, Transaction, UsedPart
+
+        costs = [CostEntry(c.get("kind", "other"), c.get("label", ""), float(c.get("amount", 0)))
+                 for c in json.loads(r["costs"] or "[]") if isinstance(c, dict)]
+        parts = [UsedPart(Defect(u["part"]), int(u["qty"]), float(u["unit_price"]))
+                 for u in self.inventory.usage_for(int(r["id"])) if u["part"] in Defect._value2member_map_]
+        condition = r["condition"] if r["condition"] in Condition._value2member_map_ else Condition.DAMAGED.value
+        return Transaction(
+            id=int(r["id"]), offer_id=r["offer_id"], model=r["model"], storage_gb=r["storage_gb"],
+            condition=Condition(condition),
+            defects=[Defect(d) for d in json.loads(r["defects"] or "[]") if d in Defect._value2member_map_],
+            source=r["source"], url=r["url"], title=r["title"], status=r["status"], bought_at=_dt(r["bought_at"]),
+            buy_price=float(r["buy_price"]), costs=costs, parts=parts, repair_minutes=r["repair_minutes"],
+            handling_minutes=r["handling_minutes"], listed_at=_dt(r["listed_at"]), sold_at=_dt(r["sold_at"]),
+            sell_price=None if r["sell_price"] is None else float(r["sell_price"]), sold_where=r["sold_where"],
+            note=r["note"], snapshot=Snapshot.from_dict(json.loads(r["snapshot"]) if r["snapshot"] else None),
+        )
+
+    def save(self, tx) -> int:
+        values = (tx.offer_id, tx.model, tx.storage_gb, tx.condition.value,
+                  json.dumps([d.value for d in tx.defects]), tx.source, tx.url, tx.title, tx.status,
+                  _iso(tx.bought_at), float(tx.buy_price),
+                  json.dumps([{"kind": c.kind, "label": c.label, "amount": c.amount} for c in tx.costs],
+                             ensure_ascii=False),
+                  tx.repair_minutes, tx.handling_minutes, _iso(tx.listed_at), _iso(tx.sold_at), tx.sell_price,
+                  tx.sold_where, tx.note, json.dumps(tx.snapshot.to_dict()) if tx.snapshot else None)
+        cols = ("offer_id, model, storage_gb, condition, defects, source, url, title, status, bought_at, buy_price, "
+                "costs, repair_minutes, handling_minutes, listed_at, sold_at, sell_price, sold_where, note, snapshot")
+        if tx.id is None:
+            cur = self.conn.execute(f"INSERT INTO transactions ({cols}, created_at) VALUES "
+                                    f"({', '.join('?' * (len(values) + 1))})", (*values, _iso(utcnow())))
+            tx.id = int(cur.lastrowid)
+        else:
+            sets = ", ".join(f"{c.strip()} = ?" for c in cols.split(","))
+            self.conn.execute(f"UPDATE transactions SET {sets} WHERE id = ?", (*values, tx.id))
+        return tx.id
+
+    def get(self, tx_id: int):
+        r = self.conn.execute("SELECT * FROM transactions WHERE id = ?", (tx_id,)).fetchone()
+        return self._tx(r) if r else None
+
+    def all(self) -> list:
+        rows = self.conn.execute("SELECT * FROM transactions ORDER BY COALESCE(bought_at, created_at) DESC, id DESC")
+        return [self._tx(r) for r in rows]
+
+    def for_offer(self, offer_id: int):
+        r = self.conn.execute("SELECT * FROM transactions WHERE offer_id = ? ORDER BY id DESC LIMIT 1",
+                              (offer_id,)).fetchone()
+        return self._tx(r) if r else None
+
+    def bought_offers(self) -> dict[int, int]:
+        """Kupione oferty: {id oferty: id najnowszej transakcji}."""
+        rows = self.conn.execute("SELECT offer_id, MAX(id) FROM transactions WHERE offer_id IS NOT NULL "
+                                 "GROUP BY offer_id")
+        return {int(r[0]): int(r[1]) for r in rows}
+
+    def delete(self, tx_id: int, *, return_parts: bool = True) -> None:
+        """Usuwa transakcję; części wracają na stan (albo zostają zużyte — historia zużycia bez transakcji)."""
+        if return_parts:
+            self.inventory.release(tx_id)
+        else:
+            self.conn.execute("UPDATE inventory_usage SET transaction_id = NULL WHERE transaction_id = ?", (tx_id,))
+        self.conn.execute("DELETE FROM transactions WHERE id = ?", (tx_id,))
+
+    def wanted_parts(self, tx_id: int) -> list[tuple[Defect, int]]:
+        """Części z magazynu tej transakcji: [(rodzaj, sztuk)]."""
+        out: dict[Defect, int] = {}
+        for u in self.inventory.usage_for(tx_id):
+            if u["part"] in Defect._value2member_map_:
+                out[Defect(u["part"])] = out.get(Defect(u["part"]), 0) + int(u["qty"])
+        return sorted(out.items(), key=lambda kv: kv[0].value)
+
+    def set_parts(self, tx_id: int, model: str | None, wanted: list[tuple[Defect, int]], cfg,
+                  when: datetime | None = None) -> list[Defect]:
+        """Zdejmuje z magazynu części dla transakcji (FIFO, po cenie zakupu partii). Zmiana listy = zwrot
+        poprzednich części i zdjęcie nowych. Zwraca części, których zabrakło — wtedy nic nie jest zmieniane."""
+        merged: dict[Defect, int] = {}
+        for part, qty in wanted:
+            if qty > 0:
+                merged[part] = merged.get(part, 0) + qty
+        if sorted(merged.items(), key=lambda kv: kv[0].value) == self.wanted_parts(tx_id):
+            return []
+        own = not self.conn.in_transaction
+        self.conn.execute("BEGIN" if own else "SAVEPOINT tx_parts")
+        try:
+            self.inventory.release(tx_id)
+            missing = [part for part, qty in merged.items()
+                       if not self.inventory.consume(model, part, qty, cfg, transaction_id=tx_id, when=when)]
+            if missing:
+                self.conn.execute("ROLLBACK" if own else "ROLLBACK TO tx_parts")
+                if not own:
+                    self.conn.execute("RELEASE tx_parts")
+                return missing
+            self.conn.execute("COMMIT" if own else "RELEASE tx_parts")
+            return []
+        except Exception:
+            self.conn.execute("ROLLBACK" if own else "ROLLBACK TO tx_parts")
+            if not own:
+                self.conn.execute("RELEASE tx_parts")
+            raise
+
+    def corrections(self, cfg):
+        """Poprawki wyceny z transakcji (model + usterki) — do ``PartsCatalog.corrections``."""
+        from ..core.transactions import Corrections, corrections
+
+        return Corrections(corrections(self.all(), cfg), cfg)

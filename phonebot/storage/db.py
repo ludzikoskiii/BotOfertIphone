@@ -295,6 +295,33 @@ MIGRATIONS: list[str] = [
         WHEN 'camera' THEN 40 WHEN 'camera_lens' THEN 20 WHEN 'speaker' THEN 30 WHEN 'microphone' THEN 45
         WHEN 'buttons' THEN 45 WHEN 'housing' THEN 150 END;
     """,
+    """
+    CREATE TABLE transactions (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        offer_id          INTEGER REFERENCES offers (id) ON DELETE SET NULL,
+        model             TEXT,
+        storage_gb        INTEGER,
+        condition         TEXT NOT NULL DEFAULT 'damaged',
+        defects           TEXT NOT NULL DEFAULT '[]',
+        source            TEXT NOT NULL DEFAULT '',
+        url               TEXT NOT NULL DEFAULT '',
+        title             TEXT NOT NULL DEFAULT '',
+        status            TEXT NOT NULL DEFAULT 'bought',
+        bought_at         TEXT,
+        buy_price         REAL NOT NULL DEFAULT 0,
+        costs             TEXT NOT NULL DEFAULT '[]',
+        repair_minutes    INTEGER,
+        handling_minutes  INTEGER,
+        listed_at         TEXT,
+        sold_at           TEXT,
+        sell_price        REAL,
+        sold_where        TEXT NOT NULL DEFAULT '',
+        note              TEXT NOT NULL DEFAULT '',
+        snapshot          TEXT,
+        created_at        TEXT NOT NULL
+    );
+    CREATE INDEX idx_transactions_offer ON transactions (offer_id)
+    """,
 ]
 
 

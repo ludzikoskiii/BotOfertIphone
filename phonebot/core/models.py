@@ -260,6 +260,7 @@ class Offer:
     picked_at: datetime | None = None  # kiedy pierwszy raz trafiła do „Wybrane”
     pick_excluded: bool = False  # ręcznie usunięta z „Wybrane”
     also_on: list[tuple[str, str, float]] = field(default_factory=list)  # ta sama sztuka na innych portalach
+    transaction_id: int | None = None  # kupiona — transakcja w zakładce „Transakcje”
 
     @property
     def price(self) -> float:
@@ -305,6 +306,7 @@ class CostItem:
 class TimeItem:
     label: str
     minutes: int
+    repair: bool = False  # czas samej naprawy (reszta to obsługa: odbiór, sprawdzenie, wystawienie, sprzedaż)
 
 
 @dataclass
@@ -341,6 +343,12 @@ class Valuation:
     profit_per_hour: float | None = None  # przewidywany zysk / czas pracy
     time_cost: float | None = None  # czas × stawka godzinowa (pokazywany osobno, nie odejmowany od zysku)
     time_limited: bool = False  # wymagany zysk wynika z progu zysku na godzinę (a nie z reguły kwota/procent)
+    corrections: list[str] = field(default_factory=list)  # poprawki z Twoich transakcji zastosowane w wycenie
+    # wycena bazowa (bez poprawek z transakcji): resale, repair_cost, repair_minutes — do nauki poprawek
+    baseline: dict = field(default_factory=dict)
+    sell_days: float | None = None  # przewidywany czas sprzedaży (z Twoich transakcji)
+    resale_value: float | None = None  # cena odsprzedaży V użyta w wyliczeniu (po korekcie eSIM i poprawkach)
+    alternative: object | None = None  # podgląd: ta sama oferta z poprawkami / bez (services.evaluator)
 
     @property
     def has_hard_flag(self) -> bool:

@@ -66,7 +66,8 @@ def estimate(offer: Offer, parts, cfg: WorkTimeConfig, mode: Mode, adjust: Adjus
         for defect in offer.parsed.defects:
             row = parts.lookup(model, defect)
             if row is None and defect not in DEFAULT_REPAIR_MINUTES:
-                items.append(TimeItem(f"Naprawa: {defect.label} (zakres nieznany)", cfg.unknown_repair_minutes))
+                items.append(TimeItem(f"Naprawa: {defect.label} (zakres nieznany)", cfg.unknown_repair_minutes,
+                                      True))
                 continue
             minutes = repair_minutes(defect, getattr(row, "minutes", None), cfg)
             label = f"Naprawa: {defect.label}"
@@ -74,9 +75,10 @@ def estimate(offer: Offer, parts, cfg: WorkTimeConfig, mode: Mode, adjust: Adjus
             if fixed is not None:
                 minutes, note = fixed
                 label += f" ({note})"
-            items.append(TimeItem(label, minutes))
+            items.append(TimeItem(label, minutes, True))
         if offer.parsed.condition is Condition.FOR_PARTS and not offer.parsed.defects:
-            items.append(TimeItem("Naprawa: usterka „na części” (zakres nieznany)", cfg.unknown_repair_minutes))
+            items.append(TimeItem("Naprawa: usterka „na części” (zakres nieznany)", cfg.unknown_repair_minutes,
+                                  True))
     items.extend(handling(offer, cfg))
     return [i for i in items if i.minutes > 0]
 

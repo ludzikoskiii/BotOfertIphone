@@ -21,6 +21,7 @@ from .photo_scam import PhotoScamConfig
 from .refresh import RefreshConfig
 from .sanity import SanityConfig
 from .selection import SelectionCriteria
+from .transactions import LearningConfig
 from .view_filter import ViewFilter
 from .work_time import WorkTimeConfig
 
@@ -241,6 +242,8 @@ class Settings:
     inventory: InventoryConfig = field(default_factory=InventoryConfig)
     # czas pracy: naprawa + obsługa, zysk na godzinę, próg i stawka (core/work_time.py)
     work: WorkTimeConfig = field(default_factory=WorkTimeConfig)
+    # transakcje: poprawki wyceny z Twoich wyników (model + usterki), od 3 transakcji, stopniowo
+    learning: LearningConfig = field(default_factory=LearningConfig)
     minimize_to_tray: bool = True
     notify_desktop: bool = True
     notify_price_drops: bool = True

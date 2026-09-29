@@ -24,6 +24,7 @@ VERDICT_ROLE = Qt.ItemDataRole.UserRole + 3
 
 NEW_MARK = "🆕 NOWE"
 PARTS_MARK = "🧩 masz część"
+BOUGHT_MARK = "🛒 kupione"
 _RIGHT = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
 _CENTER = Qt.AlignmentFlag.AlignCenter
 _LEFT = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
@@ -369,10 +370,10 @@ class OffersTableModel(QAbstractTableModel):
             case Col.SCORE:
                 return str(val.score)
             case Col.FLAGS:
-                flags = ", ".join(f.label for f in dict.fromkeys(val.flags))
+                marks = [BOUGHT_MARK] if offer.transaction_id is not None else []
                 if val.parts_in_stock:  # masz część w magazynie
-                    return f"{PARTS_MARK}" + (f", {flags}" if flags else "")
-                return flags or "—"
+                    marks.append(PARTS_MARK)
+                return ", ".join([*marks, *(f.label for f in dict.fromkeys(val.flags))]) or "—"
             case Col.SOURCE:
                 name = SOURCE_NAMES.get(offer.raw.source, offer.raw.source)
                 return f"{name} +{len(offer.also_on)}" if offer.also_on else name

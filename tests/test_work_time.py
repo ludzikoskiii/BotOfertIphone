@@ -89,12 +89,20 @@ def test_min_profit_per_hour_lowers_verdict():
     assert evaluate(offer, MARKET, parts, s, Mode.REPAIR).max_buy_price == base.max_buy_price
 
 
-def test_time_adjust_hook_for_transactions():
+def test_repair_time_corrected_from_transactions():
+    from phonebot.core.transactions import Correction, Corrections, Factor, LearningConfig, key_for
+
     offer = make_offer(*SCREEN[:1], 900, SCREEN[1])
     parts = PartsCatalog(default_parts())
-    parts.time_adjust = lambda model, defect, minutes: (minutes * 2, "wg Twoich transakcji")
+    key = key_for("iPhone 12", [Defect.SCREEN])
+    corr = Correction(key, 4, {"repair_time": Factor("repair_time", 2.0, 4, 0.5, 45, 90)})
+    parts.corrections = Corrections({key: corr}, LearningConfig())
     val = evaluate(offer, MARKET, parts, Settings(), Mode.REPAIR)
-    assert labels(val.time_items)["Naprawa: Wyświetlacz / szyba (wg Twoich transakcji)"] == 90
+    item = next(i for i in val.time_items if i.repair)
+    assert item.minutes == 68 and "średnio +100% w 4 transakcjach, waga 50%" in item.label  # 45 × 1,5
+    assert val.baseline["repair_minutes"] == 45 and any(n.startswith("Czas naprawy") for n in val.corrections)
+    off = evaluate(offer, MARKET, parts, Settings(), Mode.REPAIR, apply_corrections=False)
+    assert next(i for i in off.time_items if i.repair).minutes == 45 and not off.corrections
 
 
 def test_sort_fields_and_preset():

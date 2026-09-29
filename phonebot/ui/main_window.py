@@ -69,6 +69,7 @@ from ..storage.repositories import (
     PartsRepository,
     RejectedRepository,
     SettingsRepository,
+    TransactionRepository,
 )
 from .ai_worker import AiWorker
 from .filters_panel import FiltersPanel
@@ -549,6 +550,7 @@ class MainWindow(QMainWindow):
         self.details.status_changed.connect(self._status_changed)
         self.details.pick_requested.connect(self.set_picked)
         self.details.block_requested.connect(self.block_seller)
+        self.details.bought_requested.connect(self.record_purchase)
         self.details.full_view_requested.connect(self._details_for_current)
         self.details.not_phone.connect(self.mark_not_phone)
         self.details.message_copied.connect(self._show_status)
@@ -574,8 +576,9 @@ class MainWindow(QMainWindow):
         lay.setContentsMargins(MARGIN // 2, MARGIN // 2, MARGIN // 2, 0)
         lay.addWidget(split)
         self.splitter = split
-        # zakładki główne: oferty, magazyn części (dalej: transakcje, rynek)
+        # zakładki główne: oferty, magazyn części, transakcje (dalej: rynek)
         from .inventory_tab import InventoryTab
+        from .transactions_tab import TransactionsTab
 
         self.main_tabs = QTabWidget()
         self.main_tabs.setObjectName("main_tabs")
@@ -584,6 +587,11 @@ class MainWindow(QMainWindow):
         self.inventory_tab = InventoryTab(self.conn, lambda: self.settings, self._save_settings_from_tab, self)
         self.inventory_tab.changed.connect(self.reload)  # nowy stan magazynu → nowa wycena ofert
         self.main_tabs.addTab(self.inventory_tab, "Magazyn części")
+        self.transactions_tab = TransactionsTab(self.conn, lambda: self.settings, self._save_settings_from_tab, self)
+        # transakcje: zużyte części → stan magazynu; nowe poprawki z transakcji → nowa wycena ofert
+        self.transactions_tab.changed.connect(self.inventory_tab.refresh)
+        self.transactions_tab.changed.connect(self.reload)
+        self.main_tabs.addTab(self.transactions_tab, "Transakcje")
         self.setCentralWidget(self.main_tabs)
 
     def _save_settings_from_tab(self, settings) -> None:
@@ -1088,6 +1096,7 @@ class MainWindow(QMainWindow):
         if (settings.ui_theme, settings.ui_font_pt) != (old.ui_theme, old.ui_font_pt):
             self.apply_appearance()
         self.settings_repo.save(settings)
+        self.transactions_tab.sync_settings()  # przełącznik poprawek i wnioski wg nowych ustawień
         self.limiter.delay_s = settings.request_delay_s
         web_keys = ("web_enabled", "web_port", "web_bind", "web_url", "web_pin_hash")
         if any(getattr(settings, k) != getattr(old, k) for k in web_keys):
@@ -1493,9 +1502,27 @@ class MainWindow(QMainWindow):
         dialog.message_copied.connect(self._show_status)
         dialog.pick_requested.connect(self.set_picked)
         dialog.block_requested.connect(self.block_seller)
+        dialog.bought_requested.connect(self.record_purchase)
         dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         dialog.show()
         return dialog
+
+    def record_purchase(self, offer_id: int) -> bool:
+        """„Kupiłem”: nowa transakcja z danymi oferty i wyceną z chwili zakupu (albo edycja już zapisanej)."""
+        from ..core.transactions import from_offer
+
+        existing = TransactionRepository(self.conn).for_offer(offer_id)
+        if existing is not None:
+            return self.transactions_tab.open_dialog(existing)
+        row = self.model.row_of(offer_id)
+        if row is None:
+            return False
+        offer, val = self.model.row_at(row)
+        tx = from_offer(offer, val, self.settings.learning, datetime.now(UTC))
+        saved = self.transactions_tab.open_dialog(tx)
+        if saved:
+            self._show_status(f"Zapisano transakcję: {offer.parsed.model or offer.raw.title} — zakładka „Transakcje”.")
+        return saved
 
     def set_offer_status(self, offer_id: int, status: OfferStatus) -> None:
         OfferRepository(self.conn).set_status(offer_id, status)

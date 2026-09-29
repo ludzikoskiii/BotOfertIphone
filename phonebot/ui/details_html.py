@@ -110,6 +110,37 @@ def _time_html(val: Valuation, settings: Settings, pal: Palette) -> str:
     return "".join(out)
 
 
+def _corrections_html(val: Valuation, settings: Settings) -> str:
+    """Poprawki z Twoich transakcji (model + usterki) i podgląd wyceny z poprawkami i bez nich."""
+    alt = val.alternative
+    if not val.corrections and alt is None:
+        return ""
+    on = settings.learning.enabled
+    out = ["<h3>Poprawki z Twoich transakcji</h3>"]
+    if val.corrections:
+        out.append("<ul>" + "".join(f"<li>{escape(n)}</li>" for n in val.corrections) + "</ul>")
+    elif alt is not None:
+        out.append('<p class="muted">Poprawki są wyłączone (zakładka „Transakcje”) — poniżej podgląd, jak zmieniłyby '
+                   "wycenę.</p>")
+    if alt is not None:
+        now, other = ("z poprawkami", "bez poprawek") if on else ("bez poprawek (teraz)", "z poprawkami")
+
+        def per_hour(v: Valuation) -> str:
+            return "—" if v.profit_per_hour is None else f"{v.profit_per_hour:.0f} zł/h"
+
+        rows = [("Werdykt", escape(val.verdict.value), escape(alt.verdict.value)),
+                ("Przewidywany zysk", zl(val.expected_profit), zl(alt.expected_profit)),
+                ("Maksymalna cena zakupu", zl(val.max_buy_price), zl(alt.max_buy_price)),
+                ("Koszt naprawy", zl(val.repair_cost), zl(alt.repair_cost)),
+                ("Czas pracy", format_minutes(val.work_minutes), format_minutes(alt.work_minutes)),
+                ("Zysk na godzinę", per_hour(val), per_hour(alt))]
+        out.append(f'<table class="calc"><tr><td></td><td><b>{now}</b></td><td><b>{other}</b></td></tr>')
+        for label, a, b in rows:
+            out.append(f"<tr><td>{label}</td><td>{a}</td><td>{b}</td></tr>")
+        out.append("</table>")
+    return "".join(out)
+
+
 def build_details_html(
     offer: Offer,
     val: Valuation,
@@ -131,6 +162,8 @@ def build_details_html(
     reason = pick_reason(offer, val, settings.selection)
     if reason:
         parts.append(f'<p class="muted">✓ {escape(reason)}</p>')
+    if offer.transaction_id is not None:
+        parts.append('<p class="muted">🛒 Kupiona — transakcja w zakładce „Transakcje” (przycisk „🛒 Transakcja”).</p>')
     location = escape(raw.city or "—")
     if offer.distance_km is not None:
         location += f" ({offer.distance_km:.0f} km od: {escape(settings.location_name)})"
@@ -203,6 +236,7 @@ def build_details_html(
         parts.append(_row("Maksymalna cena zakupu", f"<b>{zl(val.max_buy_price)}</b>"))
     parts.append("</table>")
     parts.append(_time_html(val, settings, pal))
+    parts.append(_corrections_html(val, settings))
 
     # --- warstwy oceny: reguły + lokalne AI ---
     parts.append(_layers_html(offer, val, settings, pal))

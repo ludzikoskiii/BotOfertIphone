@@ -3,7 +3,7 @@
 Aplikacja desktopowa (Windows) do wyszukiwania ofert używanych iPhone'ów na
 Allegro Lokalnie, Vinted i Sprzedajemy.pl, wyceny ich opłacalności i podpowiadania, czy i za ile kupić.
 
-> **Status: wersja 1.17.0.** Trzy portale, wycena, werdykty i negocjacje, filtry, zabezpieczenia werdyktu,
+> **Status: wersja 1.18.0.** Trzy portale, wycena, werdykty i negocjacje, filtry, zabezpieczenia werdyktu,
 > **darmowe lokalne AI** (klasyfikator tytułów, analiza zdjęć, opcjonalnie model językowy w Ollamie),
 > szablony wiadomości do sprzedającego, automatyczne odświeżanie, powiadomienia Windows i Telegram
 > oraz gotowy plik `PhoneBot.exe`. Program nie korzysta z żadnych płatnych usług.
@@ -640,7 +640,47 @@ w tabeli (sortowanie kliknięciem nagłówka albo gotowy zestaw „Najlepszy zys
   na NEGOCJUJ (z ceną, przy której się opłaca) albo na ODPUŚĆ. W uzasadnieniu pojawia się np. „To poniżej progu
   60 zł/h — werdykt obniżony z KUPUJ na NEGOCJUJ.”
 - Zysk na godzinę jest też w powiadomieniach Telegram i w szczegółach oferty na telefonie.
-- Korekta czasów napraw z faktycznych czasów z Twoich transakcji przyjdzie razem z zakładką „Transakcje”.
+- Czasy napraw są korygowane z faktycznych czasów z Twoich transakcji (patrz „Transakcje i samodoskonalenie wyceny”).
+
+### Transakcje i samodoskonalenie wyceny
+
+Zakładka **„Transakcje”** to lista kupionych telefonów: model, pamięć, stan, usterki, portal, link, data i cena
+zakupu, **części z magazynu** (po ich cenie zakupu — zdejmowane ze stanu), **inne koszty** (wysyłka, prowizje,
+dojazd, części spoza magazynu), **faktyczny czas naprawy**, data wystawienia, data i cena sprzedaży, gdzie
+sprzedałeś. Status: **kupiony → w naprawie → wystawiony → sprzedany** (po wpisaniu ceny i daty sprzedaży status
+zmienia się sam).
+
+![Zakładka Transakcje](docs/screenshots/transakcje.png)
+
+- **„🛒 Kupiłem”** w szczegółach oferty tworzy transakcję z danymi oferty i kosztami zakupu z wyceny,
+  podpowiada części, które masz na stanie, i zapisuje **wycenę programu z chwili zakupu** (koszt naprawy, cena
+  odsprzedaży, zysk, czas). Kupiona oferta ma w tabeli znacznik **„🛒 kupione”**, a przycisk zmienia się na
+  „🛒 Transakcja” (otwiera zapisaną transakcję).
+- **Realny zysk i zysk na godzinę** liczone po sprzedaży; do tego czas od wystawienia do sprzedaży. Nad tabelą:
+  liczba transakcji, realny zysk łącznie, średni zysk na godzinę i pieniądze „zamrożone” w niesprzedanych
+  telefonach. Kolumny sortują się liczbowo.
+- Usunięcie transakcji: części wracają na stan albo zostają zużyte (do wyboru).
+
+![Okno transakcji](docs/screenshots/transakcja_okno.png)
+
+**Samodoskonalenie wyceny.** Program porównuje wycenę z chwili zakupu z faktycznym wynikiem — osobno dla
+kombinacji **model + usterki** (np. „iPhone 12, zbity ekran”) — i liczy poprawki: **kosztu naprawy, czasu
+naprawy, ceny odsprzedaży i czasu do sprzedaży**.
+
+- Poprawka działa dopiero od **3 transakcji** danego typu i **stopniowo**: waga = n / (n + 3), czyli 50% przy
+  3 transakcjach, 67% przy 6, 80% przy 12. Liczona jest **mediana** (jedna nietypowa transakcja jej nie
+  przestawi), a poprawka jest przycięta do ±50%. Różnice poniżej 3% są uznawane za zgodne z wyceną.
+- Poprawki uczą się względem wyceny **bez poprawek**, więc nie nakładają się same na siebie.
+- **Wnioski zwykłym językiem** pod tabelą, np. „iPhone 12 ze zbitym ekranem: naprawa kosztuje Cię średnio
+  o 18% więcej, niż zakładam (5 transakcji). Uwzględniam to w wycenie (waga 62%).”
+- Przełącznik **„Uwzględniaj poprawki z transakcji w wycenie ofert”** (zakładka i Ustawienia → Zakup i naprawa).
+  W szczegółach oferty, do której pasuje poprawka, widać listę zastosowanych poprawek i **podgląd wyceny z
+  poprawkami i bez nich** (werdykt, zysk, maksymalna cena, koszt naprawy, czas, zysk na godzinę) — także gdy
+  poprawki są wyłączone.
+- Poprawiony czas naprawy trafia do kolumn „Czas pracy” i „Zysk na godzinę”; czas do sprzedaży pokazywany jest
+  w szczegółach oferty (do czasu statystyk rynku porównywany z założonymi 14 dniami).
+
+![Poprawki w szczegółach oferty](docs/screenshots/poprawki.png)
 
 ### Listy „Wszystkie oferty” i „Wybrane”
 
@@ -815,6 +855,7 @@ phonebot/
     parts.py         domyślna tabela cen części (z czasem pracy przy naprawie)
     inventory.py     magazyn części: partie, zgodność modeli, FIFO, niski stan
     work_time.py     czas pracy (naprawa + obsługa), zysk na godzinę i próg
+    transactions.py  transakcje, realny zysk, poprawki wyceny (model + usterki) i wnioski
     valuation.py     koszty, zysk, max cena zakupu
     negotiation.py   werdykt, negocjacje, ocena i kolor
     settings.py      wszystkie ustawienia (JSON w bazie)
@@ -839,7 +880,8 @@ phonebot/
                  extract.py (odporne wyciąganie ofert z JSON osadzonego w stronach)
   ui/            GUI PySide6: main_window.py, table_model.py, offer_details.py (+ details_html.py),
                  images.py (miniatury), workers.py (wątek), theme.py (kolory), filters_panel.py,
-                 settings_dialog.py, parts_editor.py, location_dialog.py, inventory_tab.py (magazyn)
+                 settings_dialog.py, parts_editor.py, location_dialog.py, inventory_tab.py (magazyn),
+                 transactions_tab.py (transakcje)
 tests/           testy jednostkowe (+ fixtures z przykładowymi odpowiedziami portali)
 tools/           screenshot.py — zrzut okna na danych testowych
 scripts/         clip_prepare.py (wektory opisów klas CLIP), clip_check_app.py (test analizy zdjęć na

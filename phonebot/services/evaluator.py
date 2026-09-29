@@ -13,7 +13,13 @@ from ..core.places import find_place
 from ..core.settings import Settings
 from ..core.valuation import evaluate, target_market_class
 from ..ml.desc_model import apply_to_offer
-from ..storage.repositories import InventoryRepository, OfferRepository, PartsRepository, RejectedRepository
+from ..storage.repositories import (
+    InventoryRepository,
+    OfferRepository,
+    PartsRepository,
+    RejectedRepository,
+    TransactionRepository,
+)
 from .fraud_service import apply_photo_scam, apply_risk, build_context
 from .reference_prices import ReferenceRepository, blend, lookup
 
@@ -26,6 +32,9 @@ class Evaluator:
         self.offers = OfferRepository(conn)
         stock = InventoryRepository(conn).stock(settings.inventory) if settings.inventory.enabled else None
         self.parts = PartsCatalog(PartsRepository(conn).all(), stock=stock)  # magazyn: Twoja cena zakupu
+        transactions = TransactionRepository(conn)
+        self.parts.corrections = transactions.corrections(settings.learning)  # poprawki z Twoich transakcji
+        self._bought = transactions.bought_offers()
         self._obs_cache: dict[str, list[MarketObservation]] = {}
         self._market_cache: dict[tuple, MarketEstimate] = {}
         self.references = ReferenceRepository(conn).all() if settings.reference_enabled else {}
@@ -75,7 +84,12 @@ class Evaluator:
             place = find_place(offer.raw.city)  # np. Allegro Lokalnie podaje tylko miasto
             lat, lon = (place.lat, place.lon) if place else (None, None)
         offer.distance_km = road_distance_km(s.home_lat, s.home_lon, lat, lon)
-        val = evaluate(offer, self.market_for(offer, mode), self.parts, s, mode)
+        market = self.market_for(offer, mode)
+        val = evaluate(offer, market, self.parts, s, mode)
+        if self.parts.corrections.for_offer(offer.parsed.model, offer.parsed.defects) is not None:
+            # podgląd: ta sama oferta z poprawkami z transakcji i bez nich
+            val.alternative = evaluate(offer, market, self.parts, s, mode, apply_corrections=not s.learning.enabled)
+        offer.transaction_id = self._bought.get(offer.id) if offer.id is not None else None
         photo = None
         if s.photo_scam.enabled and not self._whitelisted(offer):
             photo = self.photo_scam(offer, val.market.value)

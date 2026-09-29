@@ -508,7 +508,21 @@ class SettingsDialog(QDialog):
         hint.setObjectName("muted")
         work_form.addRow(hint)
         work.setLayout(work_form)
-        return self._page(form, fees, parts, inv, work)
+        learning = QGroupBox("Poprawki wyceny z Twoich transakcji (zakładka „Transakcje”)")
+        learning.setLayout(self._form([
+            Field("learning.enabled", "Uwzględniaj poprawki w wycenie ofert", "bool"),
+            Field("learning.min_transactions", "Poprawka od", "int", 1, 50, 1, " transakcji danego typu",
+                  tip="Typ = model + usterki, np. „iPhone 12, zbity ekran”."),
+            Field("learning.prior", "Stopniowanie wagi (waga = n / (n + ta liczba))", "int", 0, 50, 1,
+                  tip="3: przy 3 transakcjach poprawka działa w 50%, przy 6 — w 67%, przy 12 — w 80%. "
+                      "Większa liczba = ostrożniej."),
+            Field("learning.max_change_pct", "Największa poprawka", "float", 5, 100, 5, " %",
+                  tip="Chroni przed pomyłką we wpisanych danych."),
+            Field("learning.tolerance_pct", "Różnica uznawana za zgodną z wyceną", "float", 0, 20, 1, " %"),
+            Field("learning.default_sell_days", "Zakładany czas od wystawienia do sprzedaży", "float", 1, 120, 1,
+                  " dni"),
+        ]))
+        return self._page(form, fees, parts, inv, work, learning)
 
     def _market_tab(self) -> QWidget:
         s = self.settings

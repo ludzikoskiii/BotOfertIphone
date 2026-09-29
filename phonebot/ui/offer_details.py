@@ -49,6 +49,7 @@ class OfferDetailsView(QWidget):
     message_copied = Signal(str)  # komunikat do paska stanu
     pick_requested = Signal(int, bool)  # offer_id, True = dodaj do „Wybrane”, False = usuń
     block_requested = Signal(int)  # offer_id — „Zablokuj sprzedającego”
+    bought_requested = Signal(int)  # offer_id — „Kupiłem” (nowa transakcja albo edycja istniejącej)
 
     def __init__(self, settings: Settings, repo: OfferRepository, photos: ThumbnailCache, parent=None, *,
                  compact: bool = True):
@@ -94,6 +95,10 @@ class OfferDetailsView(QWidget):
         self.hide_btn.clicked.connect(self._toggle_hidden)
         self.pick_btn = QPushButton()  # „Wybrane”: ręczne dodanie / usunięcie (pierwszeństwo przed kryteriami)
         self.pick_btn.clicked.connect(self._toggle_picked)
+        self.bought_btn = QPushButton()
+        self.bought_btn.setObjectName("bought_btn")
+        self.bought_btn.clicked.connect(lambda: self.offer is not None and self.offer.id is not None
+                                        and self.bought_requested.emit(self.offer.id))
         self.not_phone_btn = QPushButton("✖ Nie telefon" if compact else "✖ To nie jest telefon")
         self.not_phone_btn.setToolTip("Przenosi ofertę do „Odrzucone” i uczy klasyfikator tytułów, "
                                       "że takie ogłoszenia to nie telefony")
@@ -139,6 +144,7 @@ class OfferDetailsView(QWidget):
         buttons.addWidget(self.watch_btn)
         buttons.addWidget(self.pick_btn)
         if not compact:
+            buttons.addWidget(self.bought_btn)
             buttons.addWidget(self.hide_btn)
             buttons.addWidget(self.not_phone_btn)
         buttons.addStretch(1)
@@ -149,6 +155,7 @@ class OfferDetailsView(QWidget):
             full.setToolTip("Pełne okno szczegółów (Enter / podwójne kliknięcie)")
             full.clicked.connect(self.full_view_requested.emit)
             buttons.addWidget(full)
+            second.addWidget(self.bought_btn)
             second.addWidget(self.hide_btn)
             second.addWidget(self.not_phone_btn)
             second.addStretch(1)
@@ -323,6 +330,11 @@ class OfferDetailsView(QWidget):
         self.pick_btn.setToolTip("Ręczna decyzja ma pierwszeństwo przed kryteriami automatycznymi "
                                  "(Ustawienia → Wybrane). Dodanie = obserwowanie oferty.")
         self.hide_btn.setToolTip("Ukryte oferty nie pokazują się w tabeli (przycisk „Pokaż ukryte”)")
+        bought = self.offer is not None and self.offer.transaction_id is not None
+        self.bought_btn.setText("🛒 Transakcja" if bought else "🛒 Kupiłem")
+        self.bought_btn.setToolTip("Kupiona — otwiera transakcję (zakładka „Transakcje”)" if bought else
+                                   "Zapisuje transakcję z danymi oferty i wyceną z chwili zakupu (zakładka "
+                                   "„Transakcje”); części z magazynu zdejmowane ze stanu")
 
 
 class OfferDetailsDialog(QDialog):
@@ -333,6 +345,7 @@ class OfferDetailsDialog(QDialog):
     message_copied = Signal(str)
     pick_requested = Signal(int, bool)
     block_requested = Signal(int)
+    bought_requested = Signal(int)
 
     def __init__(self, offer: Offer, val: Valuation, settings: Settings, repo: OfferRepository,
                  photos: ThumbnailCache, parent=None):
@@ -346,6 +359,7 @@ class OfferDetailsDialog(QDialog):
         self.view.message_copied.connect(self.message_copied.emit)
         self.view.pick_requested.connect(self.pick_requested.emit)
         self.view.block_requested.connect(self.block_requested.emit)
+        self.view.bought_requested.connect(self.bought_requested.emit)
         self.view.block_requested.connect(lambda *_: self.accept())
         self.view.not_phone.connect(lambda *_: self.accept())  # oferta znika z tabeli — okno też
         self.view.open_btn.setDefault(True)

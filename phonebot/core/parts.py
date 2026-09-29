@@ -29,7 +29,7 @@ class PartsCatalog:
     def __init__(self, rows: list[PartPrice], stock=None):
         self._rows = {(r.model, r.part): r for r in rows}
         self.stock = stock  # core.inventory.Stock — Twój magazyn (cena zakupu najstarszej sztuki)
-        self.time_adjust = None  # poprawka czasu naprawy z faktycznych czasów z transakcji (core.work_time.Adjust)
+        self.corrections = None  # core.transactions.Corrections — poprawki z Twoich transakcji (model + usterki)
 
     def lookup(self, model: str | None, part: Defect) -> PartPrice | None:
         if model and (model, part) in self._rows:
