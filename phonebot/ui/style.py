@@ -78,6 +78,7 @@ QToolBar QToolButton:checked {{ background: {p.selection}; color: {p.selection_t
 QPushButton {{ padding: 5px 12px; border: 1px solid {p.border}; border-radius: 6px; background: {p.surface_alt}; }}
 QPushButton:hover {{ border-color: {p.accent}; }}
 QPushButton:default {{ border-color: {p.accent}; }}
+QPushButton:checked {{ background: {p.selection}; color: {p.selection_text}; border-color: {p.accent}; }}
 QPushButton:disabled {{ color: {p.muted}; }}
 QGroupBox {{ border: 1px solid {p.border}; border-radius: 8px; margin-top: 14px; padding: {SPACING}px;
             background: {p.surface}; }}

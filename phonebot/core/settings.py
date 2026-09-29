@@ -15,6 +15,7 @@ from typing import Any
 from .fraud import FraudConfig
 from .inventory import InventoryConfig
 from .listing_filter import ListingFilterConfig
+from .market_stats import MarketStatsConfig
 from .messages import DEFAULT_TEMPLATES, OLD_NEGOTIATE_TEMPLATE
 from .models import Mode, RedFlag
 from .photo_scam import PhotoScamConfig
@@ -244,6 +245,8 @@ class Settings:
     work: WorkTimeConfig = field(default_factory=WorkTimeConfig)
     # transakcje: poprawki wyceny z Twoich wyników (model + usterki), od 3 transakcji, stopniowo
     learning: LearningConfig = field(default_factory=LearningConfig)
+    # statystyki rynku (zakładka „Rynek”): liczone w tle co kilka godzin i zapisywane (core/market_stats.py)
+    market_stats: MarketStatsConfig = field(default_factory=MarketStatsConfig)
     minimize_to_tray: bool = True
     notify_desktop: bool = True
     notify_price_drops: bool = True

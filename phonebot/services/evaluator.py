@@ -35,6 +35,7 @@ class Evaluator:
         transactions = TransactionRepository(conn)
         self.parts.corrections = transactions.corrections(settings.learning)  # poprawki z Twoich transakcji
         self._bought = transactions.bought_offers()
+        self._market_stats = None  # trendy i czas aktywności (zakładka „Rynek”) — wczytywane raz na przebieg
         self._obs_cache: dict[str, list[MarketObservation]] = {}
         self._market_cache: dict[tuple, MarketEstimate] = {}
         self.references = ReferenceRepository(conn).all() if settings.reference_enabled else {}
@@ -90,6 +91,8 @@ class Evaluator:
             # podgląd: ta sama oferta z poprawkami z transakcji i bez nich
             val.alternative = evaluate(offer, market, self.parts, s, mode, apply_corrections=not s.learning.enabled)
         offer.transaction_id = self._bought.get(offer.id) if offer.id is not None else None
+        if s.market_stats.enabled:
+            self._attach_market_stats(offer, val, mode)
         photo = None
         if s.photo_scam.enabled and not self._whitelisted(offer):
             photo = self.photo_scam(offer, val.market.value)
@@ -101,6 +104,26 @@ class Evaluator:
         if photo is not None:
             apply_photo_scam(val, photo, s)
         return val
+
+    def _attach_market_stats(self, offer: Offer, val: Valuation, mode: Mode) -> None:
+        """Trend ceny (dla klasy stanu, w której sprzedasz telefon) i czas aktywności ogłoszeń modelu."""
+        from ..core.market_stats import TOO_LITTLE
+        from .market_stats import MarketStatsRepository
+
+        if self._market_stats is None:
+            repo = MarketStatsRepository(self.conn)
+            self._market_stats = (repo, repo.trends(), repo.get("active") or {})
+        repo, trends, active = self._market_stats
+        model = offer.parsed.model
+        found = repo.trend_for(model, offer.parsed.storage_gb, target_market_class(offer, mode), trends)
+        if found is None:
+            val.trend_text = TOO_LITTLE if model else None
+        else:
+            t, overall = found
+            val.trend_text = t.describe() + (" — wszystkie pamięci" if overall and offer.parsed.storage_gb
+                                             and t.direction != "unknown" else "")
+        data = active.get(model or "")
+        val.active_days = data.get("median_days") if data else None
 
     def evaluate_all(self, offers: list[Offer], mode: Mode | None = None) -> list[tuple[Offer, Valuation]]:
         return [(o, self.evaluate(o, mode)) for o in offers]

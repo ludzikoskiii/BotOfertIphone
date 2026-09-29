@@ -230,6 +230,11 @@ class OfferRepository:
             return "price"
         return "ok"
 
+    def set_first_verdict(self, offer_id: int, verdict: str) -> None:
+        """Werdykt z chwili pojawienia się oferty (statystyki „najlepsze pory na zakupy”) — zapisywany raz."""
+        self.conn.execute("UPDATE offers SET first_verdict = ? WHERE id = ? AND first_verdict IS NULL",
+                          (verdict, offer_id))
+
     def purge_inactive(self, older_than_days: int) -> int:
         """Usuwa dawno nieaktywne oferty (i ich historię cen), których nie potrzebuje już wycena rynkowa.
 

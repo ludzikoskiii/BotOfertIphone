@@ -197,7 +197,7 @@ def evaluate(offer: Offer, market: MarketEstimate, parts: PartsCatalog, settings
     sell_days = None
     f = corr.factor("sell_days") if corr else None
     if f is not None:
-        sell_days = round(settings.learning.default_sell_days * f.applied, 1)
+        sell_days = round(f.expected * f.applied, 1)  # czas sprzedaży zakładany przy zakupach × poprawka
         notes.append(f"Czas sprzedaży: ok. {sell_days:.0f} dni ({_note(f)}).")
 
     mode_mismatch = mode is Mode.RESELL and any(not d.cosmetic for d in offer.parsed.defects) or (

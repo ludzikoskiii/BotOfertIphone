@@ -227,6 +227,12 @@ class MainWindow(QMainWindow):
         self.reference_timer.timeout.connect(self.refresh_references)
         self.reference_timer.start()
         QTimer.singleShot(60_000, self.refresh_references)
+        # statystyki rynku (zakładka „Rynek”) — w tle co kilka godzin; sprawdzane co 15 min
+        self._market_worker = None
+        self.market_timer = QTimer(self, interval=15 * 60_000)
+        self.market_timer.timeout.connect(self.refresh_market_stats)
+        self.market_timer.start()
+        QTimer.singleShot(90_000, self.refresh_market_stats)
         # skróty zdjęć do wykrywania oszustw — w tle co 10 minut (i po każdym odświeżeniu ofert)
         self._hash_worker = None
         self.photo_hash_timer = QTimer(self, interval=10 * 60_000)
@@ -592,6 +598,11 @@ class MainWindow(QMainWindow):
         self.transactions_tab.changed.connect(self.inventory_tab.refresh)
         self.transactions_tab.changed.connect(self.reload)
         self.main_tabs.addTab(self.transactions_tab, "Transakcje")
+        from .market_tab import MarketTab
+
+        self.market_tab = MarketTab(self.conn, lambda: self.settings, self)
+        self.market_tab.recompute_requested.connect(lambda: self.refresh_market_stats(force=True))
+        self.main_tabs.addTab(self.market_tab, "Rynek")
         self.setCentralWidget(self.main_tabs)
 
     def _save_settings_from_tab(self, settings) -> None:
@@ -1398,6 +1409,33 @@ class MainWindow(QMainWindow):
         start_in_thread(worker, self)
         return True
 
+    def refresh_market_stats(self, force: bool = False) -> bool:
+        """Statystyki rynku w wątku roboczym (co ``recompute_hours`` godzin albo na żądanie)."""
+        from ..services.market_stats import compute_in_background, stats_due
+
+        cfg = self.settings.market_stats
+        if self._closed or self._market_worker is not None or not cfg.enabled \
+                or not (force or stats_due(self.conn, cfg)):
+            return False
+        worker = FuncWorker(compute_in_background, self.db_path, copy.deepcopy(self.settings))
+        worker.finished.connect(self._market_stats_done)
+        worker.failed.connect(self._market_stats_done)
+        self._market_worker = worker
+        self.market_tab.set_computing(True)
+        start_in_thread(worker, self)
+        return True
+
+    def _market_stats_done(self, result) -> None:
+        self._market_worker = None
+        if self._closed:
+            return
+        self.market_tab.set_computing(False)
+        self.market_tab.refresh()
+        if isinstance(result, str):
+            self._show_status(f"Statystyki rynku: błąd — {result}")
+        elif isinstance(result, dict):
+            self.reload()  # trend i czas aktywności w szczegółach ofert
+
     def _references_done(self, result) -> None:
         self._ref_worker = None
         if isinstance(result, dict) and result:
@@ -1589,7 +1627,7 @@ class MainWindow(QMainWindow):
         self.refresh_timer.stop()
         # okno zamknięte na dobre: żadnych zadań w tle z zegarów (ceny referencyjne, zdjęcia, Telegram)
         self._closed = True
-        for timer in (self.telegram_timer, self.reference_timer, self.photo_hash_timer, self.web_timer,
+        for timer in (self.telegram_timer, self.reference_timer, self.market_timer, self.photo_hash_timer, self.web_timer,
                       self.schedule_timer):
             timer.stop()
         self._save_ui_state()

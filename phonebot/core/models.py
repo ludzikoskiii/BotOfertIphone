@@ -348,6 +348,8 @@ class Valuation:
     baseline: dict = field(default_factory=dict)
     sell_days: float | None = None  # przewidywany czas sprzedaży (z Twoich transakcji)
     resale_value: float | None = None  # cena odsprzedaży V użyta w wyliczeniu (po korekcie eSIM i poprawkach)
+    trend_text: str | None = None  # trend ceny modelu (zakładka „Rynek”), np. „↘ spada (−6% w 30 dni, 84 oferty)”
+    active_days: float | None = None  # mediana czasu aktywności ogłoszeń tego modelu (przybliżona szybkość sprzedaży)
     alternative: object | None = None  # podgląd: ta sama oferta z poprawkami / bez (services.evaluator)
 
     @property

@@ -322,6 +322,32 @@ MIGRATIONS: list[str] = [
     );
     CREATE INDEX idx_transactions_offer ON transactions (offer_id)
     """,
+    """
+    ALTER TABLE offers ADD COLUMN first_verdict TEXT;
+    CREATE TABLE market_daily (
+        model       TEXT NOT NULL,
+        storage_gb  INTEGER NOT NULL,
+        cls         TEXT NOT NULL,
+        day         TEXT NOT NULL,
+        n           INTEGER NOT NULL,
+        p10         REAL,
+        p25         REAL,
+        median      REAL,
+        p75         REAL,
+        p90         REAL,
+        new_count   INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (model, storage_gb, cls, day)
+    );
+    CREATE TABLE market_days (
+        day          TEXT PRIMARY KEY,
+        computed_at  TEXT NOT NULL
+    );
+    CREATE TABLE market_stats (
+        key          TEXT PRIMARY KEY,
+        computed_at  TEXT NOT NULL,
+        data         TEXT NOT NULL
+    )
+    """,
 ]
 
 

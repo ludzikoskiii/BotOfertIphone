@@ -56,6 +56,8 @@ def run_post_scan(conn: sqlite3.Connection, settings: Settings, report: ScanRepo
         if reason == "nowa" and repo.was_notified(offer_id):
             continue
         val = evaluator.evaluate(offer)
+        if reason == "nowa":
+            repo.set_first_verdict(offer_id, val.verdict.value)  # do statystyk „najlepsze pory na zakupy”
         # tylko czyste okazje: zielona ocena i werdykt KUPUJ/NEGOCJUJ (nigdy DO WERYFIKACJI)
         if val.color is RowColor.GREEN and val.verdict in (Verdict.BUY, Verdict.NEGOTIATE):
             greens.append((offer, val, reason))

@@ -535,7 +535,22 @@ class SettingsDialog(QDialog):
         self.manual = EditableTable(["Model (np. iPhone 13)", "Pamięć GB (np. 128)", "Wartość zł"], rows)
         QVBoxLayout(manual).addWidget(self.manual)
         self._readers.append(self._read_manual)
-        return self._page(form, manual)
+        stats = QGroupBox("Statystyki rynku (zakładka „Rynek”, trend w szczegółach oferty)")
+        stats.setLayout(self._form([
+            Field("market_stats.enabled", "Licz statystyki rynku w tle", "bool"),
+            Field("market_stats.recompute_hours", "Przeliczaj co", "int", 1, 48, 1, " h"),
+            Field("market_stats.min_offers_point", "Punkt wykresu cen: co najmniej", "int", 1, 50, 1, " ofert danego dnia"),
+            Field("market_stats.min_points", "Wykres i trend: co najmniej", "int", 2, 60, 1, " dni z danymi"),
+            Field("market_stats.trend_days", "Trend z ostatnich", "int", 7, 90, 1, " dni"),
+            Field("market_stats.trend_min_offers", "Trend: co najmniej", "int", 3, 500, 1, " nowych ofert"),
+            Field("market_stats.trend_stable_pct", "„Stabilny”, gdy zmiana mniejsza niż", "float", 0.5, 20, 0.5, " %",
+                  1),
+            Field("market_stats.min_ended", "Czas aktywności: co najmniej", "int", 1, 100, 1,
+                  " zakończonych ogłoszeń"),
+            Field("market_stats.min_good_offers", "Najlepsze pory: co najmniej", "int", 1, 200, 1,
+                  " okazji (KUPUJ / NEGOCJUJ)"),
+        ]))
+        return self._page(form, manual, stats)
 
     def _read_manual(self, s: Settings) -> None:
         values = {}

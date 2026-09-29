@@ -202,7 +202,8 @@ def snapshot_from(val, cfg: LearningConfig) -> Snapshot:
         repair_cost=base.get("repair_cost", val.repair_cost), resale_shown=val.resale_value,
         repair_cost_shown=val.repair_cost, profit=val.expected_profit, max_buy=val.max_buy_price,
         repair_minutes=base.get("repair_minutes"), handling_minutes=handling,
-        sell_days=cfg.default_sell_days, profit_per_hour=val.profit_per_hour,  # czas sprzedaży: bazowy
+        # czas sprzedaży bazowy: czas aktywności ogłoszeń modelu (zakładka „Rynek”), a bez danych — z ustawień
+        sell_days=val.active_days or cfg.default_sell_days, profit_per_hour=val.profit_per_hour,
         corrected=bool(val.corrections),
     )
 

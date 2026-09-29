@@ -164,7 +164,8 @@ class Scanner:
         # porządki: stare nieaktywne oferty nie są już potrzebne do wyceny (okno rynkowe × 2); archiwum
         repo = OfferRepository(self.conn)
         if not incremental:
-            purged = repo.purge_inactive(max(s.market_window_days * 2, 60))
+            # nieaktywne oferty zostają co najmniej na okres statystyk rynku (czas aktywności, najlepsze pory)
+            purged = repo.purge_inactive(max(s.market_window_days * 2, 60, s.market_stats.window_days + 7))
             if purged:
                 log.info("Usunięto %d dawno nieaktywnych ofert", purged)
         if s.refresh.enabled:

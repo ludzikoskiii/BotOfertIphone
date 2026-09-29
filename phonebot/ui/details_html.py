@@ -216,6 +216,12 @@ def build_details_html(
         parts.append(f'<tr><td colspan="2" class="muted">&nbsp;&nbsp;cena w ogłoszeniu: '
                      f'{escape(raw.params.get("original_price", ""))} {escape(raw.params["original_currency"])} '
                      f'(kurs NBP {escape(raw.params.get("fx_date", ""))})</td></tr>')
+    if val.trend_text:
+        parts.append(f'<tr><td colspan="2" class="muted">&nbsp;&nbsp;trend ceny ({settings.market_stats.trend_days} '
+                     f"dni): {escape(val.trend_text)}</td></tr>")
+    if val.active_days is not None:
+        parts.append(f'<tr><td colspan="2" class="muted">&nbsp;&nbsp;ogłoszenia tego modelu są aktywne średnio '
+                     f"~{val.active_days:.0f} dni (zakładka „Rynek”)</td></tr>")
     parts.append(_row("Cena zakupu", zl(-raw.price)))
     for item in val.repair_items:
         parts.append(_row(f"Naprawa: {item.label}", zl(-item.amount)))

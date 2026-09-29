@@ -3,7 +3,7 @@
 Aplikacja desktopowa (Windows) do wyszukiwania ofert używanych iPhone'ów na
 Allegro Lokalnie, Vinted i Sprzedajemy.pl, wyceny ich opłacalności i podpowiadania, czy i za ile kupić.
 
-> **Status: wersja 1.18.0.** Trzy portale, wycena, werdykty i negocjacje, filtry, zabezpieczenia werdyktu,
+> **Status: wersja 1.19.0.** Trzy portale, wycena, werdykty i negocjacje, filtry, zabezpieczenia werdyktu,
 > **darmowe lokalne AI** (klasyfikator tytułów, analiza zdjęć, opcjonalnie model językowy w Ollamie),
 > szablony wiadomości do sprzedającego, automatyczne odświeżanie, powiadomienia Windows i Telegram
 > oraz gotowy plik `PhoneBot.exe`. Program nie korzysta z żadnych płatnych usług.
@@ -678,9 +678,35 @@ naprawy, ceny odsprzedaży i czasu do sprzedaży**.
   poprawkami i bez nich** (werdykt, zysk, maksymalna cena, koszt naprawy, czas, zysk na godzinę) — także gdy
   poprawki są wyłączone.
 - Poprawiony czas naprawy trafia do kolumn „Czas pracy” i „Zysk na godzinę”; czas do sprzedaży pokazywany jest
-  w szczegółach oferty (do czasu statystyk rynku porównywany z założonymi 14 dniami).
+  w szczegółach oferty (porównywany z czasem aktywności ogłoszeń modelu z zakładki „Rynek”, a bez danych — z 14 dniami).
 
 ![Poprawki w szczegółach oferty](docs/screenshots/poprawki.png)
+
+### Rynek: ceny w czasie, podaż, trend i najlepsze pory na zakupy
+
+Zakładka **„Rynek”** pokazuje statystyki z ofert zebranych przez program (także archiwalnych). Wybierasz
+**model, pamięć** (albo wszystkie) i **stan** (używane sprawne / uszkodzone / nowe) oraz zakres: **tydzień,
+miesiąc albo 3 miesiące**.
+
+![Zakładka Rynek](docs/screenshots/rynek.png)
+
+- **Ceny w czasie:** mediana cen ogłoszeń aktywnych danego dnia (linia) i typowy zakres — 80% ofert (pasmo).
+  Najechanie myszą pokazuje dzień, medianę, zakres i liczbę ofert. Ta sama sztuka z kilku portali liczona raz.
+- **Podaż:** liczba nowych ogłoszeń dziennie.
+- **Czas aktywności ogłoszenia:** mediana czasu od wystawienia do zniknięcia z portalu, osobno dla modeli
+  (przybliżona szybkość sprzedaży — zniknięte ogłoszenie mogło też zostać usunięte).
+- **Najlepsze pory na zakupy:** kiedy pojawia się najwięcej ofert z werdyktem KUPUJ lub NEGOCJUJ (dni tygodnia
+  i godziny, według werdyktu z chwili pojawienia się oferty) i w które dni ceny nowych ofert są najniższe
+  względem mediany rynku.
+- **Trend** (rośnie / stabilny / spada): prosta dopasowana do cen nowych ogłoszeń z ostatnich 30 dni. „Rośnie”
+  albo „spada” tylko przy zmianie co najmniej 3% i wyraźnie większej od przypadkowych wahań — inaczej
+  „stabilny”. Trend i czas aktywności widać też w szczegółach oferty (w wyliczeniu, pod wartością rynkową).
+- **„Za mało danych”** zamiast wykresu, gdy danych jest za mało (progi w Ustawienia → Rynek).
+- Statystyki liczą się **w tle co 6 godzin** (albo przyciskiem „⟳ Przelicz teraz”) i są zapisywane w bazie,
+  więc przełączanie modeli i zakresów jest natychmiastowe. Dni starsze niż 3 tygodnie są zapisane na stałe —
+  wykres 3 miesięcy nie znika, gdy dawne oferty zostaną usunięte z bazy. Nieaktywne oferty są trzymane
+  co najmniej 97 dni.
+- Czas aktywności ogłoszeń modelu jest też punktem odniesienia dla czasu sprzedaży w „Transakcjach”.
 
 ### Listy „Wszystkie oferty” i „Wybrane”
 
@@ -856,6 +882,7 @@ phonebot/
     inventory.py     magazyn części: partie, zgodność modeli, FIFO, niski stan
     work_time.py     czas pracy (naprawa + obsługa), zysk na godzinę i próg
     transactions.py  transakcje, realny zysk, poprawki wyceny (model + usterki) i wnioski
+    market_stats.py  statystyki rynku: ceny dzienne, podaż, trend, czas aktywności, najlepsze pory
     valuation.py     koszty, zysk, max cena zakupu
     negotiation.py   werdykt, negocjacje, ocena i kolor
     settings.py      wszystkie ustawienia (JSON w bazie)
@@ -881,7 +908,7 @@ phonebot/
   ui/            GUI PySide6: main_window.py, table_model.py, offer_details.py (+ details_html.py),
                  images.py (miniatury), workers.py (wątek), theme.py (kolory), filters_panel.py,
                  settings_dialog.py, parts_editor.py, location_dialog.py, inventory_tab.py (magazyn),
-                 transactions_tab.py (transakcje)
+                 transactions_tab.py (transakcje), market_tab.py + charts.py (rynek, wykresy)
 tests/           testy jednostkowe (+ fixtures z przykładowymi odpowiedziami portali)
 tools/           screenshot.py — zrzut okna na danych testowych
 scripts/         clip_prepare.py (wektory opisów klas CLIP), clip_check_app.py (test analizy zdjęć na
