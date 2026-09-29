@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .fraud import FraudConfig
+from .inventory import InventoryConfig
 from .listing_filter import ListingFilterConfig
 from .messages import DEFAULT_TEMPLATES, OLD_NEGOTIATE_TEMPLATE
 from .models import Mode, RedFlag
@@ -235,6 +236,8 @@ class Settings:
     refresh_minutes: int = 15  # pełne pobranie co tyle minut — tylko gdy szybkie odświeżanie jest wyłączone
     # odświeżanie przyrostowe: nowe oferty co ~2 min per portal, stare w tle, archiwum (core/refresh.py)
     refresh: RefreshConfig = field(default_factory=RefreshConfig)
+    # magazyn części: wycena z Twojej ceny zakupu, premia „masz część”, niski stan (core/inventory.py)
+    inventory: InventoryConfig = field(default_factory=InventoryConfig)
     minimize_to_tray: bool = True
     notify_desktop: bool = True
     notify_price_drops: bool = True

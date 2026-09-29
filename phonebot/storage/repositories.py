@@ -804,3 +804,84 @@ class BlacklistMatcher:
                 if p in self.phones:
                     return f"numer telefonu +{p}"
         return None
+
+
+class InventoryRepository:
+    """Magazyn części: partie i zużycie (FIFO — najstarsza pasująca partia pierwsza)."""
+
+    def __init__(self, conn: sqlite3.Connection):
+        self.conn = conn
+
+    @staticmethod
+    def _lot(r: sqlite3.Row):
+        from ..core.inventory import Lot
+
+        return Lot(int(r["id"]), Defect(r["part"]), json.loads(r["models"] or "[]"), r["quality"], int(r["qty"]),
+                   float(r["unit_price"]), _dt(r["bought_at"]), r["supplier"] or "", r["note"] or "")
+
+    def lots(self, *, include_empty: bool = True) -> list:
+        sql = "SELECT * FROM inventory_lots" + ("" if include_empty else " WHERE qty > 0") + \
+              " ORDER BY COALESCE(bought_at, ''), id"
+        return [self._lot(r) for r in self.conn.execute(sql)]
+
+    def save(self, lot) -> int:
+        values = (lot.part.value, json.dumps(lot.models, ensure_ascii=False), lot.quality, int(lot.qty),
+                  float(lot.unit_price), _iso(lot.bought_at), lot.supplier, lot.note)
+        if lot.id is None:
+            cur = self.conn.execute("INSERT INTO inventory_lots (part, models, quality, qty, unit_price, bought_at, "
+                                    "supplier, note) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", values)
+            lot.id = int(cur.lastrowid)
+        else:
+            self.conn.execute("UPDATE inventory_lots SET part = ?, models = ?, quality = ?, qty = ?, unit_price = ?, "
+                              "bought_at = ?, supplier = ?, note = ? WHERE id = ?", (*values, lot.id))
+        return lot.id
+
+    def delete(self, lot_id: int) -> None:
+        self.conn.execute("DELETE FROM inventory_lots WHERE id = ?", (lot_id,))
+
+    def stock(self, cfg):
+        from ..core.inventory import Stock
+
+        return Stock(self.lots(include_empty=False), cfg)
+
+    def consume(self, model: str | None, part: Defect, qty: int, cfg, *, transaction_id: int | None = None,
+                note: str = "", when: datetime | None = None) -> list[tuple[int, int, float]]:
+        """Zdejmuje ``qty`` sztuk (FIFO) i zapisuje zużycie. Zwraca [(partia, sztuk, cena)] — pusta lista, gdy
+        za mało na stanie (nic nie jest zdejmowane)."""
+        from ..core.inventory import fifo_pick
+
+        picks = fifo_pick(self.lots(include_empty=False), model, part, qty, cfg.compat)
+        used_at = _iso(when or utcnow())
+        out = []
+        for lot, take in picks:
+            self.conn.execute("UPDATE inventory_lots SET qty = qty - ? WHERE id = ?", (take, lot.id))
+            self.conn.execute("INSERT INTO inventory_usage (lot_id, part, model, qty, unit_price, used_at, "
+                              "transaction_id, note) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                              (lot.id, part.value, model, take, lot.unit_price, used_at, transaction_id, note))
+            out.append((lot.id, take, lot.unit_price))
+        return out
+
+    def release(self, transaction_id: int) -> int:
+        """Cofnięcie zużycia transakcji (np. usunięta transakcja albo zmienione części) — sztuki wracają."""
+        rows = self.conn.execute("SELECT id, lot_id, qty FROM inventory_usage WHERE transaction_id = ?",
+                                 (transaction_id,)).fetchall()
+        for r in rows:
+            if r["lot_id"] is not None:
+                self.conn.execute("UPDATE inventory_lots SET qty = qty + ? WHERE id = ?", (r["qty"], r["lot_id"]))
+        self.conn.execute("DELETE FROM inventory_usage WHERE transaction_id = ?", (transaction_id,))
+        return len(rows)
+
+    def usage(self, since: datetime | None = None) -> list[tuple[Defect, str, datetime]]:
+        sql = "SELECT part, model, used_at, qty FROM inventory_usage" + (" WHERE used_at >= ?" if since else "")
+        out = []
+        for r in self.conn.execute(sql, (_iso(since),) if since else ()):
+            for _ in range(int(r["qty"])):
+                out.append((Defect(r["part"]), r["model"] or "", _dt(r["used_at"])))
+        return out
+
+    def usage_for(self, transaction_id: int) -> list[sqlite3.Row]:
+        return self.conn.execute("SELECT * FROM inventory_usage WHERE transaction_id = ? ORDER BY id",
+                                 (transaction_id,)).fetchall()
+
+    def value(self) -> float:
+        return float(self.conn.execute("SELECT COALESCE(SUM(qty * unit_price), 0) FROM inventory_lots").fetchone()[0])

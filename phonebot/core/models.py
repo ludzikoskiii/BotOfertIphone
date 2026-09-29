@@ -329,6 +329,7 @@ class Valuation:
     reasons: list[str]
     risk: object | None = None  # core.fraud.FraudAssessment (ryzyko oszustwa) — ustawiane przez Evaluator
     photo_scam: str = ""  # „certain” | „weak” — sprzedaż zdjęcia zamiast telefonu (core.photo_scam)
+    parts_in_stock: list = field(default_factory=list)  # usterki, do których masz część w magazynie
 
     @property
     def has_hard_flag(self) -> bool:

@@ -67,7 +67,16 @@ def repair_costs(offer: Offer, parts: PartsCatalog, settings: Settings) -> tuple
     items: list[CostItem] = []
     unknown = False
     model = offer.parsed.model
+    stock = getattr(parts, "stock", None)
+    from_stock = 0
     for defect in offer.parsed.defects:
+        lot = stock.oldest(model, defect) if stock is not None else None
+        if lot is not None:  # masz część: koszt = Twoja cena zakupu (najstarsza sztuka pierwsza)
+            n = stock.available(model, defect)
+            items.append(CostItem(f"{defect.label} — z magazynu ({lot.label}, {n} szt., Twoja cena)",
+                                  lot.unit_price))
+            from_stock += 1
+            continue
         row = parts.lookup(model, defect)
         if row is not None:
             note = f" ({row.note})" if row.note else ""
@@ -80,7 +89,7 @@ def repair_costs(offer: Offer, parts: PartsCatalog, settings: Settings) -> tuple
         unknown = True
         items.append(CostItem("Nieokreślona usterka „na części” (ryzyko)", settings.unknown_defect_risk_cost))
     if items:
-        if settings.parts_shipping_cost:
+        if settings.parts_shipping_cost and from_stock < len(items):  # wszystko z magazynu — bez wysyłki części
             items.append(CostItem("Wysyłka części", settings.parts_shipping_cost))
         if settings.own_labor_cost:
             items.append(CostItem("Własna robocizna", settings.own_labor_cost))
@@ -180,6 +189,7 @@ def evaluate(offer: Offer, market: MarketEstimate, parts: PartsCatalog, settings
             expected_profit=None, roi_pct=None, required_profit=None, max_buy_price=None,
             verdict=Verdict.SKIP, negotiation=Negotiation(False, None, None, "Brak danych do negocjacji."),
             score=score, color=color_for(score, settings), flags=flags, reasons=reasons,
+            parts_in_stock=parts_in_stock(offer, parts),
         )
 
     value = market.value
@@ -253,14 +263,27 @@ def evaluate(offer: Offer, market: MarketEstimate, parts: PartsCatalog, settings
         margin=negotiation_margin(offer.parsed.negotiable, settings), confidence=market.confidence,
         flags=flags, settings=settings, mode_mismatch=mode_mismatch,
     )
+    in_stock = parts_in_stock(offer, parts)
+    if in_stock and len(in_stock) == len(offer.parsed.defects) and settings.inventory.score_bonus:
+        score = min(100, score + settings.inventory.score_bonus)  # masz wszystkie potrzebne części
+        reasons.append(f"Masz na stanie: {', '.join(d.label for d in in_stock)} "
+                       f"(+{settings.inventory.score_bonus} pkt oceny).")
     if verdict is Verdict.VERIFY or RedFlag.PRICE_UNREALISTIC in flags:
         score = min(score, settings.score_green - 1)  # najwyżej „przeciętna”, nigdy zielona
     return Valuation(
         mode=mode, market=market, repair_items=repair_items, repair_cost=repair_total,
         cost_items=cost_items, total_costs=total_costs, expected_profit=profit, roi_pct=roi,
         required_profit=required, max_buy_price=max_buy, verdict=verdict, negotiation=negotiation,
-        score=score, color=color_for(score, settings), flags=flags, reasons=reasons,
+        score=score, color=color_for(score, settings), flags=flags, reasons=reasons, parts_in_stock=in_stock,
     )
+
+
+def parts_in_stock(offer: Offer, parts: PartsCatalog) -> list:
+    """Usterki, do których masz część w magazynie."""
+    stock = getattr(parts, "stock", None)
+    if stock is None:
+        return []
+    return [d for d in offer.parsed.defects if stock.oldest(offer.parsed.model, d) is not None]
 
 
 def _lower_first(text: str) -> str:

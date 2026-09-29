@@ -104,11 +104,16 @@ class FiltersPanel(QScrollArea):
         for w in (self.price_min, self.price_max, self.min_profit):
             w.valueChanged.connect(self._changed)
         self.min_profit_on.toggled.connect(self._changed)
+        self.with_parts = QCheckBox("🧩 tylko oferty, do których mam części")
+        self.with_parts.setObjectName("only_with_parts")
+        self.with_parts.setChecked(f.only_with_parts)
+        self.with_parts.toggled.connect(self._changed)
         bl = QFormLayout(basic)
         bl.addRow(self.text)
         bl.addRow("Cena od:", self.price_min)
         bl.addRow("Cena do:", self.price_max)
         bl.addRow(self.min_profit_on, self.min_profit)
+        bl.addRow(self.with_parts)
         lay.addWidget(basic)
 
         # --- ocena, stan, portal ---
@@ -164,7 +169,7 @@ class FiltersPanel(QScrollArea):
             conditions=picked(self.cond_checks), sources=picked(self.src_checks),
             min_profit_enabled=self.min_profit_on.isChecked(), min_profit=self.min_profit.value(),
             shipping_only=self.shipping_only.isChecked(), colors=picked(self.color_checks), text=self.text.text(),
-            risk_levels=picked(self.risk_checks),
+            risk_levels=picked(self.risk_checks), only_with_parts=self.with_parts.isChecked(),
         )
 
     def set_filter(self, f: ViewFilter) -> None:
@@ -175,6 +180,7 @@ class FiltersPanel(QScrollArea):
         self.radius.setValue(f.radius_km)
         self.keep_shipping.setChecked(f.radius_keeps_shipping)
         self.shipping_only.setChecked(f.shipping_only)
+        self.with_parts.setChecked(f.only_with_parts)
         self.min_profit_on.setChecked(f.min_profit_enabled)
         self.min_profit.setValue(f.min_profit)
         for checks, selected in ((self.color_checks, f.colors), (self.cond_checks, f.conditions),

@@ -21,6 +21,7 @@ class ViewFilter:
     shipping_only: bool = False
     colors: list[str] = field(default_factory=list)  # np. ["green"]; puste = wszystkie
     risk_levels: list[str] = field(default_factory=list)  # low / medium / high; puste = wszystkie
+    only_with_parts: bool = False  # tylko oferty, do których masz części w magazynie
     text: str = ""
 
     def is_active(self) -> bool:
@@ -48,6 +49,8 @@ def matches(offer: Offer, val: Valuation, f: ViewFilter) -> bool:
     if f.min_profit_enabled and (val.expected_profit is None or val.expected_profit < f.min_profit):
         return False
     if f.colors and val.color.value not in f.colors:
+        return False
+    if f.only_with_parts and not val.parts_in_stock:
         return False
     if f.risk_levels and getattr(val.risk, "level", "low") not in f.risk_levels:
         return False

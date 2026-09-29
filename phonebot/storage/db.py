@@ -261,6 +261,32 @@ MIGRATIONS: list[str] = [
     ALTER TABLE offers ADD COLUMN checked_at TEXT;
     CREATE INDEX idx_offers_archived ON offers (archived_at);
     """,
+    # v13 — magazyn części: partie (ilość, cena i data zakupu, dostawca) i historia zużycia (FIFO)
+    """
+    CREATE TABLE inventory_lots (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        part        TEXT NOT NULL,
+        models      TEXT NOT NULL DEFAULT '[]',
+        quality     TEXT NOT NULL DEFAULT 'replacement',
+        qty         INTEGER NOT NULL DEFAULT 0,
+        unit_price  REAL NOT NULL DEFAULT 0,
+        bought_at   TEXT,
+        supplier    TEXT NOT NULL DEFAULT '',
+        note        TEXT NOT NULL DEFAULT ''
+    );
+    CREATE TABLE inventory_usage (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        lot_id          INTEGER REFERENCES inventory_lots (id) ON DELETE SET NULL,
+        part            TEXT NOT NULL,
+        model           TEXT,
+        qty             INTEGER NOT NULL,
+        unit_price      REAL NOT NULL,
+        used_at         TEXT NOT NULL,
+        transaction_id  INTEGER,
+        note            TEXT NOT NULL DEFAULT ''
+    );
+    CREATE INDEX idx_usage_tx ON inventory_usage (transaction_id);
+    """,
 ]
 
 

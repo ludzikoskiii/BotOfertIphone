@@ -13,7 +13,7 @@ from ..core.places import find_place
 from ..core.settings import Settings
 from ..core.valuation import evaluate, target_market_class
 from ..ml.desc_model import apply_to_offer
-from ..storage.repositories import OfferRepository, PartsRepository, RejectedRepository
+from ..storage.repositories import InventoryRepository, OfferRepository, PartsRepository, RejectedRepository
 from .fraud_service import apply_photo_scam, apply_risk, build_context
 from .reference_prices import ReferenceRepository, blend, lookup
 
@@ -24,7 +24,8 @@ class Evaluator:
         self.conn = conn
         self._fraud_ctx = None  # kontekst oszustw (opisy, zdjęcia, sprzedający) — raz na przebieg
         self.offers = OfferRepository(conn)
-        self.parts = PartsCatalog(PartsRepository(conn).all())
+        stock = InventoryRepository(conn).stock(settings.inventory) if settings.inventory.enabled else None
+        self.parts = PartsCatalog(PartsRepository(conn).all(), stock=stock)  # magazyn: Twoja cena zakupu
         self._obs_cache: dict[str, list[MarketObservation]] = {}
         self._market_cache: dict[tuple, MarketEstimate] = {}
         self.references = ReferenceRepository(conn).all() if settings.reference_enabled else {}

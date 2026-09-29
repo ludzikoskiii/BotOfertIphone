@@ -472,7 +472,16 @@ class SettingsDialog(QDialog):
             for r in range(self.fees.rowCount())}))
         parts = QPushButton("Edytuj tabelę cen części…")
         parts.clicked.connect(self.parts_editor_requested.emit)
-        return self._page(form, fees, parts)
+        inv = QGroupBox("Magazyn części (zakładka „Magazyn części”)")
+        inv.setLayout(self._form([
+            Field("inventory.enabled", "Wyceniaj naprawę po cenie części z magazynu (najstarsza sztuka)", "bool"),
+            Field("inventory.score_bonus", "Premia do oceny, gdy masz wszystkie potrzebne części", "int", 0, 50, 1,
+                  " pkt"),
+            Field("inventory.low_stock_qty", "Ostrzeżenie o niskim stanie: zostało", "int", 0, 50, 1, " szt. lub mniej"),
+            Field("inventory.frequent_uses", "…części zużytej co najmniej", "int", 1, 50, 1, " razy"),
+            Field("inventory.frequent_days", "…w ostatnich", "int", 7, 365, 1, " dniach"),
+        ]))
+        return self._page(form, fees, parts, inv)
 
     def _market_tab(self) -> QWidget:
         s = self.settings

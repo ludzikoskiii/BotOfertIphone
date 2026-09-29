@@ -37,6 +37,7 @@ from PySide6.QtWidgets import (
     QSystemTrayIcon,
     QTabBar,
     QTableView,
+    QTabWidget,
     QToolBar,
     QToolButton,
     QVBoxLayout,
@@ -569,7 +570,21 @@ class MainWindow(QMainWindow):
         lay.setContentsMargins(MARGIN // 2, MARGIN // 2, MARGIN // 2, 0)
         lay.addWidget(split)
         self.splitter = split
-        self.setCentralWidget(wrap)
+        # zakładki główne: oferty, magazyn części (dalej: transakcje, rynek)
+        from .inventory_tab import InventoryTab
+
+        self.main_tabs = QTabWidget()
+        self.main_tabs.setObjectName("main_tabs")
+        self.main_tabs.setDocumentMode(True)
+        self.main_tabs.addTab(wrap, "Oferty")
+        self.inventory_tab = InventoryTab(self.conn, lambda: self.settings, self._save_settings_from_tab, self)
+        self.inventory_tab.changed.connect(self.reload)  # nowy stan magazynu → nowa wycena ofert
+        self.main_tabs.addTab(self.inventory_tab, "Magazyn części")
+        self.setCentralWidget(self.main_tabs)
+
+    def _save_settings_from_tab(self, settings) -> None:
+        self.settings = settings
+        self.settings_repo.save(settings)
 
     def _toggle_filters(self, visible: bool) -> None:
         self.filters.setVisible(visible)

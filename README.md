@@ -3,7 +3,7 @@
 Aplikacja desktopowa (Windows) do wyszukiwania ofert używanych iPhone'ów na
 Allegro Lokalnie, Vinted i Sprzedajemy.pl, wyceny ich opłacalności i podpowiadania, czy i za ile kupić.
 
-> **Status: wersja 1.15.0.** Trzy portale, wycena, werdykty i negocjacje, filtry, zabezpieczenia werdyktu,
+> **Status: wersja 1.16.0.** Trzy portale, wycena, werdykty i negocjacje, filtry, zabezpieczenia werdyktu,
 > **darmowe lokalne AI** (klasyfikator tytułów, analiza zdjęć, opcjonalnie model językowy w Ollamie),
 > szablony wiadomości do sprzedającego, automatyczne odświeżanie, powiadomienia Windows i Telegram
 > oraz gotowy plik `PhoneBot.exe`. Program nie korzysta z żadnych płatnych usług.
@@ -596,6 +596,26 @@ jest według werdyktu; na liście nad tekstem wybierzesz inny:
 Szablony edytujesz w **⚙ Ustawienia → Wiadomości** (pola: `{telefon}`, `{model}`, `{pamięć}`, `{cena}` — cena
 z ogłoszenia, `{propozycja}` — Twoja cena otwierająca, `{argumenty}`, `{odbior}`, `{pytania}`, `{wysylka}`);
 „Przywróć domyślne szablony” cofa zmiany.
+
+### Magazyn części
+
+Zakładka **„Magazyn części”** (obok „Oferty”) to lista części, które masz na stanie. Każdy wpis to jedna
+partia: **rodzaj** (ekran, bateria, port ładowania…), **pasujące modele**, **jakość** (oryginał / zamiennik),
+**ilość**, **cena zakupu za sztukę**, **data zakupu** i **dostawca**. Dodajesz przyciskiem „＋ Dodaj część”,
+edytujesz dwuklikiem.
+
+![Magazyn części](docs/screenshots/magazyn.png)
+
+- **Wycena naprawy:** jeśli masz pasującą część, koszt naprawy liczony jest po **Twojej cenie zakupu**
+  (najstarsza sztuka pierwsza — FIFO) i bez kosztu wysyłki części. Jeśli nie masz — z „Tabeli części”, jak dotąd.
+- **Zgodność części:** przycisk „Zgodność części…” otwiera edytowalną tabelę grup modeli ze wspólną częścią
+  (np. ekran iPhone XR = iPhone 11). Domyślne grupy są orientacyjne — sprawdź u dostawcy.
+- **Znacznik i premia:** oferty, do których masz wszystkie potrzebne części, mają w tabeli znacznik
+  **„🧩 masz część”** i premię do oceny (domyślnie +10, **Ustawienia → Zakup i naprawa → Magazyn części**).
+- **Filtr:** „🧩 tylko oferty, do których mam części” w panelu filtrów.
+- **Zużycie:** użycie części w transakcji zdejmuje ją ze stanu (najstarsza partia pierwsza).
+- **Niski stan:** gdy część zużywasz często (domyślnie 2× w 60 dni), a zostało jej 1 szt. lub mniej,
+  nad tabelą pojawia się ostrzeżenie.
 
 ### Listy „Wszystkie oferty” i „Wybrane”
 
