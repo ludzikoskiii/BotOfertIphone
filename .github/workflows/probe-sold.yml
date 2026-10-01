@@ -1,0 +1,37 @@
+name: probe-sold
+
+# Jak portale oznaczają sprzedane / zarezerwowane ogłoszenia. Kilka zapytań (odstęp 5 s), bez obchodzenia blokad.
+on:
+  push:
+    paths:
+      - "scripts/probe_sold.py"
+      - ".github/workflows/probe-sold.yml"
+  workflow_dispatch:
+    inputs:
+      urls:
+        description: "Adresy ogłoszeń (oddzielone spacją lub przecinkiem)"
+        required: false
+        default: ""
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install httpx
+      - run: python scripts/probe_sold.py probe_sold.txt "${URLS:-$DEFAULT_URLS}"
+        env:
+          PYTHONIOENCODING: utf-8
+          URLS: ${{ github.event.inputs.urls }}
+          # przykłady sprzedanych ogłoszeń, które aplikacja nadal pokazywała (zgłoszone 1.10.2026)
+          DEFAULT_URLS: >-
+            https://www.vinted.pl/items/10153934532-iphone-14-128-gb
+            https://www.vinted.pl/items/10176532366-iphone-13-green-128gb-84
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: probe-sold
+          path: probe_sold.txt
