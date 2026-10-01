@@ -365,6 +365,10 @@ class SettingsDialog(QDialog):
             Field("refresh.jitter_s", "Losowa zmienność odstępu ±", "int", 0, 120, 5, " s"),
             Field("refresh.known_stop", "Koniec, gdy na stronie tyle znanych ogłoszeń", "int", 1, 20),
             Field("refresh.watch_check_minutes", "„Wybrane” i obserwowane: sprawdzaj co", "int", 15, 1440, 15, " min"),
+            Field("refresh.good_check_limit", "Okazje (KUPUJ / NEGOCJUJ): sprawdzaj przy tym najwyżej", "int", 0, 500,
+                  10, " stron", tip="Czy ogłoszenie nie zostało sprzedane albo zarezerwowane. 0 = wyłączone."),
+            Field("refresh.open_check_minutes", "Otwarta oferta / zaległe powiadomienie: sprawdzaj stronę, gdy "
+                  "ostatnio dawniej niż", "int", 5, 1440, 5, " min"),
             Field("refresh.nightly_hour", "Pełne pobranie kontrolne i pozostałe oferty — od godziny", "int", 0, 23, 1,
                   ":00"),
             Field("refresh.nightly_page_checks", "…najwyżej stron ofert na noc", "int", 0, 3000, 50),

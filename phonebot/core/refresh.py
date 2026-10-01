@@ -32,6 +32,8 @@ class RefreshConfig:
     known_stop: int = 3  # tyle znanych ogłoszeń na stronie = koniec nowych
     watch_check_minutes: int = 60  # „Wybrane” i obserwowane
     nightly_hour: int = 3  # pełne pobranie kontrolne + sprawdzenie pozostałych ofert (godzina)
+    good_check_limit: int = 40  # okazje (KUPUJ / NEGOCJUJ): najwyżej tyle stron co godzinę, obok „Wybranych”
+    open_check_minutes: int = 60  # strona oferty sprawdzana przy otwarciu szczegółów, jeśli dawniej niż tyle minut
     nightly_page_checks: int = 300  # najwyżej tyle stron ofert sprawdzanych w nocy (łagodnie dla portali)
     archive_days: int = 3
     new_badge_minutes: int = 30

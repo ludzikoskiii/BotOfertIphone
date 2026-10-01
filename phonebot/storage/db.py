@@ -348,6 +348,9 @@ MIGRATIONS: list[str] = [
         data         TEXT NOT NULL
     )
     """,
+    """
+    ALTER TABLE offers ADD COLUMN inactive_reason TEXT
+    """,
 ]
 
 

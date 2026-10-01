@@ -7,7 +7,7 @@ from urllib.parse import urlencode
 from ..core.catalog import format_storage
 from ..core.fraud import SAFETY_TIPS
 from ..core.messages import NEGOTIATION_STYLES, STYLE_NAMES, TEMPLATE_KEYS, TEMPLATE_NAMES, compose, opening_price, zl
-from ..core.models import Offer, OfferStatus, Severity, Valuation, Verdict
+from ..core.models import INACTIVE_REASONS, Offer, OfferStatus, Severity, Valuation, Verdict
 from ..core.selection import pick_reason
 from ..core.settings import Settings
 from ..core.sorting import FIELDS, describe
@@ -217,7 +217,8 @@ def details_page(offer: Offer, val: Valuation, settings: Settings, *, csrf: str,
                      f'referrerpolicy="no-referrer">')
     parts.append(f"<h1>{escape(offer.raw.title)}</h1>")
     if not offer.active:
-        parts.append('<p class="note">⌛ Nieaktualna — oferta zniknęła z portalu.</p>')
+        why = INACTIVE_REASONS.get(offer.inactive_reason or "", "oferta zniknęła z portalu")
+        parts.append(f'<p class="note">⌛ Nieaktualna — {escape(why)}.</p>')
     reason = pick_reason(offer, val, settings.selection)
     if reason:
         parts.append(f'<p class="muted">✓ {escape(reason)}</p>')

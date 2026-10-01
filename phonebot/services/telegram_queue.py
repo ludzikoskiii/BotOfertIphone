@@ -26,7 +26,9 @@ from ..core.messages import compose, opening_price, zl
 from ..core.models import Offer, OfferStatus, Valuation, Verdict
 from ..core.selection import auto_match, high_risk, is_picked
 from ..core.settings import Settings
+from ..net.http import HostRateLimiter
 from ..sources import SOURCE_NAMES
+from ..sources.pages import PageFetcher
 from ..storage.repositories import OfferRepository, SettingsRepository
 from .notifications import NotificationError, TelegramClient
 
@@ -119,6 +121,7 @@ class FlushResult:
     summarized: int = 0  # ofert zebranych w podsumowaniu
     skipped: int = 0  # pominiętych w ciszy nocnej
     waiting: int = 0  # czekają (cisza nocna, limit na godzinę, ponowienie)
+    gone: int = 0  # niewysłane — oferta sprzedana / zakończona (sprawdzone przed wysyłką)
     error: str | None = None
 
 
@@ -206,11 +209,42 @@ class TelegramQueue:
         return self.conn.execute("SELECT * FROM telegram_outbox WHERE status = 'pending' AND next_try <= ? "
                                  "ORDER BY created_at, id", (_iso(now),)).fetchall()
 
-    def flush(self, client: TelegramClient, now: datetime | None = None) -> FlushResult:
+    def flush(self, client: TelegramClient, now: datetime | None = None, *, checker=None) -> FlushResult:
+        """``checker(offer_id) -> wynik`` — sprawdzenie strony oferty przed wysyłką (domyślnie ``check_one``)."""
         with _FLUSH_LOCK:
-            return self._flush(client, now or datetime.now(UTC))
+            return self._flush(client, now or datetime.now(UTC), checker)
 
-    def _flush(self, client: TelegramClient, now: datetime) -> FlushResult:
+    def _drop_gone(self, rows: list[sqlite3.Row], now: datetime, res: FlushResult, checker) -> list[sqlite3.Row]:
+        """Wiadomości czekające dłużej niż ``open_check_minutes`` (cisza nocna, limit, ponowienia): najpierw strona
+        oferty — sprzedanej / zakończonej nie wysyłamy. Świeże wiadomości (oferta widziana przed chwilą) bez sprawdzania."""
+        limit = timedelta(minutes=max(1, self.settings.refresh.open_check_minutes))
+        fetcher = None
+        keep = []
+        try:
+            for row in rows:
+                active = self.conn.execute("SELECT is_active FROM offers WHERE id = ?", (row["offer_id"],)).fetchone()
+                gone = active is None or not active["is_active"]
+                if not gone and now - (_dt(row["created_at"]) or now) >= limit:
+                    if checker is None:
+                        from .offer_checks import check_one  # tu: offer_checks importuje skaner
+
+                        fetcher = fetcher or PageFetcher(HostRateLimiter(self.settings.request_delay_s))
+                        outcome = check_one(self.conn, self.settings, row["offer_id"], fetcher=fetcher, now=now)
+                    else:
+                        outcome = checker(row["offer_id"])
+                    gone = outcome == "gone"
+                if gone:
+                    self.conn.execute("UPDATE telegram_outbox SET status = 'skipped', error = ? WHERE id = ?",
+                                      ("oferta sprzedana / zakończona — niewysłane", row["id"]))
+                    res.gone += 1
+                else:
+                    keep.append(row)
+        finally:
+            if fetcher is not None:
+                fetcher.close()
+        return keep
+
+    def _flush(self, client: TelegramClient, now: datetime, checker=None) -> FlushResult:
         res = FlushResult()
         rows = self.pending(now)
         if not rows:
@@ -227,6 +261,9 @@ class TelegramQueue:
                 self.conn.execute(f"UPDATE telegram_outbox SET next_try = ? WHERE id IN ({marks})",
                                   [_iso(quiet_ends(local, s)), *ids])
                 res.waiting = len(ids)
+            return res
+        rows = self._drop_gone(rows, now, res, checker)
+        if not rows:
             return res
         available = max(0, max(1, s.telegram_max_per_hour) - self._sent_last_hour(now))
         if available == 0:

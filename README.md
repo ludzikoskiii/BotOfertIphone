@@ -3,7 +3,7 @@
 Aplikacja desktopowa (Windows) do wyszukiwania ofert używanych iPhone'ów na
 Allegro Lokalnie, Vinted i Sprzedajemy.pl, wyceny ich opłacalności i podpowiadania, czy i za ile kupić.
 
-> **Status: wersja 1.20.0.** Trzy portale, wycena, werdykty i negocjacje, filtry, zabezpieczenia werdyktu,
+> **Status: wersja 1.21.0.** Trzy portale, wycena, werdykty i negocjacje, filtry, zabezpieczenia werdyktu,
 > **darmowe lokalne AI** (klasyfikator tytułów, analiza zdjęć, opcjonalnie model językowy w Ollamie),
 > szablony wiadomości do sprzedającego, automatyczne odświeżanie, powiadomienia Windows i Telegram
 > oraz gotowy plik `PhoneBot.exe`. Program nie korzysta z żadnych płatnych usług.
@@ -71,10 +71,19 @@ dist\PhoneBot.exe --self-test             # moduły, lokalne AI (bez pobierania 
   - Nowe oferty mają w kolumnie „Dodano” znacznik **🆕 NOWE** przez 30 minut.
 - **Stare oferty:**
   - „Wybrane” i obserwowane: co godzinę program sprawdza stronę ogłoszenia, czy nadal istnieje i czy zmieniła się
-    cena. Zmiana trafia do historii cen, a obniżka wywołuje powiadomienie.
+    cena. Zmiana trafia do historii cen, a obniżka wywołuje powiadomienie. W tym samym przebiegu sprawdzane są
+    **okazje** (oferty, które przy pojawieniu się dostały KUPUJ lub NEGOCJUJ) — najwyżej 40 stron na godzinę.
+  - **Otwarcie oferty** (panel szczegółów, pełne okno, telefon): program sprawdza w tle jej stronę, jeśli nie robił
+    tego od godziny. Sprzedana / zarezerwowana od razu dostaje oznaczenie ⌛ i znika z „Wszystkie oferty”.
+  - **Zaległe powiadomienia Telegram** (po ciszy nocnej, limicie na godzinę): przed wysłaniem program sprawdza
+    stronę oferty — o sprzedanych nie powiadamia.
   - Pozostałe oferty: raz na dobę w nocy (od 3:00) program robi **pełne pobranie kontrolne** (wszystkie frazy
     i strony — wyłapuje oferty pominięte przez szybkie odświeżanie) i sprawdza strony do 300 ofert.
-  - Oferty sprzedane albo usunięte dostają oznaczenie „nieaktualna”.
+  - Oferty sprzedane, zarezerwowane albo usunięte dostają oznaczenie „nieaktualna” z powodem (w podpowiedzi
+    i szczegółach). **Vinted** pokazuje sprzedane i zarezerwowane przedmioty z normalną stroną (kod 200); program
+    czyta stan przedmiotu z danych strony (`can_buy`, `is_reserved` — sprawdzone sondą `scripts/probe_sold.py`,
+    pod koniec ~2 MB strony, dlatego sprawdzenie pobiera całą stronę). Zarezerwowana oferta wraca jako aktywna,
+    gdy znów pojawi się w wynikach wyszukiwania (rezerwacja anulowana).
   - Strony ofert sprawdzane są na Allegro Lokalnie, Vinted i Sprzedajemy.pl. Na pozostałych portalach zniknięcie
     wykrywa nocne pełne pobranie.
 - **Archiwum:** oferty starsze niż 3 dni znikają z tabeli, ale zostają w bazie do statystyk i wyceny rynkowej.

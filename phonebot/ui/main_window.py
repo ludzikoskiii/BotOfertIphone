@@ -212,6 +212,11 @@ class MainWindow(QMainWindow):
         # odświeżanie przyrostowe (core/refresh.py): uruchamiane z app.py przez start_refresh_scheduler()
         self._quick: dict[str, tuple[ScanWorker, QThread]] = {}  # portal → szybkie odświeżanie w toku
         self._check_worker = None  # „Wybrane” i obserwowane (co godzinę)
+        # otwarta oferta: strona sprawdzana w tle (czy nie sprzedana), 1,5 s po wyborze — nie przy przewijaniu listy
+        self._open_check_worker = None
+        self._open_check_id: int | None = None
+        self._open_check_timer = QTimer(self, singleShot=True, interval=1500)
+        self._open_check_timer.timeout.connect(self._start_open_check)
         self._nightly_worker = None  # pełne pobranie kontrolne + strony pozostałych ofert (w nocy)
         self._last_watch_check: datetime | None = None
         self.schedule_timer = QTimer(self, interval=5000)
@@ -635,9 +640,51 @@ class MainWindow(QMainWindow):
         if self.details.isHidden():  # panel wyłączony — nie buduj raportu na darmo
             return
         if index.isValid():
-            self.details.set_offer(*self._row_at(index))
+            offer, val = self._row_at(index)
+            self.details.set_offer(offer, val)
+            self.check_offer_page(offer.id)
         else:
             self.details.set_offer(None, None)
+
+    def check_offer_page(self, offer_id: int | None, *, delay: bool = True) -> None:
+        """Otwarcie szczegółów: czy ogłoszenie nadal istnieje (sprzedane → nieaktualne) i czy zmieniła się cena."""
+        if offer_id is None or self._closed:
+            return
+        self._open_check_id = offer_id
+        if delay:
+            self._open_check_timer.start()
+        else:
+            self._start_open_check()
+
+    def _start_open_check(self) -> None:
+        from ..services.offer_checks import check_one_in_background
+
+        if self._open_check_worker is not None or self._open_check_id is None or self._closed:
+            return  # trwa sprawdzanie — po nim ruszy kolejne (ostatnio wybrana oferta)
+        offer_id, self._open_check_id = self._open_check_id, None
+        worker = FuncWorker(check_one_in_background, self.db_path, copy.deepcopy(self.settings), offer_id)
+        worker.finished.connect(self._open_check_done)
+        worker.failed.connect(self._open_check_done)
+        self._open_check_worker = worker
+        start_in_thread(worker, self)
+
+    def _open_check_done(self, result) -> None:
+        self._open_check_worker = None
+        if self._closed:
+            return
+        if isinstance(result, tuple):
+            offer_id, outcome = result
+            row = self.model.row_of(offer_id)
+            name = self.model.row_at(row)[0].parsed.model if row is not None else "oferta"
+            if outcome == "gone":
+                self._show_status(f"⌛ {name}: ogłoszenie zniknęło z portalu (sprzedane / zakończone) — "
+                                  "oznaczone jako nieaktualne.")
+                self.reload()
+            elif outcome == "price":
+                self._show_status(f"{name}: zmieniła się cena na portalu — wycena przeliczona.")
+                self.reload()
+        if self._open_check_id is not None:
+            self._start_open_check()
 
     def _build_status_bar(self) -> None:
         bar = self.statusBar()
@@ -1536,6 +1583,7 @@ class MainWindow(QMainWindow):
 
     def show_details(self, index: QModelIndex) -> OfferDetailsDialog:
         offer, val = self._row_at(index)
+        self.check_offer_page(offer.id, delay=False)
         dialog = OfferDetailsDialog(offer, val, self.settings, OfferRepository(self.conn), self.photos, self)
         dialog.status_changed.connect(self._status_changed)
         dialog.not_phone.connect(self.mark_not_phone)

@@ -11,7 +11,7 @@ from PySide6.QtGui import QBrush, QColor, QFont, QPainter
 from PySide6.QtWidgets import QStyle, QStyledItemDelegate, QStyleOptionViewItem
 
 from ..core.catalog import format_storage
-from ..core.models import Offer, OfferStatus, Severity, Valuation, Verdict
+from ..core.models import INACTIVE_REASONS, Offer, OfferStatus, Severity, Valuation, Verdict
 from ..core.refresh import is_new
 from ..core.sorting import DEFAULT_SORT, SortLevel, level, normalize, sort_rows
 from ..core.work_time import format_minutes
@@ -314,7 +314,8 @@ class OffersTableModel(QAbstractTableModel):
     def _tooltip(col: Col, offer: Offer, val: Valuation) -> str | None:
         if not offer.active and col is Col.MODEL:
             seen = format_dt(offer.last_seen)
-            return f"{OUTDATED_MARK} Nieaktualna — oferta zniknęła z portalu (ostatnio widziana {seen}).\n" \
+            why = INACTIVE_REASONS.get(offer.inactive_reason or "", "zniknęła z portalu")
+            return f"{OUTDATED_MARK} Nieaktualna — {why} (ostatnio widziana {seen}).\n" \
                    f"{offer.raw.title}"
         if col in (Col.MODEL, Col.FLAGS):
             flags = "".join(f"\n{FLAG_MARK} {f.label}" + (" (poważna)" if f.severity is Severity.HARD else "")

@@ -257,6 +257,7 @@ class Offer:
     desc_applied: bool = False  # wynik z opisu już dołożony do ``parsed``
     desc_from_page: bool = False  # opis pobrany ze strony oferty (wyniki wyszukiwania go nie miały)
     active: bool = True  # False = niewidziana na portalu od ``offer_stale_days`` (w „Wybrane”: nieaktualna)
+    inactive_reason: str | None = None  # sold | reserved | removed | missing (niewidziana w wynikach)
     picked_at: datetime | None = None  # kiedy pierwszy raz trafiła do „Wybrane”
     pick_excluded: bool = False  # ręcznie usunięta z „Wybrane”
     also_on: list[tuple[str, str, float]] = field(default_factory=list)  # ta sama sztuka na innych portalach
@@ -355,3 +356,11 @@ class Valuation:
     @property
     def has_hard_flag(self) -> bool:
         return any(f.severity is Severity.HARD for f in self.flags)
+
+
+INACTIVE_REASONS = {
+    "sold": "sprzedana / zakończona",
+    "reserved": "zarezerwowana",
+    "removed": "usunięta z portalu",
+    "missing": "niewidziana w wynikach wyszukiwania",
+}

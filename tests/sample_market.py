@@ -1,6 +1,6 @@
 """Syntetyczny rynek z 90 dni (testy statystyk i zrzuty zakładki „Rynek”).
 
-* iPhone 13 128 GB (sprawne): ceny spadają ~8% w 90 dni, ok. 6 nowych ogłoszeń dziennie,
+* iPhone 13 128 GB (sprawne): ceny spadają ~20% w 90 dni (~7% w 30 dni), ok. 6 nowych ogłoszeń dziennie,
 * iPhone 12 (sprawne, 64/128 GB): ceny stabilne,
 * iPhone 11 (uszkodzone): kilka ofert — za mało na część statystyk.
 Okazje (KUPUJ / NEGOCJUJ) częściej we wtorki i wieczorem; oferty z niedzieli tańsze o ~5%.
@@ -21,7 +21,7 @@ def fill_market(conn, now: datetime | None = None, seed: int = 7) -> int:
     for day in range(90, -1, -1):
         base_day = (now - timedelta(days=day)).replace(minute=0, second=0, microsecond=0)
         for model, storage, cond, per_day, base, drift in (
-                ("iPhone 13", 128, "good", 6, 1900.0, -0.08),
+                ("iPhone 13", 128, "good", 6, 1900.0, -0.20),
                 ("iPhone 12", 64, "good", 2, 1300.0, 0.0),
                 ("iPhone 12", 128, "good", 2, 1400.0, 0.0),
                 ("iPhone 11", 64, "damaged", 0.3, 500.0, 0.0)):

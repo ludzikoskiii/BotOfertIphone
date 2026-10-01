@@ -103,6 +103,32 @@ class WebApp:
         self._cache: tuple[float, list[tuple[Offer, Valuation]]] | None = None
         self._lock = threading.Lock()
         self._icons: dict[int, bytes] = {}
+        self._checking: set[int] = set()  # oferty sprawdzane właśnie na stronie portalu
+
+    def check_page_later(self, offer_id: int) -> None:
+        """Otwarcie szczegółów na telefonie: strona oferty sprawdzana w tle (sprzedana → nieaktualna przy
+        następnym odświeżeniu). Najwyżej raz na ``open_check_minutes`` (pilnuje ``check_one``)."""
+        with self._lock:
+            if offer_id in self._checking:
+                return
+            self._checking.add(offer_id)
+
+        def run() -> None:
+            from ..services.offer_checks import check_one
+
+            conn = self.connect()
+            try:
+                if check_one(conn, self.settings, offer_id) in ("gone", "price"):
+                    self.invalidate()
+                    self.changes += 1  # okno programu też odświeży tabelę
+            except Exception as e:  # noqa: BLE001 — sprawdzenie w tle nie może psuć strony
+                log.debug("Sprawdzenie strony oferty %s: %s", offer_id, e)
+            finally:
+                conn.close()
+                with self._lock:
+                    self._checking.discard(offer_id)
+
+        threading.Thread(target=run, name="phonebot-check", daemon=True).start()
 
     def connect(self) -> sqlite3.Connection:
         return connect(self.db_path)
@@ -352,6 +378,7 @@ def make_handler(app: WebApp):
                 if found is None:
                     return self._send(404, pages.message_page("Tej oferty już nie ma w bazie."))
                 tx, stock_parts = app.purchase_info(found[0])
+                app.check_page_later(found[0].id)
                 return self._send(200, pages.details_page(*found, app.settings, csrf=csrf_token(session),
                                                           style=params.get("styl"), key=params.get("szablon"),
                                                           transaction=tx, stock_parts=stock_parts))

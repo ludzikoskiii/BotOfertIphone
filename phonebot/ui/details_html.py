@@ -9,7 +9,7 @@ from html import escape
 
 from ..core.catalog import format_storage
 from ..core.fraud import SAFETY_TIPS
-from ..core.models import Offer, OfferStatus, RedFlag, Severity, Valuation
+from ..core.models import INACTIVE_REASONS, Offer, OfferStatus, RedFlag, Severity, Valuation
 from ..core.sanity import SANITY_FLAGS
 from ..core.selection import pick_reason
 from ..core.settings import Settings
@@ -157,7 +157,8 @@ def build_details_html(
         " (ukryta)" if offer.status is OfferStatus.HIDDEN else "")
     parts.append(f"<h2>{escape(raw.title)}{escape(status)}</h2>")
     if not offer.active:
-        parts.append(f'<p class="flag-hard">⌛ Nieaktualna — oferta zniknęła z portalu (ostatnio widziana '
+        why = escape(INACTIVE_REASONS.get(offer.inactive_reason or "", "oferta zniknęła z portalu"))
+        parts.append(f'<p class="flag-hard">⌛ Nieaktualna — {why} (ostatnio widziana '
                      f"{_fmt_dt(offer.last_seen)}). Zostaje w „Wybrane”, dopóki jej nie usuniesz.</p>")
     reason = pick_reason(offer, val, settings.selection)
     if reason:

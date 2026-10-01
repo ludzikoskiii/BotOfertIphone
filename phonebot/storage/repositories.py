@@ -89,7 +89,7 @@ class OfferRepository:
         offer_id, old_price = int(existing["id"]), float(existing["price"])
         assignments = ", ".join(f"{k} = ?" for k in fields)
         self.conn.execute(
-            f"UPDATE offers SET {assignments}, last_seen = ?, is_active = 1 WHERE id = ?",
+            f"UPDATE offers SET {assignments}, last_seen = ?, is_active = 1, inactive_reason = NULL WHERE id = ?",
             [*fields.values(), seen, offer_id],
         )
         changed = abs(old_price - raw.price) >= 0.01
@@ -180,7 +180,8 @@ class OfferRepository:
     def deactivate_missing(self, source: str, older_than: datetime) -> int:
         """Oznacza jako nieaktywne oferty źródła, których nie widziano od ``older_than``."""
         cur = self.conn.execute(
-            "UPDATE offers SET is_active = 0 WHERE source = ? AND is_active = 1 AND last_seen < ?",
+            "UPDATE offers SET is_active = 0, inactive_reason = 'missing' WHERE source = ? AND is_active = 1 "
+            "AND last_seen < ?",
             (source, _iso(older_than)),
         )
         return cur.rowcount
@@ -196,12 +197,15 @@ class OfferRepository:
             "AND picked_at IS NULL", (_iso(now), _iso(now - timedelta(days=days))))
         return cur.rowcount
 
-    def for_page_check(self, *, watched_only: bool, limit: int, older_than: datetime | None = None) -> list[Offer]:
-        """Oferty do sprawdzenia na stronie ogłoszenia (czy istnieje, cena): „Wybrane” i obserwowane albo
-        pozostałe aktywne, najdawniej sprawdzane najpierw."""
+    def for_page_check(self, *, watched_only: bool, limit: int, older_than: datetime | None = None,
+                       good_only: bool = False) -> list[Offer]:
+        """Oferty do sprawdzenia na stronie ogłoszenia (czy istnieje, cena): „Wybrane” i obserwowane, okazje
+        (werdykt KUPUJ / NEGOCJUJ z chwili pojawienia się) albo pozostałe aktywne; najdawniej sprawdzane najpierw."""
         where = ["o.is_active = 1", "o.status != 'hidden'"]
         params: list = []
-        if watched_only:
+        if good_only:
+            where += ["o.archived_at IS NULL", "o.first_verdict IN ('KUPUJ', 'NEGOCJUJ')"]
+        elif watched_only:
             where.append("(o.status = 'watched' OR (o.picked_at IS NOT NULL AND o.pick_excluded = 0))")
         else:
             where.append("o.archived_at IS NULL")
@@ -211,14 +215,19 @@ class OfferRepository:
         sql = _OFFER_SELECT + f" WHERE {' AND '.join(where)} ORDER BY COALESCE(o.checked_at, '') LIMIT ?"
         return [_row_to_offer(r) for r in self.conn.execute(sql, (*params, limit))]
 
+    def checked_at(self, offer_id: int) -> datetime | None:
+        row = self.conn.execute("SELECT checked_at FROM offers WHERE id = ?", (offer_id,)).fetchone()
+        return _dt(row["checked_at"]) if row else None
+
     def apply_page_check(self, offer_id: int, *, exists: bool | None, price: float | None,
-                         now: datetime | None = None) -> str:
-        """Wynik sprawdzenia strony oferty: zniknęła → nieaktualna; nowa cena → historia cen.
-        Zwraca: „gone” | „price” | „ok” | „unknown”."""
+                         now: datetime | None = None, reason: str | None = None) -> str:
+        """Wynik sprawdzenia strony oferty: zniknęła / sprzedana / zarezerwowana → nieaktualna (z powodem);
+        nowa cena → historia cen. Zwraca: „gone” | „price” | „ok” | „unknown”."""
         now_iso = _iso(now or utcnow())
         self.conn.execute("UPDATE offers SET checked_at = ? WHERE id = ?", (now_iso, offer_id))
         if exists is False:
-            self.conn.execute("UPDATE offers SET is_active = 0 WHERE id = ?", (offer_id,))
+            self.conn.execute("UPDATE offers SET is_active = 0, inactive_reason = ? WHERE id = ?",
+                              (reason or "sold", offer_id))
             return "gone"
         if exists is None:
             return "unknown"
@@ -347,6 +356,7 @@ def _row_to_offer(row: sqlite3.Row) -> Offer:
     if "page_description" in keys and row["page_description"]:
         offer.desc_from_page = row["page_description"] == row["description"]
     offer.active = bool(row["is_active"])
+    offer.inactive_reason = row["inactive_reason"] if "inactive_reason" in row.keys() else None
     if "picked_at" in keys:
         offer.picked_at = _dt(row["picked_at"])
         offer.pick_excluded = bool(row["pick_excluded"])

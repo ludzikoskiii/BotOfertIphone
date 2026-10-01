@@ -1,6 +1,9 @@
 """Stare oferty: sprawdzanie stron ogłoszeń, archiwum i nocne pełne pobranie kontrolne.
 
-* „Wybrane” i obserwowane — co godzinę: czy ogłoszenie istnieje i czy zmieniła się cena.
+* „Wybrane” i obserwowane — co godzinę: czy ogłoszenie istnieje i czy zmieniła się cena; w tym samym przebiegu
+  okazje (werdykt KUPUJ / NEGOCJUJ z chwili pojawienia się), z osobnym limitem ``good_check_limit``.
+* Otwarcie szczegółów oferty / powiadomienie Telegram czekające w kolejce: pojedyncza strona (``check_one``),
+  jeśli nie sprawdzano jej od ``open_check_minutes`` minut.
 * Pozostałe aktywne oferty — raz na dobę w nocy, najdawniej sprawdzane najpierw, z limitem stron na noc.
 * Zniknięte (404/410, „sprzedane”, „zakończone”) → nieaktualne; nowa cena → historia cen i powiadomienie
   o obniżce (jak przy skanie).
@@ -40,13 +43,14 @@ class CheckReport:
 
 def check_pages(conn: sqlite3.Connection, settings: Settings, *, watched_only: bool, limit: int,
                 fetcher: PageFetcher | None = None, older_than: datetime | None = None,
-                stop=lambda: False) -> CheckReport:
+                stop=lambda: False, good_only: bool = False, rep: CheckReport | None = None) -> CheckReport:
     repo = OfferRepository(conn)
-    rep = CheckReport()
+    rep = rep or CheckReport()
     own = fetcher is None
     fetcher = fetcher or PageFetcher(HostRateLimiter(settings.request_delay_s), stop=stop)
     try:
-        for offer in repo.for_page_check(watched_only=watched_only, limit=limit, older_than=older_than):
+        for offer in repo.for_page_check(watched_only=watched_only, limit=limit, older_than=older_than,
+                                         good_only=good_only):
             if stop():
                 break
             if not page_supported(offer.raw.source) or offer.raw.source in fetcher.blocked_sources:
@@ -58,7 +62,7 @@ def check_pages(conn: sqlite3.Connection, settings: Settings, *, watched_only: b
                 continue
             exists = False if res.gone else (None if res.error else True)
             old = offer.price
-            outcome = repo.apply_page_check(offer.id, exists=exists, price=res.price)
+            outcome = repo.apply_page_check(offer.id, exists=exists, price=res.price, reason=res.reason)
             rep.checked += outcome != "unknown"
             if outcome == "gone":
                 rep.gone += 1
@@ -87,6 +91,42 @@ def notify_drops(conn: sqlite3.Connection, settings: Settings, rep: CheckReport)
         log.exception("Powiadomienia po sprawdzeniu ofert nie powiodły się")
 
 
+def check_one(conn: sqlite3.Connection, settings: Settings, offer_id: int, *, fetcher: PageFetcher | None = None,
+              force: bool = False, now: datetime | None = None) -> str:
+    """Jedna oferta (otwarcie szczegółów, powiadomienie z kolejki): „gone” | „price” | „ok” | „unknown” |
+    „skipped” (sprawdzana niedawno, portal bez obsługi stron albo oferta już nieaktualna)."""
+    repo = OfferRepository(conn)
+    offer = repo.get(offer_id)
+    if offer is None or not offer.active or not page_supported(offer.raw.source):
+        return "skipped"
+    last = repo.checked_at(offer_id)
+    if not force and last is not None and (now or utcnow()) - last < timedelta(
+            minutes=max(1, settings.refresh.open_check_minutes)):
+        return "skipped"
+    own = fetcher is None
+    fetcher = fetcher or PageFetcher(HostRateLimiter(settings.request_delay_s))
+    try:
+        res = fetcher.check(offer.raw.source, offer.raw.url)
+    finally:
+        if own:
+            fetcher.close()
+    if res.blocked:
+        return "unknown"
+    exists = False if res.gone else (None if res.error else True)
+    return repo.apply_page_check(offer_id, exists=exists, price=res.price, now=now, reason=res.reason)
+
+
+def check_one_in_background(db_path, settings: Settings, offer_id: int) -> tuple[int, str]:
+    """Wątek roboczy: (id oferty, wynik)."""
+    from ..storage.db import connect
+
+    conn = connect(db_path)
+    try:
+        return offer_id, check_one(conn, settings, offer_id)
+    finally:
+        conn.close()
+
+
 def watched_check(db_path, settings: Settings, stop=lambda: False) -> CheckReport:
     """Co godzinę (w tle): „Wybrane” i obserwowane."""
     from ..storage.db import connect
@@ -94,7 +134,15 @@ def watched_check(db_path, settings: Settings, stop=lambda: False) -> CheckRepor
     conn = connect(db_path)
     try:
         cutoff = utcnow() - timedelta(minutes=max(5, settings.refresh.watch_check_minutes - 5))
-        rep = check_pages(conn, settings, watched_only=True, limit=200, older_than=cutoff, stop=stop)
+        fetcher = PageFetcher(HostRateLimiter(settings.request_delay_s), stop=stop)
+        try:
+            rep = check_pages(conn, settings, watched_only=True, limit=200, older_than=cutoff, stop=stop,
+                              fetcher=fetcher)
+            if settings.refresh.good_check_limit > 0 and not stop():  # okazje — ten sam pobieracz (blokady, tempo)
+                check_pages(conn, settings, watched_only=False, good_only=True, limit=settings.refresh.good_check_limit,
+                            older_than=cutoff, stop=stop, fetcher=fetcher, rep=rep)
+        finally:
+            fetcher.close()
         notify_drops(conn, settings, rep)
         rep.archived = OfferRepository(conn).archive_old(settings.refresh.archive_days)
         return rep

@@ -53,12 +53,31 @@ class PageResult:
     blocked: bool = False
     gone: bool = False  # ogłoszenie nie istnieje albo sprzedane / zakończone (404, 410, „SoldOut”, napis na stronie)
     price: float | None = None  # aktualna cena ze strony (JSON-LD / meta), gdy ją podaje
+    reason: str | None = None  # przy ``gone``: sold | reserved | removed
 
 
 _GONE_TEXT = re.compile(r"ogłoszenie (?:zostało )?zakończone|oferta (?:została )?zakończona|ogłoszenie wygasło|"
                         r"przedmiot (?:został )?sprzedany|ten przedmiot jest już sprzedany|"
                         r"ogłoszenie nie jest już dostępne|is no longer available|this item is sold", re.I)
 _SOLD_AVAILABILITY = ("soldout", "outofstock", "discontinued")
+# Vinted: stan przedmiotu jest w danych strony (pod koniec ~2 MB strony), np.
+# „"hates_you":false,"can_buy":false,"instant_buy":false,"is_reserved":true”. Sprzedany / zamknięty: can_buy=false;
+# zarezerwowany: is_reserved=true (sprawdzone sondą scripts/probe_sold.py, X 2026). Strona ma wtedy kod 200.
+# w danych strony (React) cudzysłowy są zwykle poprzedzone ukośnikiem: \\"can_buy\\":false — stąd \\\\? przed "
+_VINTED_FLAGS = re.compile(r'\\?"hates_you\\?":(?:true|false),\\?"can_buy\\?":(true|false),'
+                           r'\\?"instant_buy\\?":(?:true|false),\\?"is_reserved\\?":(true|false)')
+CHECK_MAX_BYTES = 3_000_000  # sprawdzanie stanu: cała strona (flagi Vinted są na jej końcu)
+
+
+def vinted_state(page: str) -> str | None:
+    """„available” | „sold” | „reserved” | None (brak danych przedmiotu na stronie)."""
+    m = _VINTED_FLAGS.search(page)
+    if m is None:
+        return None
+    can_buy, reserved = m.group(1) == "true", m.group(2) == "true"
+    if reserved:
+        return "reserved"
+    return "available" if can_buy else "sold"
 
 
 def page_price_state(page: str) -> tuple[float | None, bool]:
@@ -178,7 +197,7 @@ class PageFetcher:
         host = urlsplit(url).hostname or ""
         if not host or not self._wait_turn(host):
             return PageResult(error="przerwano")
-        limit = MAX_BYTES.get(source, DEFAULT_MAX_BYTES)
+        limit = CHECK_MAX_BYTES if check else MAX_BYTES.get(source, DEFAULT_MAX_BYTES)
         try:
             with self.client.stream("GET", url) as r:
                 chunks, size = [], 0
@@ -200,12 +219,19 @@ class PageFetcher:
                         source, status)
             return PageResult(error=f"portal zablokował pobieranie (HTTP {status})", blocked=True)
         if status == 404 or status == 410:
-            return PageResult(error="ogłoszenie już nie istnieje", gone=True)
+            return PageResult(error="ogłoszenie już nie istnieje", gone=True, reason="removed")
         if status != 200:
             return PageResult(error=f"HTTP {status}")
         if check:
             price, gone = page_price_state(page)
-            return PageResult(gone=gone, price=price)
+            state = vinted_state(page) if source == "vinted" else None
+            if state in ("sold", "reserved"):
+                return PageResult(gone=True, price=price, reason=state)
+            if source == "vinted":
+                # napisy „Przedmiot został sprzedany” itp. są w tłumaczeniach na KAŻDEJ stronie Vinted — liczą się
+                # tylko dane przedmiotu; bez nich (zmiana strony) stan nieznany, oferta nie jest ukrywana
+                return PageResult(price=price, error=None if state else "brak danych przedmiotu na stronie")
+            return PageResult(gone=gone, price=price, reason="sold" if gone else None)
         description = extract_description(source, page, title)
         return PageResult(description=description, error=None if description else "brak opisu na stronie oferty")
 
