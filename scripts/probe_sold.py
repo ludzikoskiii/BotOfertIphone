@@ -100,8 +100,9 @@ def vinted_item_api(c: httpx.Client, item_id: str) -> None:
         return
 
 
-FLAGS = re.compile(r'"hates_you":(?:true|false),"can_buy":(true|false),"instant_buy":(true|false),'
-                   r'"is_reserved":(true|false)(?:,"is_hidden":(true|false))?')
+# w danych strony cudzysłowy bywają poprzedzone ukośnikiem (\\"can_buy\\":false) — stąd \\\\?
+FLAGS = re.compile(r'\\?"hates_you\\?":(?:true|false),\\?"can_buy\\?":(true|false),\\?"instant_buy\\?":(true|false),'
+                   r'\\?"is_reserved\\?":(true|false)(?:,\\?"is_hidden\\?":(true|false))?')
 
 
 def vinted_flags(c: httpx.Client, url: str) -> None:
