@@ -100,15 +100,29 @@ def vinted_item_api(c: httpx.Client, item_id: str) -> None:
         return
 
 
-def vinted_search_fields(c: httpx.Client) -> None:
+FLAGS = re.compile(r'"hates_you":(?:true|false),"can_buy":(true|false),"instant_buy":(true|false),'
+                   r'"is_reserved":(true|false)(?:,"is_hidden":(true|false))?')
+
+
+def vinted_flags(c: httpx.Client, url: str) -> None:
+    """Próba kontrolna: flagi przedmiotu na stronie dostępnego ogłoszenia (cała strona)."""
+    r = get(c, url)
+    if r is None:
+        return
+    found = FLAGS.findall(r.text)
+    pos = [len(r.text[:m.start()].encode("utf-8")) for m in FLAGS.finditer(r.text)]
+    say(f"    flagi (can_buy, instant_buy, is_reserved, is_hidden): {found} @ {pos} B z {len(r.content)} B")
+
+
+def vinted_search_fields(c: httpx.Client) -> list[str]:
     token = c.cookies.get("access_token_web")
     if not token:
-        return
+        return []
     headers = {"Accept": "application/json", "Authorization": f"Bearer {token}", "Referer": "https://www.vinted.pl/"}
     r = get(c, "https://api.vinted.pl/svc-catalogue/items", headers=headers,
             params={"search_text": "iphone 13", "per_page": 96, "page": 1, "order": "newest_first"})
     if r is None or r.status_code != 200:
-        return
+        return []
     data = r.json()
     items = []
 
@@ -134,6 +148,7 @@ def vinted_search_fields(c: httpx.Client) -> None:
                 v = json.dumps(it.get(k), ensure_ascii=False)[:60]
                 vals[v] = vals.get(v, 0) + 1
             say(f"    {k}: {json.dumps(vals, ensure_ascii=False)[:400]}")
+    return [it["url"] for it in items if isinstance(it.get("url"), str)][:3]
 
 
 def main() -> int:
@@ -158,7 +173,13 @@ def main() -> int:
                 vinted_item_api(c, m.group(1))
         if any("vinted." in u for u in urls):
             say("\n== Vinted: pola w wynikach wyszukiwania (czy są tam rezerwacje / sprzedane)")
-            vinted_search_fields(c)
+            live = vinted_search_fields(c)
+            say("\n== Vinted: próba kontrolna — dostępne ogłoszenia z wyszukiwarki")
+            for u in live:
+                vinted_flags(c, u if u.startswith("http") else "https://www.vinted.pl" + u)
+            for u in [u for u in urls if "vinted." in u]:
+                say("  zgłoszone:", u)
+                vinted_flags(c, u)
     out.write_text("\n".join(OUT), encoding="utf-8")
     return 0
 
