@@ -65,6 +65,30 @@ def test_fetcher_check_vinted_uses_item_data_not_translations(monkeypatch):
     assert page_price_state("<h1>Ogłoszenie zostało zakończone</h1>")[1]  # inne portale: napisy nadal działają
 
 
+def test_check_handles_gzip_compressed_pages():
+    """Strona wysłana z kompresją gzip (większość serwerów): sprawdzenie działa, zamiast rzucać DecodingError."""
+    import gzip
+
+    import httpx
+
+    from phonebot.net.http import HostRateLimiter
+    from phonebot.sources.pages import PageFetcher
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        page = (TRANSLATIONS + SOLD).encode() if request.url.path == "/items/1" else b"<html><body>ok</body></html>"
+        return httpx.Response(200, headers={"content-encoding": "gzip", "content-type": "text/html; charset=utf-8"},
+                              content=gzip.compress(page))
+
+    f = PageFetcher(HostRateLimiter(0), client=httpx.Client(transport=httpx.MockTransport(handler)))
+    try:
+        sold = f.check("vinted", "https://www.vinted.pl/items/1")
+        assert sold.gone and sold.reason == "sold"
+        other = f.check("allegro_lokalnie", "https://allegrolokalnie.pl/oferta/x")
+        assert not other.gone and other.error is None
+    finally:
+        f.close()
+
+
 @pytest.fixture
 def db(tmp_path):
     conn = open_database(tmp_path / "s.sqlite3")

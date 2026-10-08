@@ -212,7 +212,11 @@ class PageFetcher:
         except httpx.HTTPError as e:
             return PageResult(error=f"błąd połączenia: {e.__class__.__name__}")
         page = body.decode(encoding, errors="replace")
-        blocked = status in (403, 429) or looks_blocked(httpx.Response(status, headers=headers, text=page[:20000]))
+        # treść jest już rozpakowana — bez nagłówków kompresji (inaczej httpx próbuje rozpakować tekst drugi raz
+        # i rzuca DecodingError dla każdej strony wysłanej z gzip, np. przy sprawdzaniu sprzedanych ofert)
+        plain = {k: v for k, v in headers.items()
+                 if k.lower() not in ("content-encoding", "content-length", "transfer-encoding")}
+        blocked = status in (403, 429) or looks_blocked(httpx.Response(status, headers=plain, text=page[:20000]))
         if blocked:
             self.blocked_sources.add(source)
             log.warning("%s blokuje pobieranie stron ofert (HTTP %s) — wstrzymano do końca działania programu",

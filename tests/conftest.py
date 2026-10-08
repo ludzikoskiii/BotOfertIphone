@@ -22,6 +22,24 @@ def _isolated_data_dir(tmp_path_factory):
 
 
 @pytest.fixture(autouse=True)
+def _no_internet(request, monkeypatch):
+    """Testy nie łączą się z internetem (poza oznaczonymi ``live``): połączenie z innym adresem niż ten komputer
+    kończy się błędem sieci, tak samo na każdym komputerze i w GitHub Actions. Makiety (MockTransport) działają."""
+    if request.node.get_closest_marker("live"):
+        return
+    import httpx
+
+    real = httpx.HTTPTransport.handle_request
+
+    def handle(self, req):
+        if req.url.host not in ("127.0.0.1", "localhost", "::1"):
+            raise httpx.ConnectError(f"testy bez internetu: {req.url.host}", request=req)
+        return real(self, req)
+
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", handle)
+
+
+@pytest.fixture(autouse=True)
 def _no_telegram_polling(monkeypatch):
     """Okno programu w testach nie odpytuje prawdziwego Telegrama: wątek komend bota nie startuje."""
     from phonebot.services.telegram_bot import BotThread
