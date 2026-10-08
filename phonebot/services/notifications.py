@@ -34,10 +34,10 @@ class TelegramClient:
         self.chat_id = chat_id.strip()
         self._transport = transport
 
-    def _call(self, method: str, payload: dict) -> dict:
+    def _call(self, method: str, payload: dict, *, timeout: float = 15) -> dict:
         url = TELEGRAM_API.format(token=self.token, method=method)
         try:
-            with httpx.Client(timeout=15, transport=self._transport) as client:
+            with httpx.Client(timeout=timeout, transport=self._transport) as client:
                 data = client.post(url, json=payload).json()
         except (httpx.HTTPError, ValueError) as e:
             raise NotificationError(f"Telegram: błąd połączenia ({e.__class__.__name__})") from e
@@ -45,8 +45,9 @@ class TelegramClient:
             raise NotificationError(f"Telegram: {data.get('description') or 'nieznany błąd'}")
         return data
 
-    def send(self, text: str, *, preview_url: str | None = None) -> None:
-        """Wiadomość HTML. ``preview_url`` — miniatura (np. zdjęcie oferty) jako podgląd linku nad tekstem."""
+    def send(self, text: str, *, preview_url: str | None = None, buttons: list[list[dict]] | None = None) -> dict:
+        """Wiadomość HTML. ``preview_url`` — miniatura (np. zdjęcie oferty) jako podgląd linku nad tekstem;
+        ``buttons`` — przyciski pod wiadomością (``[[{"text": …, "callback_data": …}]]``)."""
         if not self.chat_id:
             raise NotificationError("brak chat ID Telegram")
         payload: dict = {"chat_id": self.chat_id, "text": text, "parse_mode": "HTML"}
@@ -55,7 +56,32 @@ class TelegramClient:
                                                "show_above_text": True}
         else:
             payload["link_preview_options"] = {"is_disabled": True}
-        self._call("sendMessage", payload)
+        if buttons:
+            payload["reply_markup"] = {"inline_keyboard": buttons}
+        return self._call("sendMessage", payload).get("result") or {}
+
+    # --- sterowanie z Telegrama (komendy, przyciski) ---
+
+    def get_updates(self, offset: int | None, timeout: int = 25) -> list[dict]:
+        """Nowe wiadomości do bota (długie odpytywanie — czeka do ``timeout`` s na nową wiadomość)."""
+        payload: dict = {"timeout": timeout, "allowed_updates": ["message", "callback_query"]}
+        if offset is not None:
+            payload["offset"] = offset
+        return self._call("getUpdates", payload, timeout=timeout + 15).get("result") or []
+
+    def edit(self, chat_id: str, message_id: int, text: str, buttons: list[list[dict]] | None = None) -> None:
+        payload: dict = {"chat_id": chat_id, "message_id": message_id, "text": text, "parse_mode": "HTML",
+                         "link_preview_options": {"is_disabled": True}}
+        if buttons is not None:
+            payload["reply_markup"] = {"inline_keyboard": buttons}
+        try:
+            self._call("editMessageText", payload)
+        except NotificationError as e:
+            if "not modified" not in str(e):  # ta sama treść — Telegram zgłasza błąd, ale nic nie trzeba robić
+                raise
+
+    def answer_button(self, callback_id: str, text: str = "") -> None:
+        self._call("answerCallbackQuery", {"callback_query_id": callback_id, "text": text[:190]})
 
     def find_chat_id(self) -> str:
         """Chat ID z ostatniej wiadomości wysłanej do bota (najpierw napisz do bota /start)."""

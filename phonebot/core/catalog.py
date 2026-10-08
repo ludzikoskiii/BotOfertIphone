@@ -94,3 +94,25 @@ def format_storage(gb: int | None) -> str:
     if gb >= 1024 and gb % 1024 == 0:
         return f"{gb // 1024} TB"
     return f"{gb} GB"
+
+
+def generation_of(name: str) -> str:
+    """Generacja modelu do grupowania w filtrach: „iPhone 13 Pro Max” → „13”, „iPhone XR” → „X”,
+    „iPhone SE (2020)” → „SE”, „iPhone Air” → „17” (ta sama generacja co 17), „iPhone 16e” → „16”."""
+    rest = name.removeprefix("iPhone ").strip()
+    if rest.startswith("SE"):
+        return "SE"
+    if rest == "Air":
+        return "17"
+    if rest.startswith("X"):
+        return "X"
+    head = rest.split(" ")[0].rstrip("e") if rest[:1].isdigit() else rest.split(" ")[0]
+    return head.removesuffix("s") if head.endswith("s") and head[:-1].isdigit() else head
+
+
+def generations() -> dict[str, list[str]]:
+    """Generacje (od najstarszej) → modele z katalogu."""
+    out: dict[str, list[str]] = {}
+    for m in IPHONE_MODELS:
+        out.setdefault(generation_of(m.name), []).append(m.name)
+    return out

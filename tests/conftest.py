@@ -21,6 +21,14 @@ def _isolated_data_dir(tmp_path_factory):
     yield
 
 
+@pytest.fixture(autouse=True)
+def _no_telegram_polling(monkeypatch):
+    """Okno programu w testach nie odpytuje prawdziwego Telegrama: wątek komend bota nie startuje."""
+    from phonebot.services.telegram_bot import BotThread
+
+    monkeypatch.setattr(BotThread, "start", lambda self: setattr(self, "started", True))
+
+
 def make_raw(title: str, price: float = 1000.0, description: str = "", **kw) -> RawOffer:
     kw.setdefault("photos", ["https://example.com/1.jpg"])
     kw.setdefault("shipping_available", True)

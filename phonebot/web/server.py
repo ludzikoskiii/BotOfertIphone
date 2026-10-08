@@ -53,6 +53,8 @@ PAGE_SIZE = 100
 _TAILNET = ipaddress.ip_network("100.64.0.0/10")
 _TAILNET6 = ipaddress.ip_network("fd7a:115c:a1e0::/48")
 _OFFER_PATH = re.compile(r"^/oferta/(\d+)(/akcja)?$")
+_PROFILE_PATH = re.compile(r"^/powiadomienia/(\d+|nowy)$")
+_FLASH = {"saved": "Zapisano profil.", "deleted": "Usunięto profil."}
 
 
 class WebError(Exception):
@@ -263,6 +265,106 @@ class WebApp:
         finally:
             conn.close()
 
+    # --- profile powiadomień Telegram ---
+
+    def notify_list(self, csrf: str, flash: str = "") -> str:
+        from ..services.telegram_bot import pause_text
+        from ..storage.repositories import NotifyProfileRepository
+        from .notify import notify_page
+
+        conn = self.connect()
+        try:
+            repo = NotifyProfileRepository(conn)
+            repo.ensure_default(self.settings)
+            s = self.settings
+            return notify_page(repo.all(), repo.sent_counts(datetime.now(UTC) - timedelta(days=7)), csrf=csrf,
+                               paused=pause_text(conn), flash=flash,
+                               configured=bool(s.telegram_enabled and s.telegram_bot_token and s.telegram_chat_id))
+        finally:
+            conn.close()
+
+    def notify_action(self, form: dict[str, str]) -> bool:
+        """Lista profili: włącz / wyłącz profil, pauza, wznowienie. ``False`` = nieznana akcja."""
+        from ..services.telegram_bot import pause, resume
+        from ..storage.repositories import NotifyProfileRepository
+
+        action, conn = form.get("a", ""), self.connect()
+        try:
+            if action == "toggle" and form.get("id", "").isdigit():
+                repo = NotifyProfileRepository(conn)
+                p = repo.get(int(form["id"]))
+                if p is not None:
+                    repo.set_enabled(p.id, not p.enabled)
+            elif action == "pause" and form.get("h", "").isdigit() and int(form["h"]) <= 24 * 7:
+                hours = int(form["h"])
+                pause(conn, timedelta(hours=hours) if hours else None)
+            elif action == "resume":
+                resume(conn)
+            else:
+                return False
+            return True
+        finally:
+            conn.close()
+
+    def _profile(self, conn: sqlite3.Connection, key: str):
+        from ..core.notify_profiles import NotifyProfile
+        from ..storage.repositories import NotifyProfileRepository
+
+        return NotifyProfile(name="Nowy profil") if key == "nowy" else NotifyProfileRepository(conn).get(int(key))
+
+    def profile_page(self, key: str, csrf: str) -> str | None:
+        """Edycja profilu z podglądem zapisanych filtrów (ostatnie 24 h)."""
+        from ..services.notify_service import preview
+        from .notify import profile_page
+
+        conn = self.connect()
+        try:
+            p = self._profile(conn, key)
+            return None if p is None else profile_page(p, csrf=csrf, preview=preview(conn, self.settings, p))
+        finally:
+            conn.close()
+
+    def profile_action(self, key: str, form: dict[str, list[str]], csrf: str) -> tuple[int, str, str | None]:
+        """Zapis / podgląd / test / usunięcie profilu z formularza. Zwraca (kod, strona, przekierowanie)."""
+        from ..services.notifications import NotificationError, TelegramClient
+        from ..services.notify_service import preview, send_test
+        from ..storage.repositories import NotifyProfileRepository
+        from .notify import profile_from_form, profile_page
+
+        action = (form.get("a") or [""])[0]
+        conn = self.connect()
+        try:
+            repo, base = NotifyProfileRepository(conn), self._profile(conn, key)
+            if base is None:
+                return 404, pages.message_page("Tego profilu już nie ma.", back="/powiadomienia"), None
+            if action == "delete" and base.id is not None:
+                repo.delete(base.id)
+                return 303, "", "/powiadomienia?ok=deleted"
+            try:
+                p = profile_from_form(form, base)
+            except ValueError as e:
+                return 400, profile_page(base, csrf=csrf, error=f"Nie zapisano: {e}."), None
+            if action == "save":
+                repo.save(p)
+                return 303, "", "/powiadomienia?ok=saved"
+            if action == "preview":
+                return 200, profile_page(p, csrf=csrf, preview=preview(conn, self.settings, p)), None
+            if action == "test":
+                s = self.settings
+                link = s.web_url if s.web_enabled and s.web_url else None
+                try:
+                    if not (s.telegram_bot_token and s.telegram_chat_id):
+                        raise NotificationError("Telegram nie jest połączony (Ustawienia → Powiadomienia w programie)")
+                    text = "✅ " + send_test(conn, s, p, TelegramClient(s.telegram_bot_token, s.telegram_chat_id),
+                                            details_base_url=link)
+                    error = ""
+                except NotificationError as e:
+                    text, error = "", f"Test nie wysłany: {e}"
+                return 200, profile_page(p, csrf=csrf, preview=preview(conn, s, p), flash=text, error=error), None
+            return 400, pages.message_page("Nieznana akcja.", back="/powiadomienia"), None
+        finally:
+            conn.close()
+
     def icon(self, size: int) -> bytes:
         if size not in self._icons:
             self._icons[size] = _draw_icon(size)
@@ -337,6 +439,7 @@ def make_handler(app: WebApp):
         def _form(self) -> dict[str, str]:
             length = min(int(self.headers.get("Content-Length") or 0), 16_384)
             data = parse_qs(self.rfile.read(length).decode("utf-8", "replace"))
+            self.form_lists = data  # pola wielokrotne (np. zaznaczone modele w profilu powiadomień)
             return {k: v[0] for k, v in data.items()}
 
         # --- GET ---
@@ -372,6 +475,13 @@ def make_handler(app: WebApp):
                 return self._send(200, pages.inventory_page(*app.inventory()))
             if path == "/rynek":
                 return self._send(200, app.market(params))
+            if path == "/powiadomienia":
+                return self._send(200, app.notify_list(csrf_token(session), _FLASH.get(params.get("ok", ""), "")))
+            m = _PROFILE_PATH.match(path)
+            if m:
+                body = app.profile_page(m.group(1), csrf_token(session))
+                return self._send(200 if body else 404, body or pages.message_page("Tego profilu już nie ma.",
+                                                                                    back="/powiadomienia"))
             m = _OFFER_PATH.match(path)
             if m and not m.group(2):
                 found = app.offer(int(m.group(1)))
@@ -440,6 +550,14 @@ def make_handler(app: WebApp):
             m = _OFFER_PATH.match(path)
             if m and m.group(2):
                 return self._action(int(m.group(1)), form)
+            if path == "/powiadomienia":
+                ok = app.notify_action(form)
+                return self._redirect("/powiadomienia") if ok else self._send(400, pages.message_page(
+                    "Nieznana akcja.", back="/powiadomienia"))
+            m = _PROFILE_PATH.match(path)
+            if m:
+                status, body, location = app.profile_action(m.group(1), self.form_lists, csrf_token(session))
+                return self._redirect(location) if location else self._send(status, body)
             return self._send(404, pages.message_page("Nie ma takiej strony."))
 
         def _login(self, form: dict[str, str]) -> None:

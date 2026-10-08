@@ -212,7 +212,8 @@ class SettingsDialog(QDialog):
     retrain_requested = Signal()
 
     def __init__(self, settings: Settings, parent=None, false_positives: list[tuple[str, int]] | None = None, *,
-                 model_info=None, photo_model_ready: bool = False, labels: int = 0, blacklist: list | None = None):
+                 model_info=None, photo_model_ready: bool = False, labels: int = 0, blacklist: list | None = None,
+                 conn=None, db_path=None):
         super().__init__(parent)
         self.setWindowTitle("Ustawienia")
         self.resize(900, 700)
@@ -222,6 +223,8 @@ class SettingsDialog(QDialog):
         self.model_info = model_info
         self.photo_model_ready = photo_model_ready
         self.labels = labels
+        self.conn, self.db_path = conn, db_path  # profile powiadomień (zapisywane od razu w bazie)
+        self.profiles_panel = None
         self._readers: list[Callable[[Settings], None]] = []
 
         tabs = QTabWidget()
@@ -980,17 +983,22 @@ class SettingsDialog(QDialog):
         self._readers.append(lambda st: (setattr(st, "telegram_bot_token", self.tg_token.text().strip()),
                                          setattr(st, "telegram_chat_id", self.tg_chat.text().strip())))
 
-        what = QGroupBox("Kiedy wysyłać (oferta musi być w „Wybrane” i spełnić te kryteria)")
-        what_form = QFormLayout()
-        self.telegram_verdicts = self._criteria_form("telegram_criteria", what_form)
-        self._form([
+        if self.conn is not None:
+            from .notify_profiles_ui import ProfilesPanel
+
+            self.profiles_panel = ProfilesPanel(self.conn, self._current_settings, db_path=self.db_path,
+                                                make_test=self._profile_test_job, parent=self)
+            profiles: QWidget = self.profiles_panel
+        else:
+            profiles = QLabel("Profile powiadomień można edytować w uruchomionym programie.")
+        what = QGroupBox("Wszystkie profile")
+        what.setLayout(self._form([
             Field("telegram_price_drops", "Obniżka ceny oferty z „Wybrane”", "bool"),
             Field("telegram_photos", "Miniatura zdjęcia w wiadomości", "bool"),
-            Field("telegram_max_per_hour", "Najwyżej wiadomości na godzinę", "int", 1, 60,
-                  tip="Nadmiar trafia do jednej wiadomości z podsumowaniem"),
-        ], what_form)
-        what.setLayout(what_form)
-        quiet = QGroupBox("Cisza nocna")
+            Field("telegram_max_per_hour", "Najwyżej wiadomości na godzinę (łącznie)", "int", 1, 60,
+                  tip="Nadmiar trafia do jednej wiadomości z podsumowaniem. Profil może mieć niższy własny limit."),
+        ]))
+        quiet = QGroupBox("Cisza nocna (globalna — profil może mieć własną)")
         quiet.setLayout(self._form([
             Field("telegram_quiet_enabled", "Nie wysyłaj w nocy", "bool"),
             Field("telegram_quiet_start", "Od godziny", "int", 0, 23, 1, ":00"),
@@ -1006,7 +1014,7 @@ class SettingsDialog(QDialog):
         note = QLabel(f"{info}<br>{secure}")
         note.setWordWrap(True)
         note.setObjectName("muted")
-        return self._page(general, howto, tg, what, quiet, note)
+        return self._page(general, howto, tg, profiles, what, quiet, note)
 
     def _secret_edit(self, attr: str, placeholder: str) -> QLineEdit:
         edit = QLineEdit(getattr(self.settings, attr))
@@ -1460,7 +1468,22 @@ class SettingsDialog(QDialog):
         self._run_bg(lambda: TelegramClient(token, chat).send("✅ PhoneBot: powiadomienia działają."),
                      lambda _r: self.tg_status.setText("✅ Wysłano — sprawdź Telegram."))
 
+    def _profile_test_job(self, profile):
+        """Test profilu: token i chat ID z pól okna (także przed zapisem); wysyłka w tle."""
+        from ..services.notify_service import send_test_in_background
+
+        token, chat = self.tg_token.text().strip(), self.tg_chat.text().strip()
+        settings, db_path = self._current_settings(), self.db_path
+        return lambda: send_test_in_background(db_path, settings, profile, token, chat)
+
     # ---------------------------------------------------------------- wynik ---
+
+    def _current_settings(self) -> Settings:
+        """Ustawienia z niezapisanymi jeszcze zmianami z okna (podgląd profilu powiadomień)."""
+        result = copy.deepcopy(self.settings)
+        for read in self._readers:
+            read(result)
+        return result
 
     def result_settings(self) -> Settings:
         result = copy.deepcopy(self.settings)

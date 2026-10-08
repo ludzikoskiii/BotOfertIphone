@@ -160,6 +160,7 @@ class MainWindow(QMainWindow):
         self.conn = conn
         self.db_path = db_path
         self._closed = False  # zamknięte na dobre (nie do zasobnika) — zegary nie uruchamiają już zadań
+        self._bot_state: dict = {}  # stan dla /status (czytany w wątku bota — zwykły słownik, bez widżetów)
         self.scheduler: RefreshScheduler | None = None  # odświeżanie przyrostowe (start_refresh_scheduler)
         self.settings_repo = SettingsRepository(conn)
         self.settings = self.settings_repo.load()
@@ -251,6 +252,9 @@ class MainWindow(QMainWindow):
         self.web_timer = QTimer(self, interval=3000)  # zmiany z telefonu (obserwuj, ukryj…) → odśwież tabelę
         self.web_timer.timeout.connect(self._web_poll)
         self._configure_web()
+        # komendy z Telegrama (/pauza, /wznow, /profile, /status) — wątek z długim odpytywaniem, bez serwera
+        self.bot = None
+        self._configure_bot()
         # defer_load: okno pokazuje się od razu, oferty wczytują się zaraz po pierwszym narysowaniu
         self.loaded = False
         if defer_load:
@@ -749,6 +753,7 @@ class MainWindow(QMainWindow):
         today = datetime.now().astimezone().date()
         day = "" if local.date() == today else f"{local:%d.%m} "
         self.refresh_label.setText(f"Odświeżono {day}{local:%H:%M}")
+        self._bot_state["last_refresh"] = f"{local:%d.%m %H:%M}"
 
     def run_diagnosis(self) -> None:
         """Diagnostyka źródeł w tle; raport w oknie i w pliku diagnostyka.txt."""
@@ -1099,6 +1104,7 @@ class MainWindow(QMainWindow):
                      if self._row_at(self.proxy.index(r, 0))[1].color is RowColor.GREEN)
         total = f" z {len(rows)}" if shown != len(rows) else ""
         self.count_label.setText(f"Ofert: <b>{shown}</b>{total} · zielonych: <b>{greens}</b>")
+        self._bot_state["green"] = sum(1 for _o, v in rows if v.color is RowColor.GREEN)
 
     def _filter_changed(self, f: ViewFilter) -> None:
         selected = self.current_offer_id()
@@ -1167,6 +1173,7 @@ class MainWindow(QMainWindow):
             from ..services.telegram_queue import TelegramQueue
 
             TelegramQueue(self.conn, settings).ensure_since()  # oferty sprzed włączenia nie trafią na Telegram
+        self._configure_bot()
         self._configure_timer()
         self.refresh_source_status()
         self.filters.set_location_name(settings.location_name)
@@ -1200,7 +1207,8 @@ class MainWindow(QMainWindow):
         dialog = SettingsDialog(self.settings, self, false_positives=fp, model_info=clf.info if clf else None,
                                 photo_model_ready=model_ready(models_dir()),
                                 labels=labels_count(self.conn, self.settings),
-                                blacklist=BlacklistRepository(self.conn).list())
+                                blacklist=BlacklistRepository(self.conn).list(), conn=self.conn,
+                                db_path=self.db_path)
         dialog.parts_editor_requested.connect(self.open_parts_editor)
         dialog.retrain_requested.connect(self.ai_retrain_requested.emit)
         dialog.retrain_requested.connect(lambda: dialog.set_training_state("Douczanie w tle…"))
@@ -1389,6 +1397,24 @@ class MainWindow(QMainWindow):
         self._worker = worker
         self._thread = start_in_thread(worker, self)
         self._thread.finished.connect(self._thread_done)
+
+    # ------------------------------------------------------ komendy Telegram ---
+
+    def _configure_bot(self) -> None:
+        """Bot odbiera komendy, gdy Telegram jest włączony i ma token oraz chat ID (odpowiada tylko na ten czat)."""
+        from ..services.telegram_bot import BotThread
+
+        s = self.settings
+        if not (s.telegram_enabled and s.telegram_bot_token and s.telegram_chat_id):
+            if self.bot is not None:
+                self.bot.stop()
+                self.bot = None
+            return
+        if self.bot is None:
+            self.bot = BotThread(self.db_path, copy.deepcopy(s), app_state=lambda: dict(self._bot_state))
+        else:
+            self.bot.update_settings(copy.deepcopy(s))
+        self.bot.start()
 
     # ------------------------------------------------------ wersja na telefon ---
 
@@ -1683,6 +1709,8 @@ class MainWindow(QMainWindow):
         self._save_ui_state()
         if self.web is not None:
             self.web.stop()
+        if self.bot is not None:
+            self.bot.stop()
         if self.tray is not None:
             self.tray.hide()
         if self.quit_on_close:

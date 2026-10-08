@@ -171,6 +171,12 @@ class OfferRepository:
         else:
             self.conn.execute("UPDATE offers SET pick_excluded = 0 WHERE id = ?", (offer_id,))
 
+    def seen_since(self, since: datetime) -> list[Offer]:
+        """Oferty, które pojawiły się od ``since`` (także już nieaktualne i zarchiwizowane; bez ukrytych) —
+        podgląd profili powiadomień „co zostałoby wysłane”."""
+        sql = _OFFER_SELECT + " WHERE o.first_seen >= ? AND o.status != 'hidden' ORDER BY o.first_seen DESC"
+        return [_row_to_offer(r) for r in self.conn.execute(sql, (_iso(since),))]
+
     def list_picked_inactive(self) -> list[Offer]:
         """Oferty z „Wybrane”, które zniknęły z portalu — zostają na liście jako nieaktualne."""
         sql = (_OFFER_SELECT + " WHERE o.is_active = 0 AND o.picked_at IS NOT NULL AND o.pick_excluded = 0 "
@@ -1037,3 +1043,66 @@ class TransactionRepository:
         from ..core.transactions import Corrections, corrections
 
         return Corrections(corrections(self.all(), cfg), cfg)
+
+
+class NotifyProfileRepository:
+    """Profile powiadomień Telegram (``core.notify_profiles``) — filtry jako JSON."""
+
+    MIGRATED_KEY = "notify_profiles_migrated"
+
+    def __init__(self, conn: sqlite3.Connection):
+        self.conn = conn
+
+    @staticmethod
+    def _profile(r: sqlite3.Row):
+        from ..core.notify_profiles import NotifyProfile
+
+        try:
+            data = json.loads(r["filters"] or "{}")
+        except json.JSONDecodeError:
+            data = {}
+        return NotifyProfile.from_filters(int(r["id"]), r["name"], bool(r["enabled"]), data)
+
+    def all(self) -> list:
+        return [self._profile(r) for r in self.conn.execute("SELECT * FROM notify_profiles ORDER BY position, id")]
+
+    def get(self, profile_id: int):
+        r = self.conn.execute("SELECT * FROM notify_profiles WHERE id = ?", (profile_id,)).fetchone()
+        return self._profile(r) if r else None
+
+    def save(self, p) -> int:
+        data = json.dumps(p.filters(), ensure_ascii=False)
+        if p.id is None:
+            pos = self.conn.execute("SELECT COALESCE(MAX(position), 0) + 1 FROM notify_profiles").fetchone()[0]
+            cur = self.conn.execute("INSERT INTO notify_profiles (name, enabled, position, filters, created_at) "
+                                    "VALUES (?, ?, ?, ?, ?)", (p.name, int(p.enabled), pos, data, _iso(utcnow())))
+            p.id = int(cur.lastrowid)
+        else:
+            self.conn.execute("UPDATE notify_profiles SET name = ?, enabled = ?, filters = ? WHERE id = ?",
+                              (p.name, int(p.enabled), data, p.id))
+        return p.id
+
+    def set_enabled(self, profile_id: int, enabled: bool) -> None:
+        self.conn.execute("UPDATE notify_profiles SET enabled = ? WHERE id = ?", (int(enabled), profile_id))
+
+    def delete(self, profile_id: int) -> None:
+        self.conn.execute("DELETE FROM notify_profiles WHERE id = ?", (profile_id,))
+
+    def ensure_default(self, settings) -> None:
+        """Pierwsze uruchomienie z profilami: dotychczasowe ustawienia powiadomień → profil „Domyślny”
+        (raz — usunięcie wszystkich profili potem nie przywraca go)."""
+        repo = SettingsRepository(self.conn)
+        if repo.get_value(self.MIGRATED_KEY):
+            return
+        if not self.conn.execute("SELECT 1 FROM notify_profiles LIMIT 1").fetchone():
+            from ..core.notify_profiles import from_legacy
+
+            self.save(from_legacy(settings))
+        repo.set_value(self.MIGRATED_KEY, "1")
+
+    def sent_counts(self, since: datetime) -> dict[int, int]:
+        """Wysłane powiadomienia na profil od ``since`` (pojedyncze i w podsumowaniach)."""
+        rows = self.conn.execute(
+            "SELECT p.profile_id, COUNT(*) FROM telegram_outbox_profiles p JOIN telegram_outbox o ON o.id = p.outbox_id "
+            "WHERE o.status IN ('sent', 'summarized') AND o.sent_at >= ? GROUP BY p.profile_id", (_iso(since),))
+        return {int(r[0]): int(r[1]) for r in rows}

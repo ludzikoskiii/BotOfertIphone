@@ -3,7 +3,7 @@
 Aplikacja desktopowa (Windows) do wyszukiwania ofert używanych iPhone'ów na
 Allegro Lokalnie, Vinted i Sprzedajemy.pl, wyceny ich opłacalności i podpowiadania, czy i za ile kupić.
 
-> **Status: wersja 1.21.0.** Trzy portale, wycena, werdykty i negocjacje, filtry, zabezpieczenia werdyktu,
+> **Status: wersja 1.22.0.** Trzy portale, wycena, werdykty i negocjacje, filtry, zabezpieczenia werdyktu,
 > **darmowe lokalne AI** (klasyfikator tytułów, analiza zdjęć, opcjonalnie model językowy w Ollamie),
 > szablony wiadomości do sprzedającego, automatyczne odświeżanie, powiadomienia Windows i Telegram
 > oraz gotowy plik `PhoneBot.exe`. Program nie korzysta z żadnych płatnych usług.
@@ -121,21 +121,63 @@ dist\PhoneBot.exe --self-test             # moduły, lokalne AI (bez pobierania 
 
 ![Ustawienia powiadomień](docs/screenshots/ustawienia_powiadomienia.png)
 
-**Kiedy przychodzi wiadomość:**
+**Profile powiadomień (od wersji 1.22):** kilka zestawów filtrów, każdy z nazwą i własnym włącznikiem,
+niezależnych od filtrów tabeli w programie — np. „Naprawa – blisko domu” i „Resell – iPhone 13–15”.
+Edycja w **⚙ Ustawienia → Powiadomienia → Profile powiadomień** (przyciski Dodaj / Edytuj / Duplikuj /
+Usuń / Test) i na telefonie (zakładka **Telegram**). Każdy filtr jest opcjonalny (puste = bez ograniczeń):
 
-- nowa oferta, która **automatycznie** trafiła do „Wybrane” i spełnia **osobne, ostrzejsze kryteria
-  Telegrama** (domyślnie KUPUJ/NEGOCJUJ i zysk ≥ 250 zł, bez poważnych flag);
-- opcjonalnie **obniżka ceny** oferty z „Wybrane” (także dodanej ręcznie) — raz na każdą nową cenę;
-- każda oferta tylko **raz** (zapisane w bazie), nigdy oferty sprzed pierwszego włączenia powiadomień
+| Filtr | Co robi |
+|---|---|
+| tryb | wycena w trybie „naprawa → sprzedaż” albo „szybki resell” (albo jak w programie) |
+| modele i pamięć | zaznaczenie **całej generacji** (np. „iPhone 13 — cała generacja”) wybiera wszystkie jej modele |
+| cena od–do, min. zysk, min. zysk/h, min. ocena | progi z wyceny |
+| werdykty | KUPUJ, NEGOCJUJ, DO WERYFIKACJI |
+| stan, portale | jak w filtrach tabeli |
+| promień i wysyłka | „do 30 km”, opcjonalnie „dalsze oferty z wysyłką też”; tylko z wysyłką / tylko odbiór |
+| kraj | tylko Polska albo Polska + zagranica |
+| magazyn | tylko oferty, do których masz część na stanie |
+| ryzyko oszustwa | maks. poziom — domyślnie **tylko niskie**; osobno: pomijaj poważne flagi (iCloud, IMEI) |
+| wykluczone słowa | w tytule lub opisie, np. `icloud, atrapa` |
+
+- Oferta pasująca do **kilku profili przychodzi raz**, z dopiskiem „📋 Profil: Naprawa – blisko domu ·
+  Resell – iPhone 13–15”.
+- Podczas edycji okno pokazuje na żywo: **„Z ostatnich 24 godzin ten profil wysłałby X powiadomień”**,
+  przykładowe oferty i najczęstsze powody odpadania (np. „za daleko (14)”) — liczone w tle.
+- **Wyślij testowe powiadomienie z tego profilu** — najlepsza pasująca oferta z 24 h (albo 7 dni) w takiej
+  postaci, w jakiej przyjdzie naprawdę, z dopiskiem TEST.
+- Na liście profili: liczba powiadomień wysłanych z każdego profilu **w ostatnim tygodniu**.
+- **Cisza nocna i limit na godzinę** są globalne; profil może mieć **własną** ciszę i niższy limit.
+  Wiadomość czeka tylko, gdy wszystkie pasujące profile są w ciszy.
+- **Dotychczasowe ustawienia** (kryteria Telegrama i „Wybrane”) zostały przeniesione do profilu
+  **„Domyślny”** — działa dokładnie tak jak wcześniej, dopóki go nie zmienisz.
+- Obniżki cen ofert z „Wybrane” (opcja „Obniżka ceny”) przychodzą jak dotąd — niezależnie od profili.
+- Każda oferta tylko **raz** (zapisane w bazie), nigdy oferty sprzed pierwszego włączenia powiadomień
   ani z pierwszego pobrania do pustej bazy.
+
+![Profile powiadomień w ustawieniach](docs/screenshots/profile_ustawienia.png)
+![Edycja profilu z podglądem](docs/screenshots/profil_edycja.png)
+<img src="docs/screenshots/telefon_powiadomienia.png" width="260" alt="Profile na telefonie">
+<img src="docs/screenshots/telefon_profil.png" width="260" alt="Edycja profilu na telefonie">
+
+**Komendy w Telegramie** (bot odbiera je z komputera długim odpytywaniem — bez serwera wystawionego do
+internetu; odpowiada **tylko na czat o ID z ustawień**, innych użytkowników ignoruje bez odpowiedzi):
+
+| Komenda | Działanie |
+|---|---|
+| `/pauza 2h` | wstrzymuje powiadomienia (np. `30m`, `2h`, `1d`; samo `/pauza` — do `/wznow`). Oferty z czasu pauzy nie przyjdą później — są w programie |
+| `/wznow` | wznawia (i mówi, ile ofert pominięto) |
+| `/profile` | lista profili z liczbą wysłanych w 7 dni i **przyciskami włącz / wyłącz** pod wiadomością |
+| `/status` | wersja, pauza, liczba ofert i zielonych, ostatnie odświeżenie, stan każdego źródła, kolejka |
+
+Pauzę i włączniki profili masz też na telefonie (zakładka **Telegram**: ⏸ 1 h / 2 h / 8 h / ▶ Wznów).
 
 **Treść:** model, pamięć, cena, szacowany zysk, werdykt, portal, miejscowość z odległością, link do
 ogłoszenia i miniatura zdjęcia. Przy NEGOCJUJ — proponowana cena i gotowa wiadomość do sprzedającego
 (z zadania „Wiadomości”) w bloku, który Telegram kopiuje jednym dotknięciem.
 
 **Cisza nocna i limit:** w godzinach ciszy (domyślnie 22:00–7:00) wiadomości czekają do rana albo są
-pomijane — do wyboru. Najwyżej 10 wiadomości na godzinę (ustawienie); nadmiar przychodzi jako jedno
-podsumowanie z listą ofert.
+pomijane — do wyboru. Najwyżej 10 wiadomości na godzinę łącznie (ustawienie); nadmiar przychodzi jako jedno
+podsumowanie z listą ofert. Profil może mieć własną ciszę i limit (patrz wyżej).
 
 **Niezawodność:** wiadomości czekają w kolejce w bazie; po błędzie (np. brak internetu) są ponawiane
 w tle (po 1, 5, 15, 30 min…), bez duplikatów. Wysyłka działa w tle — po każdym odświeżeniu i co 5 minut.
@@ -939,7 +981,9 @@ phonebot/
   net/http.py    klient HTTP: limit zapytań na host, ponawianie (tenacity), cache odpowiedzi
   services/      evaluator.py (baza + wycena), scanner.py (równoległe pobieranie z izolacją błędów),
                  post_scan.py (powiadomienia po skanie),
-                 notifications.py (Telegram)
+                 notifications.py (Telegram), telegram_queue.py (kolejka, cisza, limity),
+                 notify_service.py (podgląd i test profilu), telegram_bot.py (komendy /pauza /profile…)
+  core/notify_profiles.py  profile powiadomień: filtry, dopasowanie, opis;  web/notify.py  profile na telefonie
   core/view_filter.py  filtry widoku;  core/places.py  wbudowana lista miejscowości
   net/geocode.py wyszukiwanie miejscowości (OpenStreetMap Nominatim)
   sources/       adaptery portali: base.py (interfejs), allegro_lokalnie.py, vinted.py, sprzedajemy.py,
@@ -947,7 +991,8 @@ phonebot/
   ui/            GUI PySide6: main_window.py, table_model.py, offer_details.py (+ details_html.py),
                  images.py (miniatury), workers.py (wątek), theme.py (kolory), filters_panel.py,
                  settings_dialog.py, parts_editor.py, location_dialog.py, inventory_tab.py (magazyn),
-                 transactions_tab.py (transakcje), market_tab.py + charts.py (rynek, wykresy)
+                 transactions_tab.py (transakcje), market_tab.py + charts.py (rynek, wykresy),
+                 notify_profiles_ui.py (profile powiadomień z podglądem)
 tests/           testy jednostkowe (+ fixtures z przykładowymi odpowiedziami portali)
 tools/           screenshot.py — zrzut okna na danych testowych
 scripts/         clip_prepare.py (wektory opisów klas CLIP), clip_check_app.py (test analizy zdjęć na

@@ -76,11 +76,12 @@ if('serviceWorker' in navigator&&window.isSecureContext){navigator.serviceWorker
 """
 
 
-SECTIONS = {"oferty": ("Oferty", "/"), "magazyn": ("Magazyn", "/magazyn"), "rynek": ("Rynek", "/rynek")}
+SECTIONS = {"oferty": ("Oferty", "/"), "magazyn": ("Magazyn", "/magazyn"), "rynek": ("Rynek", "/rynek"),
+            "telegram": ("Telegram", "/powiadomienia")}
 
 
 def main_nav(active: str) -> str:
-    """Przełącznik działów: oferty / magazyn części / rynek."""
+    """Przełącznik działów: oferty / magazyn części / rynek / powiadomienia Telegram."""
     return '<nav class="main">' + "".join(
         f'<a class="{"on" if key == active else ""}" href="{url}">{label}</a>'
         for key, (label, url) in SECTIONS.items()) + "</nav>"

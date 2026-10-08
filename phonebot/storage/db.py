@@ -351,6 +351,23 @@ MIGRATIONS: list[str] = [
     """
     ALTER TABLE offers ADD COLUMN inactive_reason TEXT
     """,
+    """
+    CREATE TABLE notify_profiles (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        name        TEXT NOT NULL,
+        enabled     INTEGER NOT NULL DEFAULT 1,
+        position    INTEGER NOT NULL DEFAULT 0,
+        filters     TEXT NOT NULL DEFAULT '{}',
+        created_at  TEXT NOT NULL
+    );
+    CREATE TABLE telegram_outbox_profiles (
+        outbox_id   INTEGER NOT NULL REFERENCES telegram_outbox (id) ON DELETE CASCADE,
+        profile_id  INTEGER NOT NULL,
+        PRIMARY KEY (outbox_id, profile_id)
+    );
+    CREATE INDEX idx_outbox_profiles_profile ON telegram_outbox_profiles (profile_id);
+    CREATE INDEX idx_outbox_status_sent ON telegram_outbox (status, sent_at)
+    """,
 ]
 
 
