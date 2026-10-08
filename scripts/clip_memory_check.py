@@ -19,7 +19,7 @@ import time
 from pathlib import Path
 
 VARIANTS = {
-    "program": {},  # jak dotąd: domyślna sesja (z pulą pamięci onnxruntime)
+    "program": {},  # domyślna sesja (z pulą pamięci onnxruntime)
     "bez_puli": {"enable_cpu_mem_arena": False},
     "bez_puli_i_wzorca": {"enable_cpu_mem_arena": False, "enable_mem_pattern": False},
 }
@@ -71,9 +71,36 @@ def child(model: Path, variant: str) -> dict:
             "ms": round(statistics.median(times[1:]) * 1000, 1), "probs": probs}
 
 
+def child_release(model: Path) -> dict:
+    """Czy zwolnienie modelu oddaje pamięć systemowi (program zwalnia go po kilku minutach bez zdjęć)."""
+    import gc
+
+    from phonebot.core.sysinfo import process_rss_mb
+    from phonebot.ml import photo_model
+
+    pics = images(6)
+    start = process_rss_mb() or 0
+    clf = photo_model.get_photo_classifier(model.parent, download=False)
+    first = [clf.classify(p) for p in pics]
+    loaded = process_rss_mb() or 0
+    del clf
+    released = photo_model.release_photo_classifier()
+    gc.collect()
+    after = process_rss_mb() or 0
+    t = time.perf_counter()
+    clf = photo_model.get_photo_classifier(model.parent, download=False)
+    again = [clf.classify(p) for p in pics]
+    reload_s = time.perf_counter() - t
+    return {"rss_start": round(start), "rss_loaded": round(loaded), "rss_released": round(after),
+            "released": released, "reload_s": round(reload_s, 2), "same": first == again}
+
+
 def main() -> int:
     if len(sys.argv) > 2 and sys.argv[1] == "--child":
         print(json.dumps(child(Path(sys.argv[2]), sys.argv[3])))
+        return 0
+    if len(sys.argv) > 2 and sys.argv[1] == "--release":
+        print(json.dumps(child_release(Path(sys.argv[2]))))
         return 0
     from phonebot.ml.photo_model import download_model, model_path
 
@@ -95,6 +122,14 @@ def main() -> int:
         diff = max(abs(a[k] - b[k]) for a, b in zip(r["probs"], base, strict=True) for k in a)
         print(f"{name:20} {r['load_s']:>9.2f}s {r['rss_load_mb']:>15} MB {r['rss_after_mb']:>12} MB "
               f"{r['ms']:>8.1f}ms {diff:>22.2e}")
+    proc = subprocess.run([sys.executable, __file__, "--release", str(model)], capture_output=True, text=True,
+                          env={**os.environ, "PYTHONPATH": os.getcwd()})
+    if proc.returncode:
+        print("ZWOLNIENIE: BŁĄD", proc.stderr[-2000:])
+        return 1
+    r = json.loads(proc.stdout.strip().splitlines()[-1])
+    print(f"ZWOLNIENIE MODELU: pamięć procesu {r['rss_start']} MB → po wczytaniu {r['rss_loaded']} MB → po zwolnieniu "
+          f"{r['rss_released']} MB; ponowne wczytanie + 6 zdjęć {r['reload_s']} s; wyniki te same: {r['same']}")
     return 0
 
 

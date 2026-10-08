@@ -22,8 +22,12 @@ def process_rss_mb() -> float | None:
 
             counters = Counters()
             counters.cb = ctypes.sizeof(Counters)
-            process = ctypes.windll.kernel32.GetCurrentProcess()
-            if ctypes.windll.psapi.GetProcessMemoryInfo(process, ctypes.byref(counters), counters.cb):
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel32.GetCurrentProcess.restype = wintypes.HANDLE  # 64-bitowy uchwyt (bez obcięcia do int)
+            info = kernel32.K32GetProcessMemoryInfo  # Windows 7+ (psapi w kernel32)
+            info.argtypes = [wintypes.HANDLE, ctypes.POINTER(Counters), wintypes.DWORD]
+            info.restype = wintypes.BOOL
+            if info(kernel32.GetCurrentProcess(), ctypes.byref(counters), counters.cb):
                 return counters.WorkingSetSize / 2**20
         except (OSError, AttributeError):
             return None

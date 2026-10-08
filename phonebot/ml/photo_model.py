@@ -317,6 +317,20 @@ def get_photo_classifier(directory: Path | None = None, *, download: bool = True
         return _current
 
 
+def release_photo_classifier() -> bool:
+    """Zwalnia model zdjęć z pamięci (ok. 400 MB) — po kilku minutach bez zdjęć do analizy. Następne zdjęcie
+    wczyta go z dysku ponownie (ułamek sekundy). Zwraca, czy model był wczytany."""
+    import gc
+
+    global _current
+    with _lock:
+        was = _current is not None
+        _current = None
+    if was:
+        gc.collect()
+    return was
+
+
 def set_photo_classifier(clf: PhotoClassifier | None) -> None:
     global _current
     with _lock:
