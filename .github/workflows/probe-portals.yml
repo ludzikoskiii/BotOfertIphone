@@ -17,7 +17,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: python -m pip install httpx selectolax
+      - run: python -m pip install httpx "selectolax<1.0"
       - run: python scripts/probe_portals.py probe_portals.txt
         env:
           PYTHONIOENCODING: utf-8

@@ -22,7 +22,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: python -m pip install httpx tenacity selectolax pytest
+      - run: python -m pip install httpx tenacity "selectolax<1.0" pytest
       - name: Diagnostyka źródeł (raport)
         run: python -m phonebot.diagnose --out diagnostyka.txt --json diagnostyka.json
       - uses: actions/upload-artifact@v4
