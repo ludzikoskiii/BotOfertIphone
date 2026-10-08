@@ -1,0 +1,28 @@
+name: perf-clip
+
+# Pamięć i czas analizy zdjęć (CLIP) przy różnych ustawieniach sesji onnxruntime — na prawdziwym modelu,
+# z porównaniem wyników (muszą być takie same). Zdjęcia generowane lokalnie, bez pobierania z portali.
+on:
+  push:
+    paths:
+      - "scripts/clip_memory_check.py"
+      - ".github/workflows/perf-clip.yml"
+  workflow_dispatch:
+
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r requirements.txt
+      - run: python scripts/clip_memory_check.py
+        env:
+          PYTHONPATH: .
+          PYTHONIOENCODING: utf-8
