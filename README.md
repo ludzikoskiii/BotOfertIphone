@@ -3,7 +3,7 @@
 Aplikacja desktopowa (Windows) do wyszukiwania ofert używanych iPhone'ów na
 Allegro Lokalnie, Vinted i Sprzedajemy.pl, wyceny ich opłacalności i podpowiadania, czy i za ile kupić.
 
-> **Status: wersja 1.22.0.** Trzy portale, wycena, werdykty i negocjacje, filtry, zabezpieczenia werdyktu,
+> **Status: wersja 1.23.0.** Trzy portale, wycena, werdykty i negocjacje, filtry, zabezpieczenia werdyktu,
 > **darmowe lokalne AI** (klasyfikator tytułów, analiza zdjęć, opcjonalnie model językowy w Ollamie),
 > szablony wiadomości do sprzedającego, automatyczne odświeżanie, powiadomienia Windows i Telegram
 > oraz gotowy plik `PhoneBot.exe`. Program nie korzysta z żadnych płatnych usług.
@@ -984,6 +984,7 @@ phonebot/
                  notifications.py (Telegram), telegram_queue.py (kolejka, cisza, limity),
                  notify_service.py (podgląd i test profilu), telegram_bot.py (komendy /pauza /profile…)
   core/notify_profiles.py  profile powiadomień: filtry, dopasowanie, opis;  web/notify.py  profile na telefonie
+  services/maintenance.py  porządki nocne (stare dane, VACUUM, miniatury);  core/sysinfo.py  pamięć RAM procesu
   core/view_filter.py  filtry widoku;  core/places.py  wbudowana lista miejscowości
   net/geocode.py wyszukiwanie miejscowości (OpenStreetMap Nominatim)
   sources/       adaptery portali: base.py (interfejs), allegro_lokalnie.py, vinted.py, sprzedajemy.py,
@@ -994,9 +995,11 @@ phonebot/
                  transactions_tab.py (transakcje), market_tab.py + charts.py (rynek, wykresy),
                  notify_profiles_ui.py (profile powiadomień z podglądem)
 tests/           testy jednostkowe (+ fixtures z przykładowymi odpowiedziami portali)
-tools/           screenshot.py — zrzut okna na danych testowych
+tools/           screenshot.py — zrzut okna na danych testowych; perf_report.py — raport wydajności (baza
+                 symulowana albo kopia Twojej); valuation_snapshot.py — porównanie wycen dwóch wersji
 scripts/         clip_prepare.py (wektory opisów klas CLIP), clip_check_app.py (test analizy zdjęć na
-                 prawdziwym modelu) — uruchamiane w GitHub Actions
+                 prawdziwym modelu), clip_memory_check.py (pamięć i czas modelu zdjęć, zwalnianie) — uruchamiane
+                 w GitHub Actions
 phonebot.spec    konfiguracja PyInstaller (PhoneBot.exe); run_phonebot.py — punkt wejścia
 assets/          ikona aplikacji
 ```
@@ -1027,32 +1030,70 @@ Awaria jednego adaptera jest izolowana i nie zatrzymuje pozostałych.
 
 ### Wydajność
 
-Okno pokazuje się od razu, a oferty wczytują się chwilę później (napis „Wczytywanie ofert…” na pasku stanu).
-Ocena ryzyka oszustwa korzysta z kontekstu z bazy zapamiętanego między odświeżeniami. Kontekst liczy się
-od nowa tylko wtedy, gdy zmienią się oferty, zdjęcia albo dane sprzedających. Sygnały z tekstu ogłoszenia
-liczone są raz na treść. Sprzedawcy seryjni sprawdzani są jednym zapytaniem do bazy zamiast jednym na sprzedawcę.
+**Panel „Wydajność”** (⚙ Ustawienia → Wydajność): czas ostatniego odświeżenia (pobieranie + wycena i tabela),
+start programu, pamięć RAM, rozmiar bazy (ofert w tabeli / w archiwum), miniatury na dysku, ostatnie porządki.
+Przycisk **„Uporządkuj bazę teraz”**, limit miniatur i zdjęć na dysku (domyślnie 300 MB) i włącznik porządków.
 
-Pomiar na 3000 aktywnych ofert (`python tools/benchmark.py --offers 3000`, mediana z 3 przebiegów,
-wersja 1.11.0 → 1.12.0):
+![Panel Wydajność](docs/screenshots/wydajnosc.png)
 
-| Operacja | Przed | Po |
+**Co dzieje się w tle:**
+
+- **Porządki w nocy** (raz na dobę, po godzinie pełnego pobrania; gdy komputer w nocy jest wyłączony — po 3
+  dobach o dowolnej porze), w osobnym wątku. Program usuwa wtedy przebiegi pobierania starsze niż 30 dni
+  (ostatni przebieg każdego portalu zostaje), wysłane powiadomienia starsze niż 90 dni oraz wyniki AI
+  i skróty zdjęć ogłoszeń, których nie ma już w bazie. Potem robi `PRAGMA optimize` i punkt kontrolny WAL.
+  `VACUUM` uruchamia się, gdy wolne miejsce w pliku to ≥ 15 % i ≥ 5 MB. Nie są usuwane dane, z których
+  korzysta wycena.
+- **Miniatury i zdjęcia**: usuwane, gdy nie były używane od 30 dni, a ponad limit — najdawniej oglądane.
+- **Model zdjęć (CLIP)** zajmuje ok. 400 MB RAM. Program zwalnia go po 10 minutach bez zdjęć do analizy
+  (na Windows pamięć wraca do systemu: 412 → 61 MB). Następne zdjęcie wczyta go ponownie w ok. 1 s,
+  z tymi samymi wynikami.
+- **Jednoczesny dostęp do bazy** (okno, serwer na telefon, bot, porządki). Baza działa w trybie WAL, a zapisy
+  zaczynają się od `BEGIN IMMEDIATE`. Wcześniej pobieranie mogło dostać „database is locked”, gdy w tej samej
+  chwili zapisywał telefon albo bot. W teście z jednoczesnym pobieraniem, telefonem, botem i `VACUUM`:
+  przed 7 z 7 zapisów pobierania z błędem, po 0.
+
+**Pomiar** (`python tools/perf_report.py`): baza z 60 dni pracy, 18 000 ofert, z czego 2 939 aktywnych,
+a 852 w tabeli, bo resztę ukrywa 3-dniowe archiwum. Do tego 172 800 przebiegów pobierania (co ~2 min
+× 4 portale). Pomiary bez sieci, wersja 1.22.0 → 1.23.0:
+
+| Co | Przed | Po |
 |---|---|---|
-| Widoczne okno (typowy start) | 1,08 s | 0,33 s |
-| Widoczne okno (pierwszy start po aktualizacji) | 1,63 s | 0,37 s |
-| Pełne wczytanie listy przy starcie | 1,20 s | 1,05 s |
-| Odświeżenie listy (np. po skanie) | 726 ms | 348 ms |
-| Działania po skanie (zdjęcia, ceny, lista) | 218 ms | 182 ms |
-| Sortowanie / filtr / przełączenie list | 0 / 39 / 82 ms | 0 / 39 / 76 ms |
-| Przewijanie tabeli (średnio na klatkę) | 16 ms | 15 ms |
-| Pamięć | 152 MB | 154 MB |
+| Start: okno widoczne / oferty w tabeli | 0,89 s / 2,29 s | 0,70 s / 1,98 s |
+| Jeden cykl odświeżania (3 nowe oferty): czas / procesor | 1,13 s / 1,10 s | 0,98 s / 0,96 s |
+| – w tym kroki po pobraniu (powiadomienia, Telegram) | 226 ms | 178 ms |
+| – w tym wycena i tabela w oknie | 729 ms | 666 ms |
+| Lista na telefonie zaraz po odświeżeniu | 543 ms | 15 ms |
+| Procesor między cyklami (bezczynny program) | 2,3 % (1,4 s/min) | 0,08 % (0,05 s/min) |
+| Status źródeł (co 5 s) / `/status` w bocie | 88 ms / 106 ms | 0,06 ms / 4 ms |
+| Przewijanie tabeli (na klatkę) | 39 ms | 39 ms (bez zmian) |
+| Filtr / szukanie / przełączenie list | 70 / 86 / 96 ms | 74 / 75 / 86 ms |
+| Pamięć po starcie / po 3 h pracy (90 cykli) | 135 / 203 MB | 138 / 206 MB (bez wycieku) |
+| Model zdjęć w pamięci (Windows) | stale 412 MB | 61 MB po 10 min bez zdjęć |
+| Baza: rozmiar / wzrost | 39,8 MB, +0,5 MB/dzień bez końca | 32,3 MB po porządkach, przebiegi do 30 dni |
+| Telefon: szczegóły / rynek / profile / edycja profilu | 7 / 17 / 6 / 303 ms | 8 / 20 / 6 / 240 ms |
+| Jednoczesny zapis (okno + telefon + bot + VACUUM) | błędy „database is locked” | 0 błędów |
 
-Sortowanie, filtr i przewijanie były już szybkie. Ich czas zależy głównie od rysowania w Qt, więc różnice
-mieszczą się w szumie pomiaru. Wyniki wyceny się nie zmieniły: na tej samej bazie 3000 ofert werdykt, zysk,
-ocena i ryzyko są identyczne przed optymalizacją i po niej.
+Bez zmian, bo już działały dobrze:
 
-Baza nie rośnie bez końca: oferty nieaktywne dłużej niż 2 × okno wyceny (min. 60 dni) są usuwane,
-z wyjątkiem obserwowanych. Nieużywane od 30 dni miniatury znikają z dysku, a zdjęcia w pamięci
-mają limit.
+- **Klasyfikator tytułów**: wczytywany raz, w wątku AI. Trening 3,9 s w tle, 1000 tytułów paczką ok. 0,1 s.
+- **CLIP**: wczytany w 0,4–0,6 s, jedno zdjęcie trwa 31–69 ms (GitHub Actions, Windows i Linux). Analiza
+  idzie w wątku AI i obejmuje tylko okazje. Ustawienia puli pamięci onnxruntime sprawdzone w `perf-clip`
+  nie zmniejszają pamięci.
+- **Statystyki rynku**: liczone w tle co 6 h, przyrostowo (od nowa tylko ostatnie 21 dni), 1,1–1,5 s.
+- **Poprawki z transakcji**: liczone przy wycenie z tabeli transakcji, kilka milisekund.
+- **Kroki po pobraniu** wyceniają tylko nowe oferty.
+- **Tabela po odświeżeniu** wycenia oferty od nowa, ale tylko te z ostatnich 3 dni (archiwum). Nowe oferty
+  zmieniają medianę rynku i kontekst oszustw także dla innych ofert, więc dla poprawnych wyników to potrzebne.
+- **Przewijanie**: koszt to głównie rysowanie w Qt. Zwykła tabela Qt na tym samym komputerze testowym
+  zajmuje 20 ms na klatkę.
+
+**Wyniki wyceny bez zmian.** `python tools/valuation_snapshot.py` zapisuje pełną wycenę każdej oferty z bazy
+(werdykt, zysk, ocena, ryzyko z sygnałami, rynek, powody…) w obu trybach. Na bazie z 60 dni wszystkie
+36 000 wycen są identyczne przed optymalizacją i po niej.
+
+**Na Twojej bazie** zmierzysz to samo na kopii (program zamknięty, nic nie wychodzi do sieci):
+`python tools/perf_report.py --db KOPIA_phonebot.sqlite3 --json wynik.json`.
 
 ## Uwaga o źródłach danych
 

@@ -247,6 +247,9 @@ class Settings:
     learning: LearningConfig = field(default_factory=LearningConfig)
     # statystyki rynku (zakładka „Rynek”): liczone w tle co kilka godzin i zapisywane (core/market_stats.py)
     market_stats: MarketStatsConfig = field(default_factory=MarketStatsConfig)
+    # wydajność: limit miniatur i zdjęć na dysku (najdawniej używane usuwane) i porządki w bazie nocą
+    cache_max_mb: int = 300
+    maintenance_enabled: bool = True
     minimize_to_tray: bool = True
     notify_desktop: bool = True
     notify_price_drops: bool = True

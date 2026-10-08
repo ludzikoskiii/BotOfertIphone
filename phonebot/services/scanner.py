@@ -235,7 +235,7 @@ class Scanner:
         if not any(profiles.values()):
             return
         sellers = SellerRepository(self.conn)
-        self.conn.execute("BEGIN")
+        self.conn.execute("BEGIN IMMEDIATE")
         try:
             for source, by_id in profiles.items():
                 for seller_id, prof in by_id.items():
@@ -260,7 +260,7 @@ class Scanner:
         for raw in raw_offers:
             if not raw.description and raw.source_id in pages:
                 raw.description = pages[raw.source_id]
-        self.conn.execute("BEGIN")
+        self.conn.execute("BEGIN IMMEDIATE")
         try:
             items = [guard.prepare(raw) for raw in raw_offers]
             serial = guard.detect_serial(items, source)

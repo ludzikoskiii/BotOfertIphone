@@ -112,10 +112,13 @@ class Evaluator:
 
         if self._market_stats is None:
             repo = MarketStatsRepository(self.conn)
-            self._market_stats = (repo, repo.trends(), repo.get("active") or {})
-        repo, trends, active = self._market_stats
+            self._market_stats = (repo, repo.trends(), repo.get("active") or {}, {})
+        repo, trends, active, memo = self._market_stats
         model = offer.parsed.model
-        found = repo.trend_for(model, offer.parsed.storage_gb, target_market_class(offer, mode), trends)
+        key = (model, offer.parsed.storage_gb, target_market_class(offer, mode))
+        if key not in memo:  # ten sam model i pamięć — ta sama odpowiedź (statystyki wczytane raz na przebieg)
+            memo[key] = repo.trend_for(*key, trends)
+        found = memo[key]
         if found is None:
             val.trend_text = TOO_LITTLE if model else None
         else:

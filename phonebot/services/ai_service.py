@@ -159,7 +159,7 @@ class AiService:
         mid = model_id(clf.info)
         in_tx = self.conn.in_transaction
         if not in_tx:
-            self.conn.execute("BEGIN")
+            self.conn.execute("BEGIN IMMEDIATE")
         try:
             for (source, source_id, _), p in zip(items, probs, strict=True):
                 repo.save_text(source, source_id, p, mid)

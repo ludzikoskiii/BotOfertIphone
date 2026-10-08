@@ -24,6 +24,7 @@ log = logging.getLogger(__name__)
 
 PHOTO_RETRY_S = 15 * 60  # po nieudanym pobraniu/wczytaniu modelu zdjęć nie próbuj częściej
 PHOTO_CHUNK = 5  # zdjęć na porcję
+PHOTO_IDLE_S = 10 * 60  # model zdjęć (ok. 400 MB) zwalniany po tylu sekundach bez zdjęć; wraca przy następnym
 LLM_CHECK_S = 60  # stan Ollamy (działa? jest model?) sprawdzany najwyżej raz na minutę
 
 
@@ -48,6 +49,7 @@ class AiWorker(QObject):
         self._conn = None
         self._stop = False
         self._photo_ready = False
+        self._release_timer = None  # tworzony w wątku AI (przy pierwszym użyciu)
         self._photo_failed_at: float | None = None
         self._pending: deque[PhotoJob] = deque()
         self._chunk_scheduled = False
@@ -128,7 +130,30 @@ class AiWorker(QObject):
         self._photo_ready, self._photo_failed_at = True, None
         self.status.emit("AI: modele gotowe")
         self.photo_model_ready.emit(True)
+        self._arm_photo_release()
         return True
+
+    def _arm_photo_release(self) -> None:
+        """Po ``PHOTO_IDLE_S`` bez zdjęć model zdjęć zwalnia pamięć (zdjęcia do analizy pojawiają się rzadko —
+        tylko okazje); następne zdjęcie wczyta go z dysku ponownie w ułamku sekundy."""
+        if self._release_timer is None:
+            self._release_timer = QTimer(self)
+            self._release_timer.setSingleShot(True)
+            self._release_timer.setInterval(PHOTO_IDLE_S * 1000)
+            self._release_timer.timeout.connect(self.release_photo_model)
+        self._release_timer.start()
+
+    @Slot()
+    def release_photo_model(self) -> bool:
+        from ..ml.photo_model import release_photo_classifier
+
+        if self._pending or self._chunk_scheduled or not self._photo_ready:
+            return False
+        self._photo_ready = False
+        released = release_photo_classifier()
+        if released:
+            log.info("Model zdjęć zwolniony z pamięci (brak zdjęć do analizy) — wróci przy następnym zdjęciu")
+        return released
 
     @Slot(list)
     def analyze(self, jobs: list) -> None:
@@ -174,8 +199,10 @@ class AiWorker(QObject):
             self.photos_done.emit(done)
         if self._pending:
             self._schedule_chunk()
-        elif self._batch_done:
-            self.status.emit(f"AI: przeanalizowano {plural(self._batch_done, 'zdjęcie', 'zdjęcia', 'zdjęć')}")
+        else:
+            if self._batch_done:
+                self.status.emit(f"AI: przeanalizowano {plural(self._batch_done, 'zdjęcie', 'zdjęcia', 'zdjęć')}")
+            self._arm_photo_release()
         return done
 
     # --- opisy: lokalny model językowy (Ollama) ---

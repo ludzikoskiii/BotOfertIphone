@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from datetime import datetime
+from functools import lru_cache
 
 from ..core.fraud import SIGNALS, FraudAssessment, FraudContext, SellerStats, Signal, desc_hash
 from ..core.models import Valuation, Verdict
@@ -17,6 +18,16 @@ def owner_key_from(source: str, params: dict, city: str | None) -> str:
 
 
 _CACHE: dict[str, tuple[tuple, FraudContext]] = {}
+
+
+@lru_cache(maxsize=8192)
+def _owner_from_row(source: str, params_text: str | None, city: str | None) -> str:
+    """Sprzedający z wiersza bazy — zapamiętany (kontekst buduje się po każdym odświeżeniu z tych samych ofert)."""
+    try:
+        params = json.loads(params_text or "{}")
+    except json.JSONDecodeError:
+        params = {}
+    return owner_key_from(source, params, city)
 
 
 def _data_version(conn: sqlite3.Connection, settings: Settings) -> tuple:
@@ -43,11 +54,7 @@ def _build(conn: sqlite3.Connection, settings: Settings) -> FraudContext:
     ctx = FraudContext(memoize=True)
     owners: dict[tuple[str, str], str] = {}
     for r in conn.execute("SELECT source, source_id, description, city, params FROM offers WHERE is_active = 1"):
-        try:
-            params = json.loads(r["params"] or "{}")
-        except json.JSONDecodeError:
-            params = {}
-        owner = owner_key_from(r["source"], params, r["city"])
+        owner = _owner_from_row(r["source"], r["params"], r["city"])
         owners[(r["source"], r["source_id"])] = owner
         h = desc_hash(r["description"])
         ctx.offer_desc[(r["source"], r["source_id"])] = h

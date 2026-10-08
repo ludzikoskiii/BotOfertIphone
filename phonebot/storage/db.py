@@ -368,6 +368,11 @@ MIGRATIONS: list[str] = [
     CREATE INDEX idx_outbox_profiles_profile ON telegram_outbox_profiles (profile_id);
     CREATE INDEX idx_outbox_status_sent ON telegram_outbox (status, sent_at)
     """,
+    # v19 — wydajność: status źródeł (co 5 s) czyta ostatni przebieg portalu z indeksu zamiast całej tabeli
+    # przebiegów (przy odświeżaniu co ~2 min rośnie o ~3000 wierszy dziennie; stare usuwają porządki nocne)
+    """
+    CREATE INDEX idx_fetch_runs_source ON fetch_runs (source, id)
+    """,
 ]
 
 
@@ -388,7 +393,7 @@ def migrate(conn: sqlite3.Connection) -> int:
     version = conn.execute("PRAGMA user_version").fetchone()[0]
     for idx, script in enumerate(MIGRATIONS[version:], start=version + 1):
         log.info("Migracja bazy do wersji %d", idx)
-        conn.execute("BEGIN")
+        conn.execute("BEGIN IMMEDIATE")
         try:
             for stmt in (s.strip() for s in script.split(";")):
                 if stmt:

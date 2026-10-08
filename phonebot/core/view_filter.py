@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from functools import lru_cache
 
 from .models import Offer, Valuation
 from .text import normalize
@@ -26,6 +27,17 @@ class ViewFilter:
 
     def is_active(self) -> bool:
         return self != ViewFilter()
+
+
+@lru_cache(maxsize=8192)
+def _haystack(title: str, city: str | None) -> str:
+    """Tytuł i miasto po normalizacji — liczone raz (filtr sprawdza wszystkie wiersze przy każdym znaku)."""
+    return normalize(f"{title} {city or ''}")
+
+
+@lru_cache(maxsize=256)
+def _words(text: str) -> tuple[str, ...]:
+    return tuple(normalize(text).split())
 
 
 def matches(offer: Offer, val: Valuation, f: ViewFilter) -> bool:
@@ -55,7 +67,7 @@ def matches(offer: Offer, val: Valuation, f: ViewFilter) -> bool:
     if f.risk_levels and getattr(val.risk, "level", "low") not in f.risk_levels:
         return False
     if f.text:
-        haystack = normalize(f"{offer.raw.title} {offer.raw.city or ''}")
-        if not all(word in haystack for word in normalize(f.text).split()):
+        haystack = _haystack(offer.raw.title, offer.raw.city)
+        if not all(word in haystack for word in _words(f.text)):
             return False
     return True

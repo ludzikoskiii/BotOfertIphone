@@ -79,8 +79,12 @@ class SourceStatusBar(QWidget):
             return
         self.kinds[key] = kind
         hint = STATUS_STYLE.get(kind, STATUS_STYLE["error"])[4]
-        lbl.setText(status_text(name, kind, found, suffix))
-        lbl.setStyleSheet(chip_style(kind))
+        text, style = status_text(name, kind, found, suffix), chip_style(kind)
+        # wołane co 5 s — zmiana tylko, gdy coś się zmieniło (styl przelicza wygląd etykiety)
+        if lbl.text() != text:
+            lbl.setText(text)
+        if lbl.styleSheet() != style:
+            lbl.setStyleSheet(style)
         tip = []
         if when:
             tip.append(f"Ostatnie sprawdzenie: {when.astimezone():%d.%m %H:%M}")
@@ -92,7 +96,9 @@ class SourceStatusBar(QWidget):
             tip.append(f"Odświeżanie: {note}")
         if hint:
             tip.append(hint)
-        lbl.setToolTip("\n".join(tip))
+        tip_text = "\n".join(tip)
+        if lbl.toolTip() != tip_text:
+            lbl.setToolTip(tip_text)
 
     def restyle(self) -> None:
         """Po zmianie motywu."""

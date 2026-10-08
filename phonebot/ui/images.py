@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import time
 from collections import OrderedDict, deque
 from pathlib import Path
 
@@ -91,18 +90,17 @@ class ThumbnailCache(QObject):
         while len(self._mem) > self.max_in_memory:
             self._mem.popitem(last=False)
 
-    def prune_disk(self, max_age_days: int = DISK_MAX_AGE_DAYS) -> int:
-        """Usuwa z dysku miniatury nieużywane od ``max_age_days`` dni."""
-        cutoff = time.time() - max_age_days * 86400
-        removed = 0
+    def prune_disk(self, max_age_days: int = DISK_MAX_AGE_DAYS, max_mb: float | None = None) -> int:
+        """Usuwa z dysku pliki tej pamięci podręcznej nieużywane od ``max_age_days`` dni (i najdawniej używane ponad
+        ``max_mb``). Limit całego folderu (miniatury + zdjęcia) pilnują porządki: ``services.maintenance``."""
+        from ..services.maintenance import prune_cache_dir
+
         try:
-            for f in self.cache_dir.glob(f"*_{self.size.width()}.jpg"):
-                if f.stat().st_mtime < cutoff:
-                    f.unlink(missing_ok=True)
-                    removed += 1
+            return prune_cache_dir(self.cache_dir, max_age_days=max_age_days, max_mb=max_mb,
+                                   pattern=f"*_{self.size.width()}.jpg")[0]
         except OSError:
             log.debug("Czyszczenie miniatur nie powiodło się", exc_info=True)
-        return removed
+            return 0
 
     def _pump(self) -> None:
         while self._queue and len(self._active) < MAX_PARALLEL:

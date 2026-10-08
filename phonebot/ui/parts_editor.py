@@ -179,7 +179,7 @@ class PartsEditor(QDialog):
             QMessageBox.warning(self, "Błąd", str(e))
             return
         conn = self.repo.conn
-        conn.execute("BEGIN")
+        conn.execute("BEGIN IMMEDIATE")
         try:
             new_keys = {(p.model, p.part.value) for p, _ in rows}
             originals = {tuple(o) for _, o in rows if o}

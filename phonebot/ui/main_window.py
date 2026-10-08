@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 import copy
+import dataclasses
+import functools
 import logging
 import sqlite3
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -160,6 +163,8 @@ class MainWindow(QMainWindow):
         self.conn = conn
         self.db_path = db_path
         self._closed = False  # zamknięte na dobre (nie do zasobnika) — zegary nie uruchamiają już zadań
+        # panel „Wydajność” (Ustawienia): czasy ostatniego odświeżenia, startu, porządków
+        self.perf: dict = {"created": time.perf_counter()}
         self._bot_state: dict = {}  # stan dla /status (czytany w wątku bota — zwykły słownik, bez widżetów)
         self.scheduler: RefreshScheduler | None = None  # odświeżanie przyrostowe (start_refresh_scheduler)
         self.settings_repo = SettingsRepository(conn)
@@ -263,7 +268,11 @@ class MainWindow(QMainWindow):
         else:
             self._initial_load()
         # sprzątanie starych miniatur po starcie, żeby nie opóźniać otwarcia okna
-        QTimer.singleShot(5000, lambda: (self.thumbs.prune_disk(), self.photos.prune_disk()))
+        QTimer.singleShot(5000, self.prune_photo_cache)
+        # porządki w bazie (stare przebiegi, VACUUM) i miniatury ponad limit — nocą, w tle (sprawdzane co 15 min)
+        self._maint_worker = None
+        self.market_timer.timeout.connect(self.run_maintenance)
+        QTimer.singleShot(180_000, self.run_maintenance)
 
     # ---------------------------------------------------------------- UI ---
 
@@ -889,6 +898,14 @@ class MainWindow(QMainWindow):
 
     def reload(self) -> None:
         """Wczytuje oferty z bazy i wycenia je w bieżącym trybie."""
+        started = time.perf_counter()
+        try:
+            self._reload()
+        finally:
+            self.perf["reload_ms"] = (time.perf_counter() - started) * 1000
+            self.perf["reload_at"] = datetime.now(UTC)
+
+    def _reload(self) -> None:
         selected = self.current_offer_id()
         repo = OfferRepository(self.conn)
         offers = repo.list(include_hidden=self.show_hidden_action.isChecked())
@@ -902,7 +919,10 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(0, self.propose_photo_scam_blacklist)
         self._mark_picked()
         if getattr(self, "web", None) is not None:
-            self.web.app.invalidate()
+            if self.show_hidden_action.isChecked():
+                self.web.app.invalidate()  # w oknie także ukryte — telefon policzy swoją listę
+            else:
+                self.web.app.set_rows(rows)  # ta sama wycena co w oknie — telefon nie liczy jej drugi raz
         self.stack.setCurrentWidget(self.table if rows else self.empty_label)
         self._select_offer(selected)
         self._update_count()
@@ -1110,8 +1130,12 @@ class MainWindow(QMainWindow):
         selected = self.current_offer_id()
         self.proxy.set_view_filter(f)
         self._select_offer(selected)
+        typing = dataclasses.replace(self.settings.view_filter, text=f.text) == f  # zmieniło się tylko szukanie
         self.settings.view_filter = f
-        self.settings_repo.save(self.settings)
+        if typing:
+            self._ui_save_timer.start()  # wpisywanie w szukaniu — zapis po chwili, nie przy każdym znaku
+        else:
+            self.settings_repo.save(self.settings)
         self._update_count()
 
     def _initial_load(self) -> None:
@@ -1120,6 +1144,7 @@ class MainWindow(QMainWindow):
         self._apply_filter_rules()
         self.reload()
         self.loaded = True
+        self.perf["ready_s"] = time.perf_counter() - self.perf["created"]
         QTimer.singleShot(1500, self.propose_photo_scam_blacklist)
 
     def _apply_filter_rules(self) -> int:
@@ -1208,7 +1233,8 @@ class MainWindow(QMainWindow):
                                 photo_model_ready=model_ready(models_dir()),
                                 labels=labels_count(self.conn, self.settings),
                                 blacklist=BlacklistRepository(self.conn).list(), conn=self.conn,
-                                db_path=self.db_path)
+                                db_path=self.db_path, perf=self.perf, cache_dir=self.thumbs.cache_dir)
+        dialog.maintenance_requested.connect(lambda: self.run_maintenance(force=True))
         dialog.parts_editor_requested.connect(self.open_parts_editor)
         dialog.retrain_requested.connect(self.ai_retrain_requested.emit)
         dialog.retrain_requested.connect(lambda: dialog.set_training_state("Douczanie w tle…"))
@@ -1397,6 +1423,50 @@ class MainWindow(QMainWindow):
         self._worker = worker
         self._thread = start_in_thread(worker, self)
         self._thread.finished.connect(self._thread_done)
+
+    # ------------------------------------------------------------ porządki ---
+
+    def prune_photo_cache(self) -> bool:
+        """Miniatury i zdjęcia na dysku: stare i ponad limit (Ustawienia → Wydajność) — w tle."""
+        from ..services.maintenance import prune_cache_dir
+
+        if self._closed or getattr(self, "_prune_worker", None) is not None:
+            return False
+        worker = FuncWorker(functools.partial(prune_cache_dir, max_mb=self.settings.cache_max_mb),
+                            self.thumbs.cache_dir)
+        worker.finished.connect(self._cache_pruned)
+        worker.failed.connect(self._cache_pruned)
+        self._prune_worker = worker
+        start_in_thread(worker, self)
+        return True
+
+    def _cache_pruned(self, _result) -> None:
+        self._prune_worker = None
+
+    def run_maintenance(self, force: bool = False) -> bool:
+        """Porządki w bazie raz na dobę w nocy (``services/maintenance``) — w tle, nie w trakcie pobierania."""
+        from ..services.maintenance import maintenance_due, run_in_background
+
+        s = self.settings
+        if self._closed or self._maint_worker is not None or not (s.maintenance_enabled or force):
+            return False
+        if not force and (self._thread is not None or self._nightly_worker is not None
+                          or not maintenance_due(self.conn, datetime.now().astimezone(), s.refresh.nightly_hour)):
+            return False
+        worker = FuncWorker(run_in_background, self.db_path, copy.deepcopy(s), self.thumbs.cache_dir, force)
+        worker.finished.connect(self._maintenance_done)
+        worker.failed.connect(self._maintenance_done)
+        self._maint_worker = worker
+        start_in_thread(worker, self)
+        return True
+
+    def _maintenance_done(self, result) -> None:
+        self._maint_worker = None
+        if isinstance(result, str):
+            log.warning("Porządki w bazie: %s", result)
+        self.perf["maintenance"] = result
+        if self._settings_dialog is not None:
+            self._settings_dialog.refresh_perf()
 
     # ------------------------------------------------------ komendy Telegram ---
 
@@ -1718,6 +1788,12 @@ class MainWindow(QMainWindow):
         if self._thread is not None:
             self._thread.quit()
             self._thread.wait(3000)
+        # krótkie zadania w tle (porządki, miniatury, Telegram…): dokończ, zanim okno zniknie — inaczej Qt kończy
+        # program błędem „QThread: Destroyed while thread is still running”
+        for thread in self.findChildren(QThread):
+            if thread.isRunning() and thread is not self._ai_thread:
+                thread.quit()
+                thread.wait(3000)
         for _worker, thread in list(self._quick.values()):  # szybkie odświeżanie portali w toku
             thread.quit()
             thread.wait(3000)

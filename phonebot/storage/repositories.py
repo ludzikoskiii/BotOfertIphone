@@ -306,7 +306,7 @@ class OfferRepository:
             (model, since),
         )
         return [
-            MarketObservation(float(r["price"]), r["storage_gb"], Condition(r["condition"]), int(r["id"]))
+            MarketObservation(float(r["price"]), r["storage_gb"], _condition(r["condition"]), int(r["id"]))
             for r in rows
         ]
 
@@ -319,6 +319,26 @@ _OFFER_SELECT = """
            a.desc_json AS ai_desc_json, a.desc_model AS ai_desc_model, a.desc_at AS ai_desc_at,
            a.desc_error AS ai_desc_error, a.desc_hash AS ai_desc_hash
     FROM offers o LEFT JOIN ai_results a ON a.source = o.source AND a.source_id = o.source_id"""
+
+
+# wartości z bazy → stałe (słownik zamiast wywołania Enum: ten sam obiekt, kilkakrotnie szybciej przy tysiącach
+# wierszy wczytywanych przy każdym odświeżeniu tabeli); nieznana wartość — jak dotąd ValueError z Enum
+_CONDITIONS = {c.value: c for c in Condition}
+_DEFECTS = {d.value: d for d in Defect}
+_FLAGS = {f.value: f for f in RedFlag}
+_STATUSES = {st.value: st for st in OfferStatus}
+
+
+def _condition(value: str) -> Condition:
+    return _CONDITIONS.get(value) or Condition(value)
+
+
+def _defect(value: str) -> Defect:
+    return _DEFECTS.get(value) or Defect(value)
+
+
+def _status(value: str) -> OfferStatus:
+    return _STATUSES.get(value) or OfferStatus(value)
 
 
 def _row_to_layers(row: sqlite3.Row) -> AiLayers | None:
@@ -348,13 +368,13 @@ def _row_to_offer(row: sqlite3.Row) -> Offer:
         params=json.loads(row["params"]),
     )
     parsed = ParsedInfo(
-        model=row["model"], storage_gb=row["storage_gb"], condition=Condition(row["condition"]),
-        defects=[Defect(d) for d in json.loads(row["defects"])],
-        flags=[RedFlag(f) for f in json.loads(row["flags"]) if f in RedFlag._value2member_map_],
+        model=row["model"], storage_gb=row["storage_gb"], condition=_condition(row["condition"]),
+        defects=[_defect(d) for d in json.loads(row["defects"])],
+        flags=[_FLAGS[f] for f in json.loads(row["flags"]) if f in _FLAGS],
         battery_health=row["battery_health"], negotiable=_bool(row["negotiable"]),
     )
     offer = Offer(
-        raw=raw, parsed=parsed, id=int(row["id"]), status=OfferStatus(row["status"]),
+        raw=raw, parsed=parsed, id=int(row["id"]), status=_status(row["status"]),
         first_seen=_dt(row["first_seen"]), last_seen=_dt(row["last_seen"]), dedup_key=row["dedup_key"],
         layers=_row_to_layers(row),
     )
@@ -362,7 +382,7 @@ def _row_to_offer(row: sqlite3.Row) -> Offer:
     if "page_description" in keys and row["page_description"]:
         offer.desc_from_page = row["page_description"] == row["description"]
     offer.active = bool(row["is_active"])
-    offer.inactive_reason = row["inactive_reason"] if "inactive_reason" in row.keys() else None
+    offer.inactive_reason = row["inactive_reason"] if "inactive_reason" in keys else None
     if "picked_at" in keys:
         offer.picked_at = _dt(row["picked_at"])
         offer.pick_excluded = bool(row["pick_excluded"])
@@ -474,11 +494,19 @@ class FetchRunRepository:
         )
 
     def latest_by_source(self) -> dict[str, sqlite3.Row]:
-        """Ostatni zakończony przebieg każdego źródła (do statusu w GUI)."""
-        rows = self.conn.execute(
-            "SELECT * FROM fetch_runs WHERE id IN (SELECT MAX(id) FROM fetch_runs "
-            "WHERE finished_at IS NOT NULL GROUP BY source)")
-        return {r["source"]: r for r in rows}
+        """Ostatni zakończony przebieg każdego źródła (do statusu w GUI, co 5 s). Z indeksu (źródło, id): kilka
+        krótkich odczytów zamiast przeglądania całej tabeli przebiegów."""
+        sources = [r[0] for r in self.conn.execute(
+            "WITH RECURSIVE s(src) AS (SELECT MIN(source) FROM fetch_runs UNION ALL "
+            "SELECT (SELECT MIN(source) FROM fetch_runs WHERE source > s.src) FROM s WHERE s.src IS NOT NULL) "
+            "SELECT src FROM s WHERE src IS NOT NULL")]
+        out = {}
+        for src in sources:
+            row = self.conn.execute("SELECT * FROM fetch_runs WHERE source = ? AND finished_at IS NOT NULL "
+                                    "ORDER BY id DESC LIMIT 1", (src,)).fetchone()
+            if row is not None:
+                out[src] = row
+        return out
 
     def last_runs(self, limit: int = 20) -> list[sqlite3.Row]:
         return list(self.conn.execute("SELECT * FROM fetch_runs ORDER BY id DESC LIMIT ?", (limit,)))
@@ -960,7 +988,7 @@ class TransactionRepository:
         """Zapis transakcji razem z częściami z magazynu (atomowo). Zwraca części, których zabrakło — wtedy nic
         nie jest zapisywane (nowa transakcja nie powstaje)."""
         new = tx.id is None
-        self.conn.execute("BEGIN")
+        self.conn.execute("BEGIN IMMEDIATE")
         try:
             self.save(tx)
             missing = self.set_parts(tx.id, tx.model, wanted, cfg, when=tx.bought_at)
@@ -1020,7 +1048,7 @@ class TransactionRepository:
         if sorted(merged.items(), key=lambda kv: kv[0].value) == self.wanted_parts(tx_id):
             return []
         own = not self.conn.in_transaction
-        self.conn.execute("BEGIN" if own else "SAVEPOINT tx_parts")
+        self.conn.execute("BEGIN IMMEDIATE" if own else "SAVEPOINT tx_parts")
         try:
             self.inventory.release(tx_id)
             missing = [part for part, qty in merged.items()

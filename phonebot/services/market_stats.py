@@ -192,7 +192,7 @@ def compute(conn: sqlite3.Connection, settings: Settings, now: datetime | None =
     fresh_from = today - timedelta(days=cfg.refresh_days)
     todo = [d for d in window if d >= fresh_from or d.isoformat() not in done]
     stats = daily_stats(points, todo) if todo else []
-    conn.execute("BEGIN")
+    conn.execute("BEGIN IMMEDIATE")
     try:
         for i in range(0, len(todo), 200):
             chunk = [d.isoformat() for d in todo[i:i + 200]]

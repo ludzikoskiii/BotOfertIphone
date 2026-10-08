@@ -123,26 +123,31 @@ class FraudContext:
     memoize: bool = False  # kontekst z bazy (niezmienny po zbudowaniu) — wyniki porównań zdjęć zapamiętywane
     _dup_memo: dict[tuple, tuple[str, str] | None] = field(default_factory=dict)
 
-    def similar_photos(self, key: tuple[str, str], max_distance: int) -> list[tuple[str, str]]:
-        """Oferty z podobnym zdjęciem. Indeks 8 pasm po 8 bitów: przy różnicy ≤ 7 bitów co najmniej jedno
-        pasmo jest identyczne (zasada szufladkowa) — zamiast porównywać każde zdjęcie z każdym."""
+    def _similar(self, key: tuple[str, str], max_distance: int):
+        """Kolejne oferty z podobnym zdjęciem (bez powtórzeń, w stałej kolejności). Indeks 8 pasm po 8 bitów:
+        przy różnicy ≤ 7 bitów co najmniej jedno pasmo jest identyczne (zasada szufladkowa) — zamiast
+        porównywać każde zdjęcie z każdym. W pasmach zapisany jest od razu skrót (bez szukania w słowniku)."""
         mine = self.photos.get(key)
         if mine is None:
-            return []
+            return
         if self._bands is None:
             self._bands = {}
             for k, (h, _) in self.photos.items():
                 for i in range(8):
-                    self._bands.setdefault((i, (h >> (8 * i)) & 0xFF), []).append(k)
-        seen: set[tuple[str, str]] = set()
-        out = []
+                    self._bands.setdefault((i, (h >> (8 * i)) & 0xFF), []).append((k, h))
+        h0 = mine[0]
+        seen = {key}
+        bands = self._bands
         for i in range(8):
-            for k in self._bands.get((i, (mine[0] >> (8 * i)) & 0xFF), []):
-                if k != key and k not in seen:
+            for k, h in bands.get((i, (h0 >> (8 * i)) & 0xFF), ()):
+                if k not in seen:
                     seen.add(k)
-                    if hamming(self.photos[k][0], mine[0]) <= max_distance:
-                        out.append(k)
-        return out
+                    if (h ^ h0).bit_count() <= max_distance:
+                        yield k
+
+    def similar_photos(self, key: tuple[str, str], max_distance: int) -> list[tuple[str, str]]:
+        """Oferty z podobnym zdjęciem (patrz ``_similar``)."""
+        return list(self._similar(key, max_distance))
 
     def duplicate_of(self, key: tuple[str, str], max_distance: int, owner: str) -> tuple[str, str] | None:
         """Pierwsze ogłoszenie innego sprzedającego z tym samym albo prawie tym samym zdjęciem.
@@ -150,7 +155,7 @@ class FraudContext:
         memo_key = (key, max_distance, owner)
         if memo_key in self._dup_memo:
             return self._dup_memo[memo_key]
-        dup = next((k for k in self.similar_photos(key, max_distance) if self.photo_owner.get(k) != owner), None)
+        dup = next((k for k in self._similar(key, max_distance) if self.photo_owner.get(k) != owner), None)
         if self.memoize:
             self._dup_memo[memo_key] = dup
         return dup
@@ -185,8 +190,10 @@ def phone_numbers(text: str) -> list[str]:
     return list(dict.fromkeys(out))
 
 
+@lru_cache(maxsize=8192)
 def desc_hash(text: str | None) -> str | None:
-    """Skrót opisu do wykrywania kopii (tylko dłuższe opisy — krótkie „stan dobry” się powtarzają)."""
+    """Skrót opisu do wykrywania kopii (tylko dłuższe opisy — krótkie „stan dobry” się powtarzają). Zapamiętywany:
+    kontekst oszustw buduje się po każdym odświeżeniu z opisów wszystkich aktywnych ofert, a te rzadko się zmieniają."""
     norm = normalize(text).replace("|", " ")
     norm = re.sub(r"\s+", " ", norm).strip()
     if len(norm) < 80:

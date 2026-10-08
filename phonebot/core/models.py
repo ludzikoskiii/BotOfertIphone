@@ -29,12 +29,12 @@ class Condition(StrEnum):
     @property
     def market_class(self) -> str:
         """Klasa porównawcza przy liczeniu mediany: new / used / damaged."""
-        if self is Condition.NEW:
-            return "new"
-        if self in (Condition.LIKE_NEW, Condition.GOOD):
-            return "used"
-        return "damaged"
+        return _MARKET_CLASS[self]
 
+
+# klasa porównawcza stanu (wołana dla każdej obserwacji rynkowej — słownik zamiast warunków)
+_MARKET_CLASS = {Condition.NEW: "new", Condition.LIKE_NEW: "used", Condition.GOOD: "used",
+                 Condition.DAMAGED: "damaged", Condition.FOR_PARTS: "damaged"}
 
 _CONDITION_LABELS = {
     Condition.NEW: "Nowy",

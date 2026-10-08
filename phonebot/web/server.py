@@ -49,6 +49,7 @@ BIND_MODES = {
 DEFAULT_PORT = 8765
 COOKIE = "pb_session"
 CACHE_S = 20
+PUSHED_S = 15 * 60  # wycena przekazana przez okno programu (odświeżane po każdej zmianie danych)
 PAGE_SIZE = 100
 _TAILNET = ipaddress.ip_network("100.64.0.0/10")
 _TAILNET6 = ipaddress.ip_network("fd7a:115c:a1e0::/48")
@@ -139,8 +140,14 @@ class WebApp:
         with self._lock:
             self._cache = None
 
+    def set_rows(self, rows: list[tuple[Offer, Valuation]]) -> None:
+        """Wycena prosto z okna programu (po każdym odświeżeniu tabeli) — telefon nie liczy jej drugi raz.
+        Ważna do następnego odświeżenia okna albo akcji z telefonu (``invalidate``), najwyżej ``PUSHED_S``."""
+        with self._lock:
+            self._cache = (time.monotonic() - CACHE_S + PUSHED_S, list(rows))
+
     def rows(self) -> list[tuple[Offer, Valuation]]:
-        """Oferty z wyceną (jak w oknie programu) — liczone najwyżej co ``CACHE_S`` sekund."""
+        """Oferty z wyceną (jak w oknie programu) — z okna albo liczone tu najwyżej co ``CACHE_S`` sekund."""
         with self._lock:
             if self._cache and time.monotonic() - self._cache[0] < CACHE_S:
                 return self._cache[1]

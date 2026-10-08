@@ -209,11 +209,12 @@ AI_PHOTO = [
 
 class SettingsDialog(QDialog):
     parts_editor_requested = Signal()
+    maintenance_requested = Signal()
     retrain_requested = Signal()
 
     def __init__(self, settings: Settings, parent=None, false_positives: list[tuple[str, int]] | None = None, *,
                  model_info=None, photo_model_ready: bool = False, labels: int = 0, blacklist: list | None = None,
-                 conn=None, db_path=None):
+                 conn=None, db_path=None, perf: dict | None = None, cache_dir=None):
         super().__init__(parent)
         self.setWindowTitle("Ustawienia")
         self.resize(900, 700)
@@ -224,6 +225,7 @@ class SettingsDialog(QDialog):
         self.photo_model_ready = photo_model_ready
         self.labels = labels
         self.conn, self.db_path = conn, db_path  # profile powiadomień (zapisywane od razu w bazie)
+        self.perf, self.cache_dir = perf if perf is not None else {}, cache_dir  # panel „Wydajność”
         self.profiles_panel = None
         self._readers: list[Callable[[Settings], None]] = []
 
@@ -242,6 +244,7 @@ class SettingsDialog(QDialog):
         tabs.addTab(self._fraud_tab(), "Oszustwa")
         tabs.addTab(self._notify_tab(), "Powiadomienia")
         tabs.addTab(self._phone_tab(), "Telefon")
+        tabs.addTab(self._perf_tab(), "Wydajność")
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
         buttons.button(QDialogButtonBox.StandardButton.Save).setText("Zapisz")
@@ -1345,6 +1348,102 @@ class SettingsDialog(QDialog):
         item = self.blacklist_table.item(row, 0)
         self.blacklist_removed.add(int(item.data(Qt.ItemDataRole.UserRole)))
         self.blacklist_table.removeRow(row)
+
+    def _perf_tab(self) -> QWidget:
+        intro = QLabel("Jak szybko działa program na tym komputerze i ile zajmuje na dysku. Porządki w bazie "
+                       "(stare przebiegi pobierania i powiadomienia, VACUUM) wykonują się same raz na dobę w nocy, "
+                       "w tle — nie zmieniają wyceny ani ofert.")
+        intro.setWordWrap(True)
+        self.perf_info = QLabel()
+        self.perf_info.setObjectName("perf_info")
+        self.perf_info.setTextFormat(Qt.TextFormat.RichText)
+        self.perf_info.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        info = QGroupBox("Teraz")
+        QVBoxLayout(info).addWidget(self.perf_info)
+        refresh = QPushButton("Odśwież")
+        refresh.clicked.connect(self.refresh_perf)
+        clean = QPushButton("Uporządkuj bazę teraz")
+        clean.setToolTip("Usuwa dane, których program już nie czyta, i zmniejsza plik bazy (w tle, kilka sekund).")
+        clean.clicked.connect(self._maintenance_now)
+        row = QHBoxLayout()
+        row.addWidget(refresh)
+        row.addWidget(clean)
+        row.addStretch(1)
+        buttons = QWidget()
+        buttons.setLayout(row)
+        limits = QGroupBox("Porządki")
+        limits.setLayout(self._form([
+            Field("cache_max_mb", "Miniatury i zdjęcia na dysku — najwyżej", "int", 50, 5000, 50, " MB",
+                  tip="Ponad limit usuwane są najdawniej oglądane (i zawsze te nieużywane od 30 dni)."),
+            Field("maintenance_enabled", "Porządki w bazie raz na dobę w nocy", "bool"),
+        ]))
+        self.refresh_perf()
+        return self._page(intro, info, buttons, limits)
+
+    def _maintenance_now(self) -> None:
+        self.perf_info.setText(self.perf_info.text() + "<br><i>Porządki uruchomione w tle…</i>")
+        self.maintenance_requested.emit()
+
+    def refresh_perf(self) -> None:
+        """Czas ostatniego odświeżenia, pamięć RAM, rozmiar bazy i miniatur, ostatnie porządki."""
+        from datetime import datetime
+        from pathlib import Path
+
+        from ..core.sysinfo import process_rss_mb
+        from ..services.maintenance import cache_size_mb, last_report
+
+        rows: list[tuple[str, str]] = []
+
+        def dec(x: float) -> str:  # ułamki po polsku: „0,3 s”, „30,5 MB”
+            return f"{x:.1f}".replace(".", ",")
+
+        def when(dt) -> str:
+            local = dt.astimezone()
+            return local.strftime("%H:%M") if local.date() == datetime.now().date() else local.strftime("%d.%m %H:%M")
+
+        if self.conn is not None:
+            from ..storage.repositories import FetchRunRepository
+
+            runs = [r for r in FetchRunRepository(self.conn).latest_by_source().values() if r["finished_at"]]
+            if runs:
+                last = max(runs, key=lambda r: r["finished_at"])
+                start, end = datetime.fromisoformat(last["started_at"]), datetime.fromisoformat(last["finished_at"])
+                text = f"{when(end)} · {SOURCE_NAMES.get(last['source'], last['source'])} · pobieranie " \
+                       f"{dec((end - start).total_seconds())} s"
+                if "reload_ms" in self.perf:
+                    text += f" · wycena i tabela {self.perf['reload_ms']:.0f} ms"
+                rows.append(("Ostatnie odświeżenie", text))
+        if "ready_s" in self.perf:
+            rows.append(("Start programu", f"oferty widoczne po {dec(self.perf['ready_s'])} s"))
+        rss = process_rss_mb()
+        if rss is not None:
+            rows.append(("Pamięć RAM programu", f"{rss:.0f} MB"))
+        if self.db_path is not None and Path(self.db_path).exists():
+            size = Path(self.db_path).stat().st_size
+            wal = Path(str(self.db_path) + "-wal")
+            size += wal.stat().st_size if wal.exists() else 0
+            text = f"{dec(size / 2**20)} MB"
+            if self.conn is not None:
+                r = self.conn.execute(
+                    "SELECT COUNT(*), SUM(is_active = 1 AND archived_at IS NULL AND status != 'hidden'), "
+                    "SUM(archived_at IS NOT NULL) FROM offers").fetchone()
+                text += f" · ofert w tabeli {r[1] or 0}, w archiwum {r[2] or 0}, razem {r[0]}"
+            rows.append(("Baza danych", text))
+        if self.cache_dir is not None:
+            rows.append(("Miniatury i zdjęcia", f"{cache_size_mb(Path(self.cache_dir)):.0f} MB "
+                                                f"(limit {self.settings.cache_max_mb} MB)"))
+        if self.conn is not None:
+            rep = last_report(self.conn)
+            if rep and rep.get("at"):
+                from ..services.maintenance import MaintenanceReport
+
+                fields = {k: v for k, v in rep.items() if k in MaintenanceReport.__dataclass_fields__}
+                rows.append(("Ostatnie porządki", f"{when(datetime.fromisoformat(rep['at']))} · "
+                                                  f"{MaintenanceReport(**fields).summary()}"))
+            else:
+                rows.append(("Ostatnie porządki", "jeszcze nie było (pierwsze w najbliższą noc)"))
+        self.perf_info.setText("<table cellspacing='6'>" + "".join(
+            f"<tr><td><b>{k}</b></td><td>{v}</td></tr>" for k, v in rows) + "</table>")
 
     def _phone_tab(self) -> QWidget:
         from ..web.auth import MIN_PIN_LEN

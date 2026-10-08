@@ -237,7 +237,7 @@ class OfferGuard:
         moved = 0
         in_tx = self.conn.in_transaction
         if not in_tx:
-            self.conn.execute("BEGIN")
+            self.conn.execute("BEGIN IMMEDIATE")
         try:
             stored = offers.list(include_hidden=True)
             by_source: dict[str, list[tuple[Prepared, object]]] = defaultdict(list)
