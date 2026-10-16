@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import itertools
+import sys
 
 import pytest
 
@@ -18,6 +19,8 @@ def _isolated_data_dir(tmp_path_factory):
     import os
 
     os.environ["PHONEBOT_HOME"] = str(tmp_path_factory.mktemp("phonebot_home"))
+    if sys.platform != "win32":  # Windows: prawdziwe DPAPI (tylko konto testujące); Linux: nigdy pęk kluczy systemu
+        os.environ["PHONEBOT_SECRET_STORE"] = "file"
     yield
 
 
@@ -41,10 +44,12 @@ def _no_internet(request, monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _no_telegram_polling(monkeypatch):
-    """Okno programu w testach nie odpytuje prawdziwego Telegrama: wątek komend bota nie startuje."""
+    """Okno programu w testach nie odpytuje prawdziwego Telegrama: wątek komend bota nie startuje; nie wyskakują też
+    prawdziwe powiadomienia pulpitu (Linux: notify-send)."""
     from phonebot.services.telegram_bot import BotThread
 
     monkeypatch.setattr(BotThread, "start", lambda self: setattr(self, "started", True))
+    monkeypatch.setattr("phonebot.ui.main_window._notify_send", lambda *a, **k: False)
 
 
 def make_raw(title: str, price: float = 1000.0, description: str = "", **kw) -> RawOffer:

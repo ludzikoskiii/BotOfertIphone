@@ -1,0 +1,76 @@
+name: build-linux
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    # najstarsze wspierane Ubuntu: paczka działa na systemach z glibc 2.35 i nowszych
+    runs-on: ubuntu-22.04
+    env:
+      LANG: C.UTF-8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Biblioteki systemowe (Qt xcb trafiają do paczki) i narzędzia testowe
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxcb-cursor0 libxkbcommon-x11-0 libxcb-icccm4 libxcb-keysyms1 libxcb-image0 \
+            libxcb-render-util0 libxcb-shape0 libxcb-xkb1 libxcb-util1 libegl1 libgl1 libfontconfig1 libdbus-1-3 \
+            xvfb gnome-keyring dbus-x11 libsecret-tools
+      - name: Zależności
+        run: python -m pip install -r requirements.txt pyinstaller
+      - name: Budowanie (folder dist/PhoneBot)
+        run: pyinstaller --noconfirm --clean phonebot.spec
+      - name: Paczka PhoneBot-linux-x86_64.tar.gz
+        run: |
+          cp packaging/linux/install.sh packaging/linux/phonebot.desktop packaging/linux/CZYTAJ_MNIE.txt \
+             assets/phonebot.png dist/PhoneBot/
+          chmod 755 dist/PhoneBot/install.sh dist/PhoneBot/PhoneBot
+          tar -C dist -czf PhoneBot-linux-x86_64.tar.gz PhoneBot
+          du -sh dist/PhoneBot PhoneBot-linux-x86_64.tar.gz
+          # dalsze testy na rozpakowanej paczce — dokładnie tym, co pobierze użytkownik
+          mkdir -p "$RUNNER_TEMP/x" && tar -C "$RUNNER_TEMP/x" -xzf PhoneBot-linux-x86_64.tar.gz
+      - name: Self-test (bez okna, sekrety w pliku)
+        run: |
+          export PHONEBOT_HOME="$RUNNER_TEMP/dane1" PHONEBOT_SECRET_STORE=file
+          TIMEFORMAT='Czas self-testu (start + AI + okno): %1R s'
+          time "$RUNNER_TEMP/x/PhoneBot/PhoneBot" --self-test
+      - name: Self-test w oknie X11 z pękiem kluczy (GNOME Keyring)
+        run: |
+          export PHONEBOT_HOME="$RUNNER_TEMP/dane2"
+          dbus-run-session -- bash -c 'set -eo pipefail
+            echo -n ci | gnome-keyring-daemon --unlock --components=secrets >/dev/null
+            QT_QPA_PLATFORM=xcb xvfb-run -a "$RUNNER_TEMP/x/PhoneBot/PhoneBot" --self-test | tee "$RUNNER_TEMP/st.txt"'
+          grep -q "pęk kluczy systemu" "$RUNNER_TEMP/st.txt" || { echo "::error::sekrety nie trafiły do pęku kluczy"; exit 1; }
+      - name: Instalacja i odinstalowanie (bez sudo)
+        run: |
+          unset XDG_DATA_HOME XDG_CONFIG_HOME   # domyślne ścieżki XDG w nowym katalogu domowym
+          export HOME="$RUNNER_TEMP/dom" PHONEBOT_SECRET_STORE=file
+          mkdir -p "$HOME"
+          bash "$RUNNER_TEMP/x/PhoneBot/install.sh" --autostart
+          test -L "$HOME/.local/bin/phonebot"
+          grep -q "^Exec=\"$HOME/.local/opt/PhoneBot/PhoneBot\"$" "$HOME/.local/share/applications/phonebot.desktop"
+          "$HOME/.local/bin/phonebot" --self-test   # start przez polecenie z menu (dowiązanie)
+          bash "$HOME/.local/opt/PhoneBot/install.sh" --uninstall
+          test ! -e "$HOME/.local/opt/PhoneBot" && test ! -e "$HOME/.local/bin/phonebot"
+          test -d "$HOME/.local/share/phonebot"   # dane zostają
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PhoneBot-linux
+          path: PhoneBot-linux-x86_64.tar.gz
+          retention-days: 30
+          compression-level: 0  # już spakowane
+      - name: Wydanie (tylko dla tagów v*)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: PhoneBot-linux-x86_64.tar.gz

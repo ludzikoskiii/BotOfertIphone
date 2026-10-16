@@ -6,3 +6,4 @@ numpy>=1.26
 scikit-learn>=1.4
 onnxruntime>=1.17
 pillow>=10.2
+secretstorage>=3.3; sys_platform == "linux"  # Linux: token i chat ID w systemowym pęku kluczy (GNOME Keyring / KWallet)

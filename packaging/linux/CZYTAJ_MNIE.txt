@@ -1,0 +1,93 @@
+PhoneBot na Linux — krótka instrukcja
+=====================================
+
+Wymagania: 64-bitowy Linux z pulpitem, z biblioteką glibc 2.35 lub nowszą. Pasują m.in.:
+Ubuntu 22.04 lub nowszy, Linux Mint 21 lub nowszy, Debian 12, Fedora 36 lub nowsza, Arch, Manjaro,
+openSUSE Tumbleweed. Python nie jest potrzebny, bo wszystko jest w tym folderze.
+
+
+1. Uruchomienie bez instalacji
+------------------------------
+Rozpakuj archiwum, wejdź do folderu PhoneBot i uruchom:
+
+    ./PhoneBot
+
+albo kliknij dwukrotnie plik „PhoneBot” w menedżerze plików.
+
+
+2. Instalacja (zalecana, bez sudo)
+----------------------------------
+W rozpakowanym folderze wykonaj:
+
+    ./install.sh               # PhoneBot w menu aplikacji + polecenie `phonebot`
+    ./install.sh --autostart   # to samo + start po zalogowaniu (odświeżanie w tle)
+
+Program trafia do ~/.local/opt/PhoneBot, a skrót do menu aplikacji. Instalacja dotyczy tylko Twojego
+konta, nie wymaga hasła administratora i niczego nie pobiera z internetu. Rozpakowany folder możesz
+potem usunąć.
+
+Aktualizacja: rozpakuj nową wersję i uruchom ./install.sh ponownie. Dane i ustawienia zostają.
+Przedtem zamknij PhoneBot (menu ikony → Zakończ).
+
+Odinstalowanie:
+
+    ~/.local/opt/PhoneBot/install.sh --uninstall
+
+Program zostaje usunięty, a dane zostają (zobacz punkt 3).
+
+
+3. Gdzie są dane
+----------------
+    ~/.local/share/phonebot/       baza ofert, ustawienia, modele AI, dziennik (logs/phonebot.log)
+
+Token bota Telegram i chat ID nie trafiają do bazy ani do kodu:
+  • Jeśli pulpit ma pęk kluczy (GNOME Keyring, KWallet, KeePassXC z Secret Service), są w nim
+    zaszyfrowane. Odblokowuje się go razem z logowaniem. W aplikacji „Hasła i klucze” (Seahorse)
+    lub KWalletManager zobaczysz wpisy „PhoneBot: …”.
+  • Jeśli pęku kluczy nie ma (np. lekki menedżer okien), token i chat ID są w pliku
+    ~/.local/share/phonebot/secrets.json, który może czytać tylko Twoje konto (prawa 600).
+    Po uruchomieniu pęku kluczy zapisz Ustawienia ponownie, a sekrety same się do niego przeniosą.
+Ustawienia → Powiadomienia pokazuje, który sposób jest używany na tym komputerze.
+
+
+4. Gdy okno się nie pokazuje
+----------------------------
+Uruchom ./PhoneBot w terminalu i przeczytaj komunikat. Najczęstsza przyczyna to brak bibliotek
+X11/xcb w bardzo okrojonym systemie. Instalator wypisuje wtedy gotowe polecenie, na przykład:
+
+    Ubuntu / Debian / Mint:  sudo apt install libxcb-cursor0 libxkbcommon-x11-0 libxcb-icccm4 \
+                             libxcb-keysyms1 libxcb-image0 libxcb-render-util0 libegl1
+    Fedora:                  sudo dnf install xcb-util-cursor xcb-util-wm xcb-util-keysyms \
+                             xcb-util-image xcb-util-renderutil libxkbcommon-x11 mesa-libEGL
+    Arch / Manjaro:          sudo pacman -S xcb-util-cursor xcb-util-wm xcb-util-keysyms \
+                             xcb-util-image xcb-util-renderutil libxkbcommon-x11
+
+Inne przydatne polecenia:
+    ./PhoneBot --self-test     sprawdza moduły, lokalne AI, pęk kluczy i okno (bez internetu)
+    ./PhoneBot --diagnose      raport połączeń z portalami (~/.local/share/phonebot/diagnostyka.txt)
+
+Wayland (GNOME, KDE Plasma 6) jest obsługiwany. Jeśli coś wygląda źle, uruchom program w trybie X11:
+    QT_QPA_PLATFORM=xcb ./PhoneBot
+
+
+5. Zasobnik systemowy i powiadomienia
+-------------------------------------
+KDE, XFCE, Cinnamon i MATE mają zasobnik. Tam zamknięcie okna chowa PhoneBot do ikony, a odświeżanie
+działa dalej. Czysty GNOME nie ma zasobnika bez rozszerzenia „AppIndicator and KStatusNotifierItem
+Support”. Bez niego zamknięcie okna kończy program, a o zielonych ofertach informują zwykłe
+powiadomienia pulpitu (notify-send) oraz Telegram, jeśli jest ustawiony.
+
+
+6. Telefon i dostęp spoza domu
+------------------------------
+Strona na telefon (Ustawienia → Telefon) działa tak samo jak na Windows, z PIN-em. Spoza domu łącz się
+wyłącznie przez Tailscale. Nie przekierowuj portów na routerze i nie wystawiaj serwera do internetu.
+  1. Zainstaluj Tailscale (https://tailscale.com/download/linux) i zaloguj się: sudo tailscale up
+  2. W PhoneBot ustaw PIN, włącz wersję na telefon i zostaw „Tylko ten komputer”.
+  3. W terminalu wpisz: sudo tailscale serve --bg 8765
+     (8765 to domyślny port. Jeśli zmieniłeś go w Ustawieniach, wpisz swój.)
+     Adres https://….ts.net pokaże polecenie: tailscale serve status
+     Adres działa tylko w Twojej sieci Tailscale.
+Druga opcja w Ustawieniach, „Adres Tailscale 100.x.y.z”, też działa tylko w sieci Tailscale, bo program
+nasłuchuje wyłącznie na tym adresie. Przy włączonej zaporze ufw wpuść port tylko z interfejsu Tailscale:
+    sudo ufw allow in on tailscale0 to any port 8765 proto tcp

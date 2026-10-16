@@ -18,7 +18,7 @@ from ..core.models import (
     RedFlag,
 )
 from ..core.parts import PartPrice, default_parts
-from ..core.secret_store import protect, unprotect
+from ..core.secret_store import needs_migration, protect, unprotect
 from ..core.settings import Settings
 
 
@@ -431,9 +431,19 @@ class SettingsRepository:
                      "allegro_client_secret", "ebay_client_id", "ebay_client_secret", "olx_mail_user",
                      "olx_mail_password")
     SECRET_PREFIX = "secret:"
+    SECRET_NS_KEY = "secret_namespace"  # nazwy sekretów tej bazy w pęku kluczy / pliku (inna baza = inne nazwy)
 
     def __init__(self, conn: sqlite3.Connection):
         self.conn = conn
+
+    def _secret_name(self, field: str) -> str:
+        ns = self.get_value(self.SECRET_NS_KEY)
+        if not ns:
+            import uuid
+
+            ns = uuid.uuid4().hex[:12]
+            self.set_value(self.SECRET_NS_KEY, ns)
+        return f"phonebot-{ns}/{field}"
 
     def load(self) -> Settings:
         row = self.conn.execute("SELECT value FROM settings WHERE key = ?", (self.KEY,)).fetchone()
@@ -443,6 +453,8 @@ class SettingsRepository:
             stored = self.get_value(self.SECRET_PREFIX + name)
             if stored is not None:
                 setattr(settings, name, unprotect(stored))
+                # zapisany słabiej, niż pozwala ten komputer (np. starsza wersja na Linux) — przenieś do pęku kluczy
+                resave = resave or (needs_migration(stored) and bool(getattr(settings, name)))
             elif getattr(settings, name):
                 resave = True  # sekret zapisany jawnie przez starszą wersję — przenieś do magazynu sekretów
         if resave:
@@ -461,7 +473,13 @@ class SettingsRepository:
         data = json.loads(settings.to_json())
         for name in self.SECRET_FIELDS:
             data[name] = ""
-            self.set_value(self.SECRET_PREFIX + name, protect(getattr(settings, name) or ""))
+            value = getattr(settings, name) or ""
+            current = self.get_value(self.SECRET_PREFIX + name)
+            # bez zmian — nie zapisuj ponownie (pęk kluczy: zapis to zapytanie do usługi systemu przy każdym zapisie)
+            if (not value and not current) or (current and current.partition(":")[0] in ("keyring", "file")
+                                               and not needs_migration(current) and unprotect(current) == value):
+                continue
+            self.set_value(self.SECRET_PREFIX + name, protect(value, self._secret_name(name)))
         self.set_value(self.KEY, json.dumps(data, ensure_ascii=False, indent=2))
 
     def get_value(self, key: str) -> str | None:

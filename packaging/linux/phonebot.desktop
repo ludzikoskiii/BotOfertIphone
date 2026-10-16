@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=PhoneBot
+GenericName=Wyszukiwarka ofert iPhone'ów
+Comment=Wyszukiwanie i wycena opłacalnych ofert używanych iPhone'ów
+Exec=@EXEC@
+Icon=phonebot
+Terminal=false
+Categories=Office;Utility;
+Keywords=iPhone;oferty;wycena;Vinted;Allegro;
+StartupWMClass=PhoneBot
+StartupNotify=true

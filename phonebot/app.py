@@ -48,12 +48,17 @@ def _self_test() -> str:
     from .ui.main_window import MainWindow
 
     ai = selftest.run()
-    from .core.secret_store import is_encrypted, protect, unprotect
+    from .core.secret_store import backend, protect, unprotect
 
-    stored = protect("123:SELFTEST")
-    if unprotect(stored) != "123:SELFTEST" or (is_encrypted() and not stored.startswith("dpapi:")):
-        raise RuntimeError("magazyn sekretów (DPAPI) nie działa")
-    secrets = "sekrety: DPAPI" if is_encrypted() else "sekrety: bez szyfrowania (nie Windows)"
+    kind = backend()
+    stored = protect("123:SELFTEST", "phonebot-selftest/token")
+    ok = unprotect(stored) == "123:SELFTEST" and stored.startswith(f"{kind}:")
+    protect("", "phonebot-selftest/token")  # bez śladu w pęku kluczy / pliku
+    if not ok:
+        raise RuntimeError(f"magazyn sekretów ({kind}) nie działa")
+    secrets = {"dpapi": "sekrety: DPAPI", "keyring": "sekrety: pęk kluczy systemu (Secret Service)",
+               "file": "sekrety: plik tylko dla właściciela (bez pęku kluczy)",
+               "plain": "sekrety: bez szyfrowania"}[kind]
     import io
 
     from PIL import Image
@@ -101,7 +106,6 @@ def _web_self_test(db_path) -> str:
 def diagnose_cli() -> int:
     """PhoneBot.exe --diagnose: raport do %LOCALAPPDATA%\\PhoneBot\\diagnostyka.txt i otwarcie go."""
     import asyncio
-    import os
 
     from .diagnose import diagnose, format_report
     from .paths import data_dir
@@ -109,16 +113,28 @@ def diagnose_cli() -> int:
     setup_logging()
     path = data_dir() / "diagnostyka.txt"
     path.write_text(format_report(asyncio.run(diagnose())), encoding="utf-8")
+    _open_report(path)
+    return 0
+
+
+def _open_report(path) -> None:
+    """Raport tekstowy: Windows — Notatnik; Linux — domyślny edytor (xdg-open) i treść w terminalu."""
+    import os
+    import shutil
+    import subprocess
+
     if sys.platform == "win32":
         os.startfile(path)  # type: ignore[attr-defined]
-    elif sys.stdout is not None:
+        return
+    if sys.stdout is not None:
         print(path.read_text(encoding="utf-8"))
-    return 0
+    opener = shutil.which("xdg-open")
+    if opener and (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+        subprocess.Popen([opener, str(path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def photo_scam_report_cli() -> int:
     """PhoneBot.exe --photo-scam-report: ile ofert w bazie oznaczono jako „zdjęcie zamiast telefonu” + przykłady."""
-    import os
 
     from .paths import data_dir
     from .services.photo_scam_service import report_cli
@@ -131,10 +147,7 @@ def photo_scam_report_cli() -> int:
         conn.close()
     path = data_dir() / "zdjecie_zamiast_telefonu.txt"
     path.write_text(text, encoding="utf-8")
-    if sys.platform == "win32":
-        os.startfile(path)  # type: ignore[attr-defined]
-    elif sys.stdout is not None:
-        print(text)
+    _open_report(path)
     return 0
 
 
@@ -155,6 +168,7 @@ def main() -> int:
 
     app = QApplication(sys.argv)
     app.setApplicationName("PhoneBot")
+    app.setDesktopFileName("phonebot")  # Linux: ikona i nazwa z phonebot.desktop (także w Wayland)
     app.setStyle("Fusion")
     QLocale.setDefault(QLocale(QLocale.Language.Polish, QLocale.Country.Poland))
     translator = QTranslator(app)

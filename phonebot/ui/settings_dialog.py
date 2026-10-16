@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 import re
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import reduce
@@ -40,6 +41,13 @@ from ..core.settings import MIN_PROFIT_MODE_LABELS, VINTED_COUNTRY_MODES, SalesC
 from .location_dialog import LocationDialog
 from .table_model import SOURCE_NAMES
 from .theme import THEME_LABELS
+
+# teksty zależne od systemu (Windows / Linux)
+_WIN = sys.platform == "win32"
+_OS_GEN = "Windows" if _WIN else "pulpitu"
+_TS_DOWNLOAD = "tailscale.com/download, Windows" if _WIN else "tailscale.com/download/linux"
+_TERMINAL = "<b>Wiersz polecenia</b> (cmd)" if _WIN else "<b>terminal</b>"
+_SUDO = "" if _WIN else "sudo "
 
 
 @dataclass
@@ -353,7 +361,7 @@ class SettingsDialog(QDialog):
         for key, label in THEME_LABELS.items():
             self.theme_combo.addItem(label, key)
         self.theme_combo.setCurrentIndex(max(0, self.theme_combo.findData(s.ui_theme)))
-        self.theme_combo.setToolTip("Systemowy = taki jak w ustawieniach Windows")
+        self.theme_combo.setToolTip(f"Systemowy = taki jak w ustawieniach {_OS_GEN}")
         ll.addRow("Motyw:", self.theme_combo)
         self.font_spin = QSpinBox(minimum=8, maximum=16, suffix=" pt")
         self.font_spin.setValue(s.ui_font_pt)
@@ -939,12 +947,12 @@ class SettingsDialog(QDialog):
         general = QGroupBox("Działanie w tle i powiadomienia")
         general.setLayout(self._form([
             Field("minimize_to_tray", "Zamknięcie okna chowa do zasobnika", "bool"),
-            Field("notify_desktop", "Powiadomienia Windows o nowych zielonych ofertach", "bool"),
+            Field("notify_desktop", f"Powiadomienia {_OS_GEN} o nowych zielonych ofertach", "bool"),
             Field("notify_price_drops", "Powiadamiaj też o obniżce ceny do zielonej", "bool"),
-            Field("notify_max_per_scan", "Maks. powiadomień Windows na odświeżenie", "int", 1, 50),
+            Field("notify_max_per_scan", f"Maks. powiadomień {_OS_GEN} na odświeżenie", "int", 1, 50),
         ]))
 
-        from ..core.secret_store import is_encrypted
+        from ..core.secret_store import describe as describe_secrets
         from ..services.telegram_queue import QUIET_MODES
 
         howto = QLabel(
@@ -1010,11 +1018,7 @@ class SettingsDialog(QDialog):
         ]))
         info = ("Każda oferta jest zgłaszana tylko raz (zapisane w bazie), nigdy oferty sprzed pierwszego włączenia "
                 "powiadomień. Wiadomości, których nie udało się wysłać (brak internetu), są ponawiane w tle.")
-        secure = ("Token i chat ID są zapisywane osobno, zaszyfrowane kontem Windows (DPAPI) — nie w kodzie ani "
-                  "w zwykłych ustawieniach." if is_encrypted() else
-                  "Token i chat ID są zapisywane osobno, poza zwykłymi ustawieniami (szyfrowanie DPAPI działa "
-                  "w wersji dla Windows).")
-        note = QLabel(f"{info}<br>{secure}")
+        note = QLabel(f"{info}<br>{describe_secrets()}")
         note.setWordWrap(True)
         note.setObjectName("muted")
         return self._page(general, howto, tg, profiles, what, quiet, note)
@@ -1451,13 +1455,13 @@ class SettingsDialog(QDialog):
 
         howto = QLabel(
             "<b>PhoneBot na telefonie — przez Tailscale (za darmo, bez wystawiania do internetu):</b><ol>"
-            "<li>Na tym komputerze zainstaluj <b>Tailscale</b> (<i>tailscale.com/download</i>, Windows) i zaloguj "
+            f"<li>Na tym komputerze zainstaluj <b>Tailscale</b> (<i>{_TS_DOWNLOAD}</i>) i zaloguj "
             "się (konto Google, Microsoft albo GitHub; plan Personal jest darmowy).</li>"
             "<li>Na telefonie zainstaluj aplikację <b>Tailscale</b> (Google Play / App Store) i zaloguj się "
             "<b>tym samym kontem</b>. Komputer i telefon są teraz w Twojej prywatnej sieci.</li>"
             "<li>Poniżej ustaw <b>PIN</b>, zaznacz „Włącz wersję na telefon”, zostaw „Tylko ten komputer” i zapisz.</li>"
-            "<li>Na komputerze otwórz <b>Wiersz polecenia</b> (cmd) i wpisz: "
-            f"<code>tailscale serve --bg {DEFAULT_PORT}</code>. Tailscale udostępni program pod adresem "
+            f"<li>Na komputerze otwórz {_TERMINAL} i wpisz: "
+            f"<code>{_SUDO}tailscale serve --bg {DEFAULT_PORT}</code>. Tailscale udostępni program pod adresem "
             "<code>https://NAZWA-KOMPUTERA.NAZWA-SIECI.ts.net</code> — <b>tylko w Twojej sieci Tailscale</b>. "
             "Adres pokaże polecenie <code>tailscale serve status</code> (przy pierwszym razie Tailscale może "
             "poprosić o włączenie certyfikatów HTTPS w panelu — potwierdź).</li>"

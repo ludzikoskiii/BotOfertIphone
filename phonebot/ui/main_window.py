@@ -104,6 +104,24 @@ from .workers import FuncWorker, ScanWorker, start_in_thread
 
 log = logging.getLogger(__name__)
 
+
+def _notify_send(title: str, body: str) -> bool:
+    """Powiadomienie pulpitu Linux przez ``notify-send`` (libnotify), gdy pulpit nie ma zasobnika systemowego."""
+    import shutil
+    import subprocess
+    import sys
+
+    tool = shutil.which("notify-send") if sys.platform.startswith("linux") else None
+    if tool is None:
+        return False
+    try:
+        subprocess.Popen([tool, "-a", "PhoneBot", "-i", "phonebot", title, body], stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL)
+    except OSError:
+        return False
+    return True
+
+
 LIST_ALL, LIST_PICKED = "all", "picked"
 LIST_NAMES = {LIST_ALL: "Wszystkie oferty", LIST_PICKED: "Wybrane"}
 
@@ -1646,6 +1664,8 @@ class MainWindow(QMainWindow):
             self.tray.showMessage(title, "\n".join(lines), app_icon(), 15_000)
             if not self.isVisible() or self.isMinimized():
                 self.tray.setIcon(app_icon(badge=True))
+        elif self.settings.notify_desktop:
+            _notify_send(title, "\n".join(lines))  # Linux bez zasobnika (np. GNOME): powiadomienie systemowe
         QApplication.alert(self)
 
     def _scan_failed(self, message: str) -> None:

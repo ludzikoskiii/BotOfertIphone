@@ -1,12 +1,12 @@
 # PhoneBot — wyszukiwarka opłacalnych ofert iPhone'ów
 
-Aplikacja desktopowa (Windows) do wyszukiwania ofert używanych iPhone'ów na
+Aplikacja desktopowa (Windows i Linux) do wyszukiwania ofert używanych iPhone'ów na
 Allegro Lokalnie, Vinted i Sprzedajemy.pl, wyceny ich opłacalności i podpowiadania, czy i za ile kupić.
 
-> **Status: wersja 1.23.0.** Trzy portale, wycena, werdykty i negocjacje, filtry, zabezpieczenia werdyktu,
+> **Status: wersja 1.24.0.** Trzy portale, wycena, werdykty i negocjacje, filtry, zabezpieczenia werdyktu,
 > **darmowe lokalne AI** (klasyfikator tytułów, analiza zdjęć, opcjonalnie model językowy w Ollamie),
 > szablony wiadomości do sprzedającego, automatyczne odświeżanie, powiadomienia Windows i Telegram
-> oraz gotowy plik `PhoneBot.exe`. Program nie korzysta z żadnych płatnych usług.
+> oraz gotowe wersje: `PhoneBot.exe` (Windows) i paczka na Linux. Program nie korzysta z żadnych płatnych usług.
 
 ![Okno główne](docs/screenshots/okno.png)
 ![Szczegóły oferty](docs/screenshots/szczegoly.png)
@@ -36,6 +36,49 @@ pip install -r requirements.txt pyinstaller
 pyinstaller --noconfirm phonebot.spec     # wynik: dist\PhoneBot.exe
 dist\PhoneBot.exe --self-test             # moduły, lokalne AI (bez pobierania modelu) i okno
 ```
+
+## Szybki start: Linux
+
+1. GitHub → **Actions** → workflow **build-linux** → ostatni udany przebieg → **Artifacts** → pobierz
+   **PhoneBot-linux** (ZIP z plikiem `PhoneBot-linux-x86_64.tar.gz`). Przy tagu `v…` plik trafi też do **Releases**.
+2. Rozpakuj i zainstaluj (tylko dla Twojego konta, bez sudo, bez internetu):
+
+   ```bash
+   unzip PhoneBot-linux.zip
+   tar -xzf PhoneBot-linux-x86_64.tar.gz
+   cd PhoneBot
+   ./install.sh              # PhoneBot w menu aplikacji + polecenie `phonebot`
+   ./install.sh --autostart  # to samo + start po zalogowaniu (odświeżanie w tle)
+   ```
+
+   Bez instalacji: `./PhoneBot`. Odinstalowanie: `~/.local/opt/PhoneBot/install.sh --uninstall` (dane zostają).
+3. Wymagania: 64-bitowy Linux z glibc 2.35 lub nowszą, czyli Ubuntu 22.04+, Mint 21+, Debian 12, Fedora 36+,
+   Arch lub Manjaro. Python nie jest potrzebny. Działa na X11 i Wayland.
+
+Różnice względem Windows:
+
+| | Windows | Linux |
+|---|---|---|
+| dane | `%LOCALAPPDATA%\PhoneBot` | `~/.local/share/phonebot` |
+| token Telegram i chat ID | DPAPI (konto Windows) | pęk kluczy systemu, a bez niego plik z prawami 600 |
+| powiadomienia | dymek w zasobniku | zasobnik (KDE, XFCE, Cinnamon), a bez niego (czysty GNOME) `notify-send` |
+| zamknięcie okna | chowa do zasobnika | to samo, gdy pulpit ma zasobnik; w przeciwnym razie kończy program |
+| telefon przez Tailscale | `tailscale serve --bg 8765` w cmd | `sudo tailscale serve --bg 8765` w terminalu |
+
+Jeśli okno się nie pokazuje (bardzo okrojony system bez bibliotek X11), instalator wypisuje gotowe
+polecenie `apt` / `dnf` / `pacman`. Więcej w pliku `CZYTAJ_MNIE.txt` w paczce.
+
+### Budowanie wersji Linux samodzielnie
+
+```bash
+python3 -m venv .venv && . .venv/bin/activate
+pip install -r requirements.txt pyinstaller
+pyinstaller --noconfirm phonebot.spec      # wynik: folder dist/PhoneBot (program PhoneBot + _internal)
+cp packaging/linux/* assets/phonebot.png dist/PhoneBot/
+dist/PhoneBot/PhoneBot --self-test
+```
+
+Najlepiej budować na najstarszym systemie, na którym program ma działać (CI używa Ubuntu 22.04).
 
 ## Uruchomienie na Windows (tryb deweloperski)
 
@@ -183,9 +226,10 @@ podsumowanie z listą ofert. Profil może mieć własną ciszę i limit (patrz w
 w tle (po 1, 5, 15, 30 min…), bez duplikatów. Wysyłka działa w tle — po każdym odświeżeniu i co 5 minut.
 
 **Bezpieczeństwo:** token bota i chat ID nie są w kodzie ani w zwykłych ustawieniach — program zapisuje
-je osobno, **zaszyfrowane kontem Windows (DPAPI)**; skopiowana baza nie zdradzi tokenu na innym komputerze.
-Token zapisany jawnie przez starszą wersję jest przenoszony do szyfrowanego magazynu przy pierwszym
-uruchomieniu.
+je osobno: na Windows **zaszyfrowane kontem Windows (DPAPI)**, na Linux w **systemowym pęku kluczy**
+(GNOME Keyring / KWallet), a gdy go nie ma, w pliku `secrets.json` czytelnym tylko dla Twojego konta (prawa 600).
+Skopiowana baza nie zdradzi tokenu. Token zapisany jawnie przez starszą wersję jest przenoszony do bezpieczniejszego
+magazynu przy pierwszym uruchomieniu. Ustawienia → Powiadomienia pokazują, który sposób działa na tym komputerze.
 
 ### PhoneBot na telefonie (przez Tailscale)
 
@@ -894,8 +938,8 @@ i „▤ Szczegóły” (Ctrl+D). Ich szerokość zmienisz, przeciągając kraw�
 
 Gotowy plik `PhoneBot.exe` (bez instalowania Pythona) pojawi się w etapie 5.
 
-Dane aplikacji (baza SQLite, logi, miniatury) trafiają do `%LOCALAPPDATA%\PhoneBot`.
-Inne miejsce ustawisz zmienną środowiskową `PHONEBOT_HOME`.
+Dane aplikacji (baza SQLite, logi, miniatury) trafiają do `%LOCALAPPDATA%\PhoneBot`
+(Linux: `~/.local/share/phonebot`). Inne miejsce ustawisz zmienną środowiskową `PHONEBOT_HOME`.
 
 ## Jak działa wycena
 
@@ -1001,6 +1045,7 @@ scripts/         clip_prepare.py (wektory opisów klas CLIP), clip_check_app.py 
                  prawdziwym modelu), clip_memory_check.py (pamięć i czas modelu zdjęć, zwalnianie) — uruchamiane
                  w GitHub Actions
 phonebot.spec    konfiguracja PyInstaller (PhoneBot.exe); run_phonebot.py — punkt wejścia
+packaging/linux/ install.sh (instalacja bez sudo), phonebot.desktop (menu aplikacji), CZYTAJ_MNIE.txt
 assets/          ikona aplikacji
 ```
 
@@ -1027,6 +1072,8 @@ Awaria jednego adaptera jest izolowana i nie zatrzymuje pozostałych.
 9. ✅ Opcjonalny lokalny model językowy (Ollama, qwen3:8b) czyta opisy ofert „DO WERYFIKACJI”
    (z opisem ze strony oferty, gdy wyniki go nie mają) oraz szablony wiadomości z przyciskiem
    „Skopiuj wiadomość”.
+10. ✅ Wersja na Linux (1.24): paczka budowana przez GitHub Actions, instalacja bez sudo, sekrety w pęku kluczy
+    systemu, powiadomienia `notify-send` na pulpitach bez zasobnika.
 
 ### Wydajność
 
