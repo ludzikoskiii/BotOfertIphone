@@ -154,7 +154,7 @@ class WebApp:
         conn = self.connect()
         try:
             repo = OfferRepository(conn)
-            offers = repo.list() + repo.list_picked_inactive()
+            offers = repo.list() + repo.list_picked_inactive(self.settings.selection.keep_inactive_days)
             rows = Evaluator(conn, self.settings).evaluate_all(offers)
             # sprzedaż zdjęcia zamiast telefonu (pewne wykrycie) — nie na telefonie; do „Odrzucone” przenosi okno
             rows = merge_across_portals([(o, v) for o, v in rows if v.photo_scam != "certain"

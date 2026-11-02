@@ -6,8 +6,10 @@ Zasady (ręczne decyzje mają pierwszeństwo przed automatem):
 2. „Usuń z Wybranych” = ręczne wykluczenie — automat już jej nie doda (aż do ponownego „Obserwuj”).
 3. Pozostałe oferty trafiają do Wybranych automatycznie, jeśli spełniają kryteria z Ustawień
    (werdykty, minimalny zysk, minimalna ocena).
-4. Oferta, która zniknęła z portalu (niewidziana od ``offer_stale_days``), nie jest usuwana z Wybranych —
-   zostaje oznaczona jako „nieaktualna”.
+4. Oferta, która zniknęła z portalu (sprzedana, usunięta albo niewidziana od ``offer_stale_days``), zostaje
+   w Wybranych z oznaczeniem ⌛ „nieaktualna” jeszcze przez ``keep_inactive_days`` dni (domyślnie 1), na końcu
+   listy — potem znika sama, żeby stare oferty nie zasłaniały nowych. Obserwowane (★) zostają do ręcznego
+   usunięcia; przycisk „Usuń nieaktualne” czyści wszystkie od razu.
 """
 from __future__ import annotations
 
@@ -25,6 +27,7 @@ class SelectionCriteria:
     min_profit: float = 150.0  # 0 = bez progu
     min_score: int = 0  # 0 = bez progu
     skip_hard_flags: bool = True  # oferta z poważną flagą (iCloud, IMEI, podróbka) nie trafia automatycznie
+    keep_inactive_days: int = 1  # nieaktualna (⌛) zostaje w „Wybrane” tyle dni; 0 = do ręcznego usunięcia
 
 
 def high_risk(val: Valuation) -> bool:

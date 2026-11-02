@@ -598,17 +598,22 @@ class SettingsDialog(QDialog):
             "Lista <b>„Wybrane”</b> (zakładka nad tabelą) zbiera oferty warte uwagi. Trafiają tam automatycznie "
             "oferty spełniające poniższe kryteria, a także oferty dodane ręcznie (★ Obserwuj / „Dodaj do "
             "Wybranych”). Ręczna decyzja ma pierwszeństwo: „Usuń z Wybranych” wyklucza ofertę na stałe, "
-            "nawet jeśli spełnia kryteria. Oferta, która zniknie z portalu, zostaje na liście z oznaczeniem "
-            "⌛ nieaktualna.")
+            "nawet jeśli spełnia kryteria. Oferta, która zniknie z portalu (sprzedana, usunięta), zostaje na końcu "
+            "listy z oznaczeniem ⌛ nieaktualna przez czas ustawiony niżej, a potem znika sama.")
         intro.setWordWrap(True)
         auto = QGroupBox("Kryteria automatyczne (wszystkie muszą być spełnione)")
         form = self._form([Field("selection.enabled", "Dodawaj oferty automatycznie", "bool")])
         self.selection_verdicts = self._criteria_form("selection", form)
         auto.setLayout(form)
+        stale = QGroupBox("Nieaktualne oferty (⌛)")
+        stale.setLayout(self._form([
+            Field("selection.keep_inactive_days", "Pokazuj sprzedane / usunięte jeszcze przez", "int", 0, 60, 1,
+                  " dni", tip="0 = do ręcznego usunięcia (przycisk „Usuń nieaktualne” nad listą). Obserwowane (★) "
+                              "zostają zawsze, dopóki ich nie usuniesz.")]))
         note = QLabel("Filtry i sortowanie są wspólne dla obu list; każda lista pamięta własne sortowanie.")
         note.setObjectName("muted")
         note.setWordWrap(True)
-        return self._page(intro, auto, note)
+        return self._page(intro, auto, stale, note)
 
     def _criteria_form(self, attr: str, form: QFormLayout) -> dict[str, QCheckBox]:
         """Werdykty + progi (``SelectionCriteria``) — wspólne dla „Wybrane” i Telegrama."""

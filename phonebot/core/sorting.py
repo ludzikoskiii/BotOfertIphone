@@ -163,7 +163,7 @@ def describe(spec: Iterable[SortLevel]) -> str:
 
 
 def sort_rows(rows: list[tuple[Offer, Valuation]], spec: Iterable[SortLevel]) -> None:
-    """Sortuje listę w miejscu. Kolejne poziomy rozstrzygają remisy poprzednich."""
+    """Sortuje listę w miejscu. Kolejne poziomy rozstrzygają remisy poprzednich; nieaktualne oferty na końcu."""
     for lv in reversed(normalize(spec)):
         value = FIELDS[lv.field].value
         desc = lv.descending
@@ -175,3 +175,5 @@ def sort_rows(rows: list[tuple[Offer, Valuation]], spec: Iterable[SortLevel]) ->
             return (1, v) if desc else (0, v)
 
         rows.sort(key=key, reverse=desc)  # sortowanie Pythona jest stabilne także przy reverse=True
+    # nieaktualne (⌛, tylko w „Wybrane”) zawsze na końcu — tanie sprzedane oferty nie zasłaniają nowych
+    rows.sort(key=lambda row: not row[0].active)

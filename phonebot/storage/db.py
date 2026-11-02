@@ -373,6 +373,11 @@ MIGRATIONS: list[str] = [
     """
     CREATE INDEX idx_fetch_runs_source ON fetch_runs (source, id)
     """,
+    # kiedy oferta stała się nieaktualna — „Wybrane” pokazuje ją jeszcze tylko przez kilka dni
+    """
+    ALTER TABLE offers ADD COLUMN inactive_at TEXT;
+    UPDATE offers SET inactive_at = COALESCE(checked_at, last_seen) WHERE is_active = 0
+    """,
 ]
 
 

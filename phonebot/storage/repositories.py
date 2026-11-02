@@ -89,7 +89,8 @@ class OfferRepository:
         offer_id, old_price = int(existing["id"]), float(existing["price"])
         assignments = ", ".join(f"{k} = ?" for k in fields)
         self.conn.execute(
-            f"UPDATE offers SET {assignments}, last_seen = ?, is_active = 1, inactive_reason = NULL WHERE id = ?",
+            f"UPDATE offers SET {assignments}, last_seen = ?, is_active = 1, inactive_reason = NULL, inactive_at = NULL "
+            "WHERE id = ?",
             [*fields.values(), seen, offer_id],
         )
         changed = abs(old_price - raw.price) >= 0.01
@@ -177,18 +178,39 @@ class OfferRepository:
         sql = _OFFER_SELECT + " WHERE o.first_seen >= ? AND o.status != 'hidden' ORDER BY o.first_seen DESC"
         return [_row_to_offer(r) for r in self.conn.execute(sql, (_iso(since),))]
 
-    def list_picked_inactive(self) -> list[Offer]:
-        """Oferty z „Wybrane”, które zniknęły z portalu — zostają na liście jako nieaktualne."""
-        sql = (_OFFER_SELECT + " WHERE o.is_active = 0 AND o.picked_at IS NOT NULL AND o.pick_excluded = 0 "
-               "AND o.status != 'hidden' ORDER BY o.id")
-        return [_row_to_offer(r) for r in self.conn.execute(sql)]
+    @staticmethod
+    def _picked_inactive_where(keep_days: int, now: datetime | None, alias: str = "") -> tuple[str, list]:
+        """Warunek „nieaktualna, a jeszcze w Wybrane”: ``keep_days`` > 0 — stała się nieaktualna w ciągu ostatnich
+        ``keep_days`` dni albo jest obserwowana (★ zostaje do ręcznego usunięcia); 0 = wszystkie."""
+        a = alias
+        where = (f"{a}is_active = 0 AND {a}picked_at IS NOT NULL AND {a}pick_excluded = 0 "
+                 f"AND {a}status != 'hidden'")
+        if keep_days <= 0:
+            return where, []
+        cutoff = _iso((now or utcnow()) - timedelta(days=keep_days))
+        return where + f" AND ({a}status = 'watched' OR {a}inactive_at IS NULL OR {a}inactive_at >= ?)", [cutoff]
+
+    def list_picked_inactive(self, keep_days: int = 0, now: datetime | None = None) -> list[Offer]:
+        """Oferty z „Wybrane”, które zniknęły z portalu — zostają na liście jako nieaktualne (⌛), przez
+        ``keep_days`` dni (0 = do ręcznego usunięcia)."""
+        where, params = self._picked_inactive_where(keep_days, now, "o.")
+        return [_row_to_offer(r) for r in self.conn.execute(f"{_OFFER_SELECT} WHERE {where} ORDER BY o.id", params)]
+
+    def drop_inactive_picked(self, keep_days: int = 0, now: datetime | None = None) -> int:
+        """„Usuń nieaktualne” — nieaktualne oferty widoczne w „Wybrane” znikają z listy (także obserwowane ★).
+        Gdyby oferta wróciła na portal, automat jej już nie doda (jak przy „Usuń z Wybranych”)."""
+        where, params = self._picked_inactive_where(keep_days, now)
+        cur = self.conn.execute(
+            "UPDATE offers SET pick_excluded = 1, status = CASE WHEN status = 'watched' THEN 'new' ELSE status END "
+            f"WHERE {where}", params)
+        return cur.rowcount
 
     def deactivate_missing(self, source: str, older_than: datetime) -> int:
         """Oznacza jako nieaktywne oferty źródła, których nie widziano od ``older_than``."""
         cur = self.conn.execute(
-            "UPDATE offers SET is_active = 0, inactive_reason = 'missing' WHERE source = ? AND is_active = 1 "
-            "AND last_seen < ?",
-            (source, _iso(older_than)),
+            "UPDATE offers SET is_active = 0, inactive_reason = 'missing', inactive_at = ? WHERE source = ? "
+            "AND is_active = 1 AND last_seen < ?",
+            (_iso(utcnow()), source, _iso(older_than)),
         )
         return cur.rowcount
 
@@ -232,8 +254,8 @@ class OfferRepository:
         now_iso = _iso(now or utcnow())
         self.conn.execute("UPDATE offers SET checked_at = ? WHERE id = ?", (now_iso, offer_id))
         if exists is False:
-            self.conn.execute("UPDATE offers SET is_active = 0, inactive_reason = ? WHERE id = ?",
-                              (reason or "sold", offer_id))
+            self.conn.execute("UPDATE offers SET is_active = 0, inactive_reason = ?, inactive_at = ? WHERE id = ?",
+                              (reason or "sold", now_iso, offer_id))
             return "gone"
         if exists is None:
             return "unknown"

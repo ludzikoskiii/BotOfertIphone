@@ -3,7 +3,7 @@
 Aplikacja desktopowa (Windows i Linux) do wyszukiwania ofert używanych iPhone'ów na
 Allegro Lokalnie, Vinted i Sprzedajemy.pl, wyceny ich opłacalności i podpowiadania, czy i za ile kupić.
 
-> **Status: wersja 1.25.0.** Trzy portale, wycena, werdykty i negocjacje, filtry, zabezpieczenia werdyktu,
+> **Status: wersja 1.26.0.** Trzy portale, wycena, werdykty i negocjacje, filtry, zabezpieczenia werdyktu,
 > **darmowe lokalne AI** (klasyfikator tytułów, analiza zdjęć, opcjonalnie model językowy w Ollamie),
 > szablony wiadomości do sprzedającego, automatyczne odświeżanie, powiadomienia Windows i Telegram
 > oraz gotowe wersje: `PhoneBot.exe` (Windows) i paczka na Linux. Program nie korzysta z żadnych płatnych usług.
@@ -864,9 +864,12 @@ pokazują oferty widoczne po filtrach.
 - **Ręcznie:** „✓ Dodaj do Wybranych” (albo ★ Obserwuj — to to samo) i „✕ Usuń z Wybranych”
   (panel szczegółów, prawy przycisk na ofercie). Ręczna decyzja ma pierwszeństwo przed kryteriami:
   usunięta oferta nie wróci automatycznie, dopóki znów jej nie dodasz.
-- **Nieaktualne:** oferta z „Wybrane”, która zniknęła z portalu (niewidziana od „Ukryj oferty
-  niewidziane od” — domyślnie 7 dni), nie znika z listy — jest wyszarzona i oznaczona **⌛**,
-  a w szczegółach widać, kiedy była ostatnio widziana. We „Wszystkie oferty” jej nie ma.
+- **Nieaktualne (od wersji 1.26):** oferta z „Wybrane”, która zniknęła z portalu (sprzedana, zarezerwowana,
+  usunięta albo niewidziana od „Ukryj oferty niewidziane od” — domyślnie 7 dni), jest wyszarzona, oznaczona
+  **⌛** i zawsze stoi **na końcu listy** — przy dowolnym sortowaniu, więc tanie sprzedane oferty nie zasłaniają
+  nowych. Po **1 dniu** znika z listy sama (Ustawienia → Wybrane → „Nieaktualne oferty”; 0 = do ręcznego
+  usunięcia). Obserwowane (★) zostają, dopóki ich nie usuniesz. Przycisk **„🧹 Usuń nieaktualne (N)”** nad
+  tabelą (przy „Wybrane”) usuwa wszystkie od razu. We „Wszystkie oferty” nieaktualnych nie ma.
 - Filtry są wspólne dla obu list; **każda lista pamięta własne sortowanie**, a program pamięta też
   ostatnio otwartą listę.
 

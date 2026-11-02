@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
     QDialog,
+    QHBoxLayout,
     QHeaderView,
     QLabel,
     QMainWindow,
@@ -428,14 +429,27 @@ class MainWindow(QMainWindow):
         for key, name in LIST_NAMES.items():
             self.list_tabs.setTabData(self.list_tabs.addTab(name), key)
         self.list_tabs.setTabToolTip(1, "Oferty spełniające Twoje kryteria (Ustawienia → Wybrane) i dodane ręcznie "
-                                        "(★ Obserwuj). Oferty, które zniknęły z portalu, są oznaczone ⌛.")
+                                        "(★ Obserwuj). Oferty, które zniknęły z portalu, są oznaczone ⌛, stoją na "
+                                        "końcu listy i po czasie z Ustawień znikają same.")
+        self.drop_stale_btn = QPushButton("🧹 Usuń nieaktualne", self)
+        self.drop_stale_btn.setObjectName("drop_stale")
+        self.drop_stale_btn.setToolTip("Usuń z „Wybrane” wszystkie oferty ⌛ (sprzedane, zarezerwowane albo usunięte "
+                                       "z portalu), także obserwowane ★.\nSame znikają po czasie z Ustawienia → "
+                                       "Wybrane → „Nieaktualne oferty”.")
+        self.drop_stale_btn.clicked.connect(self.drop_inactive_picked)
+        self.drop_stale_btn.hide()
         self.list_tabs.setCurrentIndex(list(LIST_NAMES).index(self.settings.table_list))
         self.list_tabs.currentChanged.connect(self._list_changed)
         self.table_area = QWidget(self)
         area = QVBoxLayout(self.table_area)
         area.setContentsMargins(0, 0, 0, 0)
         area.setSpacing(0)
-        area.addWidget(self.list_tabs)
+        tabs_row = QHBoxLayout()
+        tabs_row.setContentsMargins(0, 0, 0, 0)
+        tabs_row.addWidget(self.list_tabs)
+        tabs_row.addStretch(1)
+        tabs_row.addWidget(self.drop_stale_btn)
+        area.addLayout(tabs_row)
         area.addWidget(self.sort_bar)
         area.addWidget(self.stack, 1)
         self._sort_changed()
@@ -504,6 +518,17 @@ class MainWindow(QMainWindow):
                 counts[key] += self.proxy.in_list(key, offer, val)
         for i, key in enumerate(LIST_NAMES):
             self.list_tabs.setTabText(i, f"{LIST_NAMES[key]} ({counts[key]})")
+        stale = sum(1 for offer, val in self.model.rows()
+                    if not offer.active and self.proxy.in_list(LIST_PICKED, offer, val))
+        self.drop_stale_btn.setText(f"🧹 Usuń nieaktualne ({stale})")
+        self.drop_stale_btn.setVisible(bool(stale) and self.proxy.list_key == LIST_PICKED)
+
+    def drop_inactive_picked(self) -> int:
+        """Przycisk „Usuń nieaktualne”: wszystkie oferty ⌛ znikają z „Wybrane”."""
+        n = OfferRepository(self.conn).drop_inactive_picked(self.settings.selection.keep_inactive_days)
+        self.reload()
+        self._status.setText(f"Usunięto z „Wybrane” {n} nieaktualnych ofert (⌛).")
+        return n
 
     def _mark_picked(self) -> None:
         """Oferty, które pierwszy raz trafiły do „Wybrane”, dostają datę (nieaktualne zostają potem na liście)."""
@@ -927,7 +952,8 @@ class MainWindow(QMainWindow):
         selected = self.current_offer_id()
         repo = OfferRepository(self.conn)
         offers = repo.list(include_hidden=self.show_hidden_action.isChecked())
-        offers += repo.list_picked_inactive()  # zniknęły z portalu — w „Wybrane” jako nieaktualne
+        # zniknęły z portalu — w „Wybrane” jako nieaktualne, przez ``keep_inactive_days`` dni
+        offers += repo.list_picked_inactive(self.settings.selection.keep_inactive_days)
         evaluator = Evaluator(self.conn, self.settings)
         rows = merge_across_portals(evaluator.evaluate_visible(offers))  # zdjęcie zamiast telefonu → Odrzucone
         self.model.set_rows(rows)
