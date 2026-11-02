@@ -15,6 +15,7 @@ import re
 
 from .catalog import format_storage
 from .models import Defect, Offer, RedFlag, Valuation, Verdict
+from .origin import is_foreign
 from .text import any_match, normalize, phrase
 
 TEMPLATE_KEYS = ("buy", "negotiate", "negotiate_concrete", "negotiate_pickup", "verify")
@@ -151,6 +152,8 @@ def pickup_line(offer: Offer, pickup_km: float) -> str:
         return "Mogę szybko przyjechać po telefon i zapłacić gotówką przy odbiorze."
     if offer.raw.shipping_available is False:
         return "Mogę zapłacić od razu po ustaleniu szczegółów odbioru."
+    if is_foreign(offer):  # sprzedawca z zagranicy — paczkomaty InPost go nie dotyczą
+        return "Mogę zapłacić od razu, a telefon proszę wysłać do Polski."
     return "Mogę zapłacić od razu, a telefon proszę wysłać paczkomatem."
 
 
@@ -203,12 +206,15 @@ def questions(offer: Offer, val: Valuation) -> list[str]:
     out.append("Czy telefon był naprawiany albo ma wymieniane części (ekran, bateria)?")
     if RedFlag.PRICE_UNREALISTIC in flags or RedFlag.PROFIT_UNREALISTIC in flags:
         out.append("Czy to oryginalny iPhone? Cena jest wyraźnie niższa niż zwykle.")
-    if RedFlag.FOREIGN_SELLER in flags:
+    if RedFlag.FOREIGN_SELLER in flags or is_foreign(offer):
         out.append("Czy wysyła Pan/Pani do Polski i ile kosztuje wysyłka?")
     return out
 
 
 def shipping_line(offer: Offer) -> str:
+    if is_foreign(offer):
+        return "Proszę o wysyłkę do Polski." if offer.raw.shipping_available is not False \
+            else "Czy możliwa jest wysyłka do Polski?"
     if offer.raw.shipping_available is True:
         return "Proszę o wysyłkę (np. paczkomat InPost)."
     if offer.raw.shipping_available is False:

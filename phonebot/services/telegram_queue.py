@@ -27,6 +27,7 @@ from ..core.catalog import format_storage
 from ..core.messages import compose, opening_price, zl
 from ..core.models import Mode, Offer, OfferStatus, Valuation, Verdict
 from ..core.notify_profiles import NotifyProfile, in_quiet, matching_profiles, profile_quiet, quiet_end
+from ..core.origin import offer_origin
 from ..core.selection import auto_match, high_risk, is_picked
 from ..core.settings import Settings
 from ..net.http import HostRateLimiter
@@ -82,7 +83,9 @@ def format_offer(offer: Offer, val: Valuation, settings: Settings, *, kind: str 
     place = offer.raw.city or "lokalizacja nieznana"
     if offer.distance_km is not None:
         place += f" ({offer.distance_km:.0f} km)"
-    lines.append(f"{escape(SOURCE_NAMES.get(offer.raw.source, offer.raw.source))} · {escape(place)}")
+    origin = offer_origin(offer)
+    lines.append(f"{escape(SOURCE_NAMES.get(offer.raw.source, offer.raw.source))} · {escape(place)}"
+                 + (f" · {escape(origin.label)}" if origin.foreign else ""))
     if val.flags:
         lines.append("⚑ " + escape(", ".join(f.label for f in dict.fromkeys(val.flags))))
     risk = val.risk

@@ -506,7 +506,9 @@ def make_handler(app: WebApp):
             list_key = "picked" if params.get("lista") in ("picked", "wybrane") else "all"
             rows = app.rows()
             f = ViewFilter(models=[params["model"]] if params.get("model") else [],
-                           sources=[params["portal"]] if params.get("portal") else [], text=params.get("q", ""))
+                           sources=[params["portal"]] if params.get("portal") else [], text=params.get("q", ""),
+                           origins=[pages.WEB_ORIGIN_KEYS[params["kraj"]]] if params.get("kraj") in pages.WEB_ORIGIN_KEYS
+                           else [])
             try:
                 f.price_max = float(params.get("cena_max") or 0)
                 if params.get("zysk_min"):

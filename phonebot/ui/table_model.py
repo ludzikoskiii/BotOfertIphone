@@ -12,6 +12,7 @@ from PySide6.QtWidgets import QStyle, QStyledItemDelegate, QStyleOptionViewItem
 
 from ..core.catalog import format_storage
 from ..core.models import INACTIVE_REASONS, Offer, OfferStatus, Severity, Valuation, Verdict
+from ..core.origin import is_foreign, offer_origin
 from ..core.refresh import is_new
 from ..core.sorting import DEFAULT_SORT, SortLevel, level, normalize, sort_rows
 from ..core.work_time import format_minutes
@@ -50,6 +51,7 @@ class Col(IntEnum):
     RISK = 16
     WORK_TIME = 17
     PER_HOUR = 18
+    COUNTRY = 19
 
 
 HEADERS = {
@@ -72,10 +74,11 @@ HEADERS = {
     Col.RISK: "Ryzyko",
     Col.WORK_TIME: "Czas pracy",
     Col.PER_HOUR: "Zysk na godzinę",
+    Col.COUNTRY: "Kraj",
 }
 # kolejność kolumn na ekranie (czas pracy i zysk na godzinę zaraz po zysku)
 DEFAULT_ORDER = (Col.PHOTO, Col.MODEL, Col.STORAGE, Col.PRICE, Col.PROFIT, Col.WORK_TIME, Col.PER_HOUR,
-                 Col.MAX_BUY, Col.VERDICT, Col.SOURCE, Col.CONDITION, Col.BATTERY, Col.MARKET, Col.SCORE,
+                 Col.MAX_BUY, Col.VERDICT, Col.SOURCE, Col.COUNTRY, Col.CONDITION, Col.BATTERY, Col.MARKET, Col.SCORE,
                  Col.FLAGS, Col.LOCATION, Col.ADDED, Col.LINK, Col.RISK)
 NUMERIC = {Col.PRICE, Col.MARKET, Col.PROFIT, Col.MAX_BUY, Col.BATTERY, Col.SCORE, Col.WORK_TIME, Col.PER_HOUR}
 _COLS = tuple(Col)
@@ -89,14 +92,14 @@ COL_FIELD = {Col.PHOTO: "photos", Col.MODEL: "model", Col.STORAGE: "storage", Co
              Col.PROFIT: "profit", Col.MAX_BUY: "max_buy", Col.VERDICT: "verdict", Col.SOURCE: "source",
              Col.CONDITION: "condition", Col.BATTERY: "battery", Col.MARKET: "market", Col.SCORE: "score",
              Col.FLAGS: "flags", Col.LOCATION: "distance", Col.ADDED: "added", Col.RISK: "risk",
-             Col.WORK_TIME: "work_time", Col.PER_HOUR: "per_hour"}
+             Col.WORK_TIME: "work_time", Col.PER_HOUR: "per_hour", Col.COUNTRY: "country"}
 FIELD_COL = {f: c for c, f in COL_FIELD.items()}
 FRAUD_LABEL = "MOŻLIWE OSZUSTWO"  # werdykt przy wysokim ryzyku oszustwa (czerwona etykieta)
 _SUPERSCRIPT = {2: "²", 3: "³"}
 DEFAULT_WIDTHS = {Col.PHOTO: 84, Col.MODEL: 150, Col.STORAGE: 80, Col.PRICE: 95, Col.PROFIT: 110,
                   Col.MAX_BUY: 140, Col.VERDICT: 115, Col.SOURCE: 130, Col.CONDITION: 125, Col.BATTERY: 85,
                   Col.MARKET: 140, Col.SCORE: 75, Col.FLAGS: 220, Col.LOCATION: 170, Col.ADDED: 110, Col.LINK: 80,
-                  Col.RISK: 110, Col.WORK_TIME: 105, Col.PER_HOUR: 135}
+                  Col.RISK: 110, Col.WORK_TIME: 105, Col.PER_HOUR: 135, Col.COUNTRY: 120}
 
 
 def col_key(col: Col) -> str:
@@ -304,6 +307,8 @@ class OffersTableModel(QAbstractTableModel):
             return self._positive
         if col in (Col.SOURCE, Col.ADDED, Col.LOCATION):
             return self._muted
+        if col is Col.COUNTRY:
+            return None if is_foreign(offer) else self._muted
         return None
 
     def _is_new(self, offer: Offer) -> bool:
@@ -336,6 +341,8 @@ class OffersTableModel(QAbstractTableModel):
             if val.profit_per_hour is not None:
                 head += f" · zysk na godzinę: {val.profit_per_hour:.0f} zł/h"
             return head + "\n" + "\n".join(f"• {line}" for line in lines)
+        if col is Col.COUNTRY:
+            return offer_origin(offer).describe()
         if col is Col.SOURCE and offer.also_on:
             return "Ta sama oferta także na:\n" + "\n".join(
                 f"{SOURCE_NAMES.get(src, src)} — {money(price)}" for src, _, price in offer.also_on)
@@ -378,6 +385,8 @@ class OffersTableModel(QAbstractTableModel):
             case Col.SOURCE:
                 name = SOURCE_NAMES.get(offer.raw.source, offer.raw.source)
                 return f"{name} +{len(offer.also_on)}" if offer.also_on else name
+            case Col.COUNTRY:
+                return offer_origin(offer).label
             case Col.LOCATION:
                 city = offer.raw.city or "—"
                 if offer.distance_km is not None:

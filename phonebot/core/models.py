@@ -262,6 +262,7 @@ class Offer:
     pick_excluded: bool = False  # ręcznie usunięta z „Wybrane”
     also_on: list[tuple[str, str, float]] = field(default_factory=list)  # ta sama sztuka na innych portalach
     transaction_id: int | None = None  # kupiona — transakcja w zakładce „Transakcje”
+    seller_country: str | None = None  # kraj z profilu sprzedawcy (Vinted), np. "CZ"; None = nieznany
 
     @property
     def price(self) -> float:

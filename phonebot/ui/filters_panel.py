@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 
 from ..core.catalog import model_names
 from ..core.models import Condition, RowColor
+from ..core.origin import FOREIGN_MARK, ORIGINS
 from ..core.view_filter import ViewFilter
 from .table_model import SOURCE_NAMES
 from .theme import COLOR_LABEL
@@ -85,6 +86,18 @@ class FiltersPanel(QScrollArea):
         ll.addRow(self.shipping_only)
         self.set_location_name(location_name)
         lay.addWidget(loc)
+
+        # --- pochodzenie (Polska / zagranica) ---
+        origin = QGroupBox("Pochodzenie (puste = wszystkie)")
+        origin_box, self.origin_checks = _checks([("pl", ORIGINS["pl"]), ("foreign", f"{FOREIGN_MARK} {ORIGINS['foreign']}")],
+                                                 f.origins, self._changed)
+        self.origin_checks["foreign"].setToolTip(
+            "Oferty sprzedawców z innych krajów (Vinted: kraj z profilu sprzedawcy albo tytuł w obcym języku)\n"
+            "i z zagranicznych rynków eBay (po wpisaniu kluczy w Ustawienia → Portale).\n"
+            "Vinted pokazuje je, gdy w Ustawienia → Zabezpieczenia → „Oferty z Vinted” jest\n"
+            "„Z Polski i z zagranicy”. Kraj każdej oferty widać w kolumnie „Kraj”.")
+        QVBoxLayout(origin).addWidget(origin_box)
+        lay.addWidget(origin)
 
         # --- szukaj / cena / zysk ---
         basic = QGroupBox("Cena i zysk")
@@ -170,6 +183,7 @@ class FiltersPanel(QScrollArea):
             min_profit_enabled=self.min_profit_on.isChecked(), min_profit=self.min_profit.value(),
             shipping_only=self.shipping_only.isChecked(), colors=picked(self.color_checks), text=self.text.text(),
             risk_levels=picked(self.risk_checks), only_with_parts=self.with_parts.isChecked(),
+            origins=picked(self.origin_checks),
         )
 
     def set_filter(self, f: ViewFilter) -> None:
@@ -184,7 +198,8 @@ class FiltersPanel(QScrollArea):
         self.min_profit_on.setChecked(f.min_profit_enabled)
         self.min_profit.setValue(f.min_profit)
         for checks, selected in ((self.color_checks, f.colors), (self.cond_checks, f.conditions),
-                                 (self.src_checks, f.sources), (self.risk_checks, f.risk_levels)):
+                                 (self.src_checks, f.sources), (self.risk_checks, f.risk_levels),
+                                 (self.origin_checks, f.origins)):
             for v, cb in checks.items():
                 cb.setChecked(v in selected)
         for i in range(self.models.count()):

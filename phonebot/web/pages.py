@@ -8,12 +8,17 @@ from ..core.catalog import format_storage
 from ..core.fraud import SAFETY_TIPS
 from ..core.messages import NEGOTIATION_STYLES, STYLE_NAMES, TEMPLATE_KEYS, TEMPLATE_NAMES, compose, opening_price, zl
 from ..core.models import INACTIVE_REASONS, Offer, OfferStatus, Severity, Valuation, Verdict
+from ..core.origin import FOREIGN_MARK, offer_origin
 from ..core.selection import pick_reason
 from ..core.settings import Settings
 from ..core.sorting import FIELDS, describe
 from ..core.work_time import format_minutes
 from ..ml.seed_data import LABEL_NAMES
 from ..sources import SOURCE_NAMES
+
+# filtr „Pochodzenie” na telefonie: parametr ?kraj=… → wartość ``ViewFilter.origins``
+WEB_ORIGINS = {"polska": "Polska", "zagranica": f"{FOREIGN_MARK} zagranica"}
+WEB_ORIGIN_KEYS = {"polska": "pl", "zagranica": "foreign"}
 
 VERDICT_CLASS = {Verdict.BUY: "buy", Verdict.NEGOTIATE: "neg", Verdict.VERIFY: "ver", Verdict.SKIP: "skip"}
 
@@ -131,6 +136,12 @@ def _place(offer: Offer) -> str:
     return f"{city} ({offer.distance_km:.0f} km)" if offer.distance_km is not None else city
 
 
+def _origin(offer: Offer) -> str:
+    """„ · 🌍 Czechy” przy ofercie z zagranicy (z Polski — nic, żeby nie zaśmiecać listy)."""
+    origin = offer_origin(offer)
+    return f" · {origin.label}" if origin.foreign else ""
+
+
 def card(offer: Offer, val: Valuation) -> str:
     marks = ("⌛ " if not offer.active else "") + ("★ " if offer.status is OfferStatus.WATCHED else "") \
         + ("🛒 " if offer.transaction_id is not None else "")
@@ -148,7 +159,8 @@ def card(offer: Offer, val: Valuation) -> str:
             f'<div class="row"><span class="model">{marks}{escape(_name(offer))}</span>'
             f'<span class="badge {VERDICT_CLASS[val.verdict]}">{escape(verdict)}</span></div>'
             f'<div class="row"><span class="price">{zl(offer.price)}</span>{_profit(val.expected_profit)}</div>'
-            f'<div class="muted">{escape(portal)} · {escape(_place(offer))} · ocena {val.score}{flags}</div></a>')
+            f'<div class="muted">{escape(portal)}{escape(_origin(offer))} · {escape(_place(offer))} · '
+            f'ocena {val.score}{flags}</div></a>')
 
 
 def list_page(rows: list[tuple[Offer, Valuation]], *, list_key: str, counts: dict[str, int], params: dict,
@@ -173,6 +185,9 @@ def list_page(rows: list[tuple[Offer, Valuation]], *, list_key: str, counts: dic
     portal_opts = '<option value="">wszystkie</option>' + "".join(
         f'<option value="{k}"{" selected" if params.get("portal") == k else ""}>{escape(n)}</option>'
         for k, n in SOURCE_NAMES.items())
+    origin_opts = '<option value="">wszystkie</option>' + "".join(
+        f'<option value="{k}"{" selected" if params.get("kraj") == k else ""}>{escape(n)}</option>'
+        for k, n in WEB_ORIGINS.items())
     verdict_opts = '<option value="">wszystkie</option>' + "".join(
         f'<option{" selected" if params.get("werdykt") == v.value else ""}>{escape(v.value)}</option>' for v in Verdict)
     hidden = f'<input type="hidden" name="lista" value="{escape(list_key)}">'
@@ -184,6 +199,7 @@ def list_page(rows: list[tuple[Offer, Valuation]], *, list_key: str, counts: dic
         f'</option><option value="asc"{" selected" if order == "asc" else ""}>rosnąco ↑</option></select></label>'
         f'<label>Model<select name="model">{model_opts}</select></label>'
         f'<label>Portal<select name="portal">{portal_opts}</select></label>'
+        f'<label>Pochodzenie<select name="kraj">{origin_opts}</select></label>'
         f'<label>Werdykt<select name="werdykt">{verdict_opts}</select></label>'
         f'<label>Cena do (zł)<input name="cena_max" inputmode="numeric" value="{escape(params.get("cena_max", ""))}">'
         f'</label><label>Min. zysk (zł)<input name="zysk_min" inputmode="numeric" '
@@ -230,6 +246,9 @@ def details_page(offer: Offer, val: Valuation, settings: Settings, *, csrf: str,
             ("Zysk na godzinę", "—" if val.profit_per_hour is None else f"{val.profit_per_hour:.0f} zł/h"),
             ("Ocena", f"{val.score}/100"), ("Portal", escape(SOURCE_NAMES.get(offer.raw.source, offer.raw.source))),
             ("Miejsce", escape(_place(offer)))]
+    origin = offer_origin(offer)
+    if origin.foreign:
+        rows.append(("Kraj", escape(origin.describe())))
     if val.trend_text:
         rows.append(("Trend ceny", escape(val.trend_text)))
     if val.active_days is not None:

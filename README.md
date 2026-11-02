@@ -3,7 +3,7 @@
 Aplikacja desktopowa (Windows i Linux) do wyszukiwania ofert używanych iPhone'ów na
 Allegro Lokalnie, Vinted i Sprzedajemy.pl, wyceny ich opłacalności i podpowiadania, czy i za ile kupić.
 
-> **Status: wersja 1.24.0.** Trzy portale, wycena, werdykty i negocjacje, filtry, zabezpieczenia werdyktu,
+> **Status: wersja 1.25.0.** Trzy portale, wycena, werdykty i negocjacje, filtry, zabezpieczenia werdyktu,
 > **darmowe lokalne AI** (klasyfikator tytułów, analiza zdjęć, opcjonalnie model językowy w Ollamie),
 > szablony wiadomości do sprzedającego, automatyczne odświeżanie, powiadomienia Windows i Telegram
 > oraz gotowe wersje: `PhoneBot.exe` (Windows) i paczka na Linux. Program nie korzysta z żadnych płatnych usług.
@@ -457,7 +457,27 @@ Status w pasku źródeł:
 - „zmiana formatu”: powiadomienia przychodzą, ale nie udało się z nich odczytać żadnej oferty.
   To znak, że OLX zmienił wygląd maili i parser wymaga aktualizacji.
 
-### Oferty z zagranicy (Vinted)
+### Oferty z zagranicy
+
+**Gdzie je widać (od wersji 1.25):**
+
+- **Filtr „Pochodzenie”** w panelu filtrów: *Polska*, *🌍 Zagranica* (puste = wszystkie). Zaznacz tylko
+  „Zagranica”, żeby zobaczyć same oferty z innych krajów.
+- **Kolumna „Kraj”**: „Polska”, „🌍 Czechy”, „🌍 Niemcy”…, a gdy kraju nie da się ustalić, np.
+  „🌍 zagranica (czeski / słowacki)” (język tytułu). Kliknięcie nagłówka sortuje: najpierw Polska, potem kraje
+  alfabetycznie. Podpowiedź po najechaniu mówi, skąd wiadomo (profil sprzedawcy, lokalizacja przedmiotu,
+  język tytułu). Kolumnę można ukryć w menu „Kolumny”.
+- **Szczegóły oferty**, **wiadomość Telegram** i **lista na telefonie** pokazują kraj przy ofertach z zagranicy;
+  na telefonie jest też filtr „Pochodzenie”.
+- **Profile powiadomień** (Telegram): pole „Kraj” — *Polska + zagranica*, *tylko Polska* albo *tylko zagranica*.
+
+Skąd są oferty z zagranicy: z **Vinted** (sprzedawcy z innych krajów z wysyłką do Polski — patrz niżej) oraz
+z **eBay** (Niemcy, Wielka Brytania, USA i inne rynki, po wpisaniu darmowych kluczy w Ustawienia → Portale; cena
+przeliczona kursem NBP, przy wysyłce spoza UE doliczony VAT, cło i odprawa). Kraj oferty eBay to lokalizacja
+przedmiotu podana przez eBay; kraj oferty Vinted — z profilu sprzedawcy (sprawdzany w tle), a do tego czasu
+rozpoznawany po języku tytułu.
+
+#### Vinted: Polska i zagranica
 
 Vinted pokazuje też ogłoszenia z innych krajów (np. z Czech, Słowacji, Niemiec) z wysyłką do Polski.
 W Ustawieniach → Zabezpieczenia → „Oferty z Vinted” wybierasz:
@@ -1029,7 +1049,7 @@ phonebot/
                  notify_service.py (podgląd i test profilu), telegram_bot.py (komendy /pauza /profile…)
   core/notify_profiles.py  profile powiadomień: filtry, dopasowanie, opis;  web/notify.py  profile na telefonie
   services/maintenance.py  porządki nocne (stare dane, VACUUM, miniatury);  core/sysinfo.py  pamięć RAM procesu
-  core/view_filter.py  filtry widoku;  core/places.py  wbudowana lista miejscowości
+  core/view_filter.py  filtry widoku;  core/places.py  wbudowana lista miejscowości;  core/origin.py  kraj oferty
   net/geocode.py wyszukiwanie miejscowości (OpenStreetMap Nominatim)
   sources/       adaptery portali: base.py (interfejs), allegro_lokalnie.py, vinted.py, sprzedajemy.py,
                  extract.py (odporne wyciąganie ofert z JSON osadzonego w stronach)

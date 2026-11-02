@@ -1155,6 +1155,9 @@ class MainWindow(QMainWindow):
         else:
             self.settings_repo.save(self.settings)
         self._update_count()
+        if f.origins == ["foreign"] and self.settings.vinted_country_mode == "pl":
+            self._status.setText("Filtr „Zagranica”: Vinted pobiera teraz tylko oferty z Polski — zmień to w "
+                                 "⚙ Ustawienia → Zabezpieczenia → „Oferty z Vinted”.")
 
     def _initial_load(self) -> None:
         if self._status.text() == "Wczytywanie ofert…":

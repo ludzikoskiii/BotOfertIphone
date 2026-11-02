@@ -317,7 +317,9 @@ _OFFER_SELECT = """
            a.photo_label AS ai_photo_label, a.photo_conf AS ai_photo_conf, a.photo_probs AS ai_photo_probs,
            a.photo_at AS ai_photo_at, a.photo_error AS ai_photo_error,
            a.desc_json AS ai_desc_json, a.desc_model AS ai_desc_model, a.desc_at AS ai_desc_at,
-           a.desc_error AS ai_desc_error, a.desc_hash AS ai_desc_hash
+           a.desc_error AS ai_desc_error, a.desc_hash AS ai_desc_hash,
+           (SELECT s.country_code FROM sellers s WHERE s.source = o.source AND s.seller_id = o.seller_id)
+               AS seller_country
     FROM offers o LEFT JOIN ai_results a ON a.source = o.source AND a.source_id = o.source_id"""
 
 
@@ -383,6 +385,7 @@ def _row_to_offer(row: sqlite3.Row) -> Offer:
         offer.desc_from_page = row["page_description"] == row["description"]
     offer.active = bool(row["is_active"])
     offer.inactive_reason = row["inactive_reason"] if "inactive_reason" in keys else None
+    offer.seller_country = row["seller_country"] if "seller_country" in keys else None
     if "picked_at" in keys:
         offer.picked_at = _dt(row["picked_at"])
         offer.pick_excluded = bool(row["pick_excluded"])

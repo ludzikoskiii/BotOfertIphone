@@ -13,12 +13,13 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 
 from .models import Condition, Mode, Offer, OfferStatus, RedFlag, Valuation, Verdict
+from .origin import is_foreign
 from .text import normalize
 
 RISK_ORDER = {"low": 0, "medium": 1, "high": 2}
 RISK_LABELS = {"low": "tylko niskie", "medium": "niskie i średnie", "high": "wszystkie (także wysokie)"}
 SHIPPING = {"": "obojętne", "yes": "tylko z wysyłką", "no": "tylko odbiór osobisty"}
-COUNTRY = {"pl": "tylko Polska", "all": "Polska + zagranica"}
+COUNTRY = {"all": "Polska + zagranica", "pl": "tylko Polska", "foreign": "tylko zagranica"}
 MODES = {"": "jak w programie", Mode.REPAIR.value: Mode.REPAIR.label, Mode.RESELL.value: Mode.RESELL.label}
 NOTIFY_VERDICTS = (Verdict.BUY.value, Verdict.NEGOTIATE.value, Verdict.VERIFY.value)
 
@@ -43,7 +44,7 @@ class NotifyProfile:
     radius_km: int = 0  # od Twojej miejscowości (Ustawienia → lokalizacja)
     radius_keeps_shipping: bool = True  # dalsze oferty z wysyłką też
     shipping: str = ""  # "" | yes | no
-    country: str = "all"  # pl | all
+    country: str = "all"  # all | pl | foreign (``core.origin``)
     only_with_parts: bool = False
     max_risk: str = "low"  # low | medium | high
     skip_hard_flags: bool = True  # iCloud, IMEI, podróbka
@@ -108,8 +109,10 @@ def reject_reason(offer: Offer, val: Valuation, p: NotifyProfile, *, picked: boo
         ships = p.radius_keeps_shipping and raw.shipping_available is True
         if not ships and (offer.distance_km is None or offer.distance_km > p.radius_km):
             return "za daleko"
-    if p.country == "pl" and RedFlag.FOREIGN_SELLER in val.flags:
-        return "z zagranicy"
+    if p.country in ("pl", "foreign"):
+        foreign = is_foreign(offer) or RedFlag.FOREIGN_SELLER in val.flags
+        if foreign != (p.country == "foreign"):
+            return "z Polski" if p.country == "foreign" else "z zagranicy"
     if p.only_with_parts and not val.parts_in_stock:
         return "brak części w magazynie"
     if RISK_ORDER.get(_risk(val), 0) > RISK_ORDER.get(p.max_risk, 0):
@@ -216,8 +219,8 @@ def describe(p: NotifyProfile) -> str:
         parts.append(f"do {p.radius_km} km" + (" (dalej z wysyłką)" if p.radius_keeps_shipping else ""))
     if p.shipping:
         parts.append(SHIPPING[p.shipping])
-    if p.country == "pl":
-        parts.append("tylko Polska")
+    if p.country in ("pl", "foreign"):
+        parts.append(COUNTRY[p.country])
     if p.only_with_parts:
         parts.append("mam część")
     parts.append(f"ryzyko: {RISK_LABELS.get(p.max_risk, p.max_risk)}")

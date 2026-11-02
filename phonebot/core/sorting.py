@@ -15,6 +15,7 @@ from typing import Any
 
 from .catalog import IPHONE_MODELS
 from .models import Condition, Offer, Valuation
+from .origin import offer_origin
 
 ASC, DESC = "asc", "desc"
 MAX_LEVELS = 3
@@ -65,6 +66,12 @@ def _model(offer: Offer, val: Valuation) -> tuple[float, int] | None:
     return None if rank is None else (rank, offer.parsed.storage_gb or _UNKNOWN_STORAGE)
 
 
+def _country(offer: Offer, val: Valuation) -> tuple[int, str]:
+    """Polska, potem zagranica (w niej alfabetycznie po nazwie kraju; nieznany kraj na końcu)."""
+    o = offer_origin(offer)
+    return (1, o.name if o.country else "\uffff") if o.foreign else (0, "")
+
+
 FIELDS: dict[str, SortField] = {f.key: f for f in (
     SortField("verdict", "Werdykt", DESC, "najsłabszy najpierw", "najlepszy najpierw",
               lambda o, v: v.verdict.rank),
@@ -84,6 +91,7 @@ FIELDS: dict[str, SortField] = {f.key: f for f in (
     SortField("flags", "Czerwone flagi", DESC, "najmniej", "najwięcej",
               lambda o, v: len(set(v.flags)) + (100 if v.has_hard_flag else 0)),
     SortField("source", "Portal", ASC, "A → Z", "Z → A", lambda o, v: o.raw.source),
+    SortField("country", "Kraj", ASC, "najpierw Polska", "najpierw zagranica", _country),
     SortField("photos", "Liczba zdjęć", DESC, "najmniej", "najwięcej", lambda o, v: len(o.raw.photos)),
     SortField("risk", "Ryzyko oszustwa", DESC, "najmniejsze", "największe",
               lambda o, v: getattr(v.risk, "score", None)),

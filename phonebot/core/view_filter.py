@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 
 from .models import Offer, Valuation
+from .origin import is_foreign
 from .text import normalize
 
 
@@ -17,6 +18,7 @@ class ViewFilter:
     radius_keeps_shipping: bool = True  # dalsze oferty z wysyłką i tak pokazuj
     conditions: list[str] = field(default_factory=list)  # wartości Condition; puste = wszystkie
     sources: list[str] = field(default_factory=list)  # puste = wszystkie
+    origins: list[str] = field(default_factory=list)  # pl / foreign (``core.origin``); puste = wszystkie
     min_profit_enabled: bool = False
     min_profit: float = 150.0
     shipping_only: bool = False
@@ -51,6 +53,8 @@ def matches(offer: Offer, val: Valuation, f: ViewFilter) -> bool:
     if f.conditions and p.condition.value not in f.conditions:
         return False
     if f.sources and offer.raw.source not in f.sources:
+        return False
+    if f.origins and ("foreign" if is_foreign(offer) else "pl") not in f.origins:
         return False
     if f.shipping_only and offer.raw.shipping_available is False:
         return False

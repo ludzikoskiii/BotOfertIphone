@@ -10,6 +10,7 @@ from html import escape
 from ..core.catalog import format_storage
 from ..core.fraud import SAFETY_TIPS
 from ..core.models import INACTIVE_REASONS, Offer, OfferStatus, RedFlag, Severity, Valuation
+from ..core.origin import offer_origin
 from ..core.sanity import SANITY_FLAGS
 from ..core.selection import pick_reason
 from ..core.settings import Settings
@@ -174,6 +175,9 @@ def build_details_html(
         f'<p class="muted">{portal} · {location} · {shipping[raw.shipping_available]} · '
         f"dodano {_fmt_dt(raw.created_at or offer.first_seen)}</p>"
     )
+    origin = offer_origin(offer)
+    if origin.foreign:
+        parts.append(f'<p class="muted">{escape(origin.describe())}</p>')
     if offer.also_on:
         links = ", ".join(f'<a href="{escape(url, quote=True)}">{escape(SOURCE_NAMES.get(src, src))}</a> ({zl(price)})'
                           for src, url, price in offer.also_on)
